@@ -449,7 +449,7 @@ export const THUMBNAIL_CSP = "default-src 'none'; sandbox";
   - `GET /api/v1/artifacts/{id}/thumbnail` (`requireAuth`) → the current version's `thumbnail_path` bytes when raster, with `Content-Type`, `Content-Security-Policy: default-src 'none'; sandbox`, `X-Content-Type-Options: nosniff`, `Cache-Control: private, max-age=300` and `ETag`. Otherwise 404 `t('artifact.noThumbnail')`. If M1's `appSecurityHeaders` overwrites a CSP the route set, make it keep that CSP (a one-line additive change).
   - `GET /a/:id/raw` and `GET /a/:id/v/:n/raw`:
     - Members (cookie or bearer) → 302 to `contentUrl(config, createGrant(raw).token)` with `Cache-Control: no-store`.
-    - No auth: an HTML-accepting client → 302 `publicUrl('/signin?next=' + encodeURIComponent(path))`; others → 401 JSON.
+    - No auth: an HTML-accepting client → 302 `publicUrl('/signin?return_to=' + encodeURIComponent(path))`; others → 401 JSON.
     - Deleted → 410 and unknown → 404, both through M1's error handling (HTML for browsers).
 
 - [ ] **Step 1: Write the failing tests** (in `describe.each(dialects)` unless noted):
@@ -462,7 +462,7 @@ test('a review preview records a view; a raw one does not', ...);   // listRecen
 test('raw links redirect members to a fresh raw grant', ...);
   // cookie → 302, location === contentUrl(config, token), the grant row has mode 'raw' and expires_at now + previewMs; cache-control 'no-store';
   // bearer API token → 302; two calls → different tokens
-test('raw links send browsers without a session to sign in', ...);   // accept text/html → 302 'http://localhost:8080/signin?next=%2Fa%2F<id>%2Fraw'; accept json → 401
+test('raw links send browsers without a session to sign in', ...);   // accept text/html → 302 'http://localhost:8080/signin?return_to=%2Fa%2F<id>%2Fraw'; accept json → 401
 test('/a/:id/v/:n/raw serves that version', ...);   // v1 'one', v2 'two' → following /v/1/raw gives 'one'
 test('raw links of deleted things are gone', ...);   // a deleted version number → 410 HTML; a tombstoned artifact → 410; 'art_unknown' → 404
 test('thumbnails are raster only, with locked-down headers', ...);

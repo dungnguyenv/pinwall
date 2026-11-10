@@ -182,7 +182,8 @@ App origin (`PINWALL_PUBLIC_ORIGIN`):
 | `GET /auth/oidc/start`, `GET /auth/oidc/callback` | OIDC browser redirects | M3 |
 | `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`, `/.well-known/oauth-protected-resource/mcp` | OAuth metadata | M6 |
 | `POST /oauth/register`, `GET /oauth/authorize`, `POST /oauth/token`, `POST /oauth/revoke` | OAuth 2.1 AS for MCP; `/oauth/authorize` hands off to SPA route `/oauth/consent?request=<id>` | M6 |
-| `GET /api/v1/oauth/requests/:id`, `POST /api/v1/oauth/requests/:id/decision` | consent page API (session only): GET → `{ client_name, client_uri, redirect_host, scopes, user: { name, email } }`; POST `{ approve: boolean }` → `{ redirect_to }` (the SPA then sets `window.location`) | M6 (page in M7) |
+| `GET /api/v1/oauth/requests/:id`, `POST /api/v1/oauth/requests/:id/decision` | consent page API (session only): GET → `{ client_name, client_uri, redirect_host, scopes, user: { name, email } }`; POST `{ approve: boolean }` → `{ redirect_to }` (the SPA then sets `window.location`). DTOs `OAuthConsentRequest` (`client_uri` and `user.email` nullable), `OAuthDecisionRequest` and `OAuthDecisionResult` live in `packages/shared/src/api/oauth-consent.ts`, defined by M7 and served by M6 | M6 (page and DTOs in M7) |
+| `GET /api/v1/admin/config` | admin only: effective settings as `AdminConfig` (`packages/shared/src/api/admin-config.ts`), one entry per env var name, secrets never included (only whether they are set) | M7 |
 | `/mcp` | MCP Streamable HTTP; bearer only (OAuth access token or API token) | M6 |
 | `POST /upload/:token` | one-time upload URL; no cookies, no bearer | M4 |
 | `GET /a/:artifactId/raw`, `GET /a/:artifactId/v/:n/raw` | members: redirect to a fresh raw content grant | M4 |
@@ -246,7 +247,7 @@ type Anchor = {
 | M4 | Publishing and content serving | `…-m4a-publishing-core.md` (Tasks 1–6), `…-m4b-publishing-http.md` (Tasks 7–13) | M2 | |
 | M5 | Comments, sharing, live updates, annotator | `…-m5-review-server.md` | M4 | |
 | M6 | MCP, OAuth authorization server, agent skill | `…-m6-mcp.md` | M3, M5 | |
-| M7 | Web app: shell, library, accounts, admin | `…-m7-web-shell.md` | M3, M4 | |
+| M7 | Web app: shell, library, accounts, admin | `…-m7a-web-shell.md` (Tasks 1–7), `…-m7b-web-accounts-admin.md` (Tasks 8–12) | M3, M4 | |
 | M8 | Web app: review, compare, comments, sharing | `…-m8-web-review.md` | M5, M7 | |
 | M9 | Operations and release | `…-m9-ops-release.md` | M6, M8 | |
 
@@ -271,7 +272,7 @@ Comment threads (create with anchor, reply, edit, delete, resolve with version, 
 OAuth 2.1 AS (metadata, dynamic client registration, PKCE S256, resource indicator `<origin>/mcp`, consent request API, rotating refresh tokens, revocation, re-check on refresh), `/mcp` with the tool set above (bearer: OAuth or API token), publish session tool returning the `tar … | curl …` command, inline publish tool, `skills/pinwall/SKILL.md`, connect snippets for Claude Code, Cursor, Codex. **Done when** an MCP SDK client test completes the OAuth flow, publishes by upload URL and inline, lists and resolves comments; and `claude mcp add --transport http pinwall http://localhost:8080/mcp` works against a local server.
 
 ### M7 Web app: shell, library, accounts, admin (§4)
-Design tokens (style B, light/dark), app shell with sidebar (+ New project, search, All artifacts, Projects, Recent, account), project page (counts, agent instructions box, thumbnail grid with generated cards), All artifacts, search page, drag-and-drop upload, setup page, sign-in page (password, passkey, OIDC button), OAuth consent page, settings (profile, passkeys, API tokens), connect-an-agent page, admin (users with role override and Revoke now, configuration view with explanations of both isolation modes), favicon and app icon, i18n wiring. **Done when** component tests pass and Playwright walks setup → sign-in → upload → project grid.
+Design tokens (style B, light/dark), app shell with sidebar (+ New project, search, All artifacts, Projects, Recent, account), project page (counts, agent instructions box, thumbnail grid with generated cards; comment count and sharing state come from `ArtifactSummary.open_thread_count` and `share_link_count`, which M5 adds), All artifacts, search page, drag-and-drop upload, setup page, sign-in page (password, passkey, OIDC button), OAuth consent page, settings (profile, passkeys, API tokens), connect-an-agent page, admin (users with role override and Revoke now, configuration view with explanations of both isolation modes, served by the new `GET /api/v1/admin/config`), favicon and app icon, i18n wiring. **Done when** component tests pass and Playwright walks setup → sign-in → upload → project grid.
 
 ### M8 Web app: review, compare, comments, sharing (§3.6–3.9, §4)
 Review viewer layout A (top bar with breadcrumb, version switcher, device sizes incl. custom width, compare, comments toggle with count, share; dockable comment panel; full-screen; sidebar collapsed to rail), pins via the annotator, comment composer and threads, live update (switch or offer to), compare (side by side, overlay slider, source diff, rendered Markdown diff), share dialog, share viewer page, delete version/artifact dialogs with the backup warning. **Done when** Playwright covers acceptance 4 (browser part) and 5 in both isolation modes.
