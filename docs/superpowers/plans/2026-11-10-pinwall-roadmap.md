@@ -187,7 +187,8 @@ App origin (`PINWALL_PUBLIC_ORIGIN`):
 | `/mcp` | MCP Streamable HTTP; bearer only (OAuth access token or API token) | M6 |
 | `POST /upload/:token` | one-time upload URL; no cookies, no bearer | M4 |
 | `GET /a/:artifactId/raw`, `GET /a/:artifactId/v/:n/raw` | members: redirect to a fresh raw content grant | M4 |
-| `GET /s/:shareToken` | share link: password page → share viewer (if comments allowed) or redirect to raw content | M5 |
+| `GET /s/:shareToken` | share link: revoked/expired/deleted → HTML 410 page; password-protected and locked, or comments allowed → SPA route `/s/:token`; otherwise 302 to a fresh raw grant (byte-for-byte) | M5 (pages in M8) |
+| `GET /api/v1/share/:token`, `POST …/unlock`, `GET`/`POST …/comments`, `POST …/comments/:id/replies`, `PATCH`/`DELETE …/comments/:id`, `GET …/events` | share-viewer API, authorized by the share token plus the unlock cookie: share info (artifact name, version number, kind, `allow_comments`, content grant), password unlock, guest comments (`X-Pinwall-Guest-Token` for edits within 15 min), SSE | M5 (pages in M8) |
 | `GET /c/:contentToken/*` | content, single-domain mode only (404 in content-domain mode) | M4 |
 | everything else (`GET`, `Accept: text/html`) | SPA `index.html`: `/`, `/projects/:id`, `/a/:id`, `/a/:id/v/:n`, `/a/:id/compare`, `/search`, `/settings/*`, `/admin/*`, `/signin`, `/setup`, `/oauth/consent`, `/connect`, `/s/:token` (viewer) | M7/M8 |
 
@@ -202,9 +203,10 @@ User-facing links always live on the app origin (`/a/:id`, `/a/:id/v/:n`, `/s/:t
 - **App pages** send `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-src <content>; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'`, where `<content>` is `'self'` in single-domain mode and `<scheme>://*.<content host>[:port]` in content-domain mode (the lesson of their #132). Plus `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Cross-Origin-Opener-Policy: same-origin`, and HSTS when https.
 - **Content responses** never read cookies and never set them. Every one carries `Cache-Control: private, max-age=300, no-transform`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`. In single-domain mode every content response also carries `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-pointer-lock allow-presentation` (no `allow-same-origin`). Content requests are authorized only by the content token. App routes are never served on content hosts, and content never under app routes.
 - **Review frame:** `<iframe sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-pointer-lock allow-presentation">` pointing at the content URL. Never `srcdoc`.
-- **Annotator:** injected only into `text/html` responses of `review` grants, as `<script src="<grant base>/__pinwall/annotator.js" data-pinwall-annotator></script>` right after `<head>` (or at the top when there is no head). The viewer sends anchors and pin numbers to the page, never comment bodies.
+- **Annotator:** injected only into `text/html` responses of `review` grants, as `<script src="<grant base>/__pinwall/annotator.js" data-pinwall-annotator></script>` right after `<head>`, or right after the head's last `<meta http-equiv="Content-Security-Policy">` when it has any, so the page's own policy governs the script (spec §3.8: never relax it). Without a head: after `<html>`, else after the doctype, else after a BOM, else at byte 0; never before a doctype; no other byte changes; UTF-16 documents are left alone. The viewer sends anchors and pin numbers to the page, never comment bodies.
+- **Share links:** the token (`newSecret()`) is shown once and stored as `hashSecret(token)`; passwords as `hashPassword`. The unlock cookie is `__Secure-pinwall_share` on https (else `pinwall_share`), set twice with `Path=/s/<token>` and `Path=/api/v1/share/<token>`, `HttpOnly; SameSite=Lax; Secure (https)`, `Max-Age` ≤ 24 h and ≤ the link's expiry, value an HMAC bound to the link. Revoking a link deletes and tombstones the content grants made from it. Share viewers see only threads written on versions up to the one the link shows.
 - **Thumbnails** served from the app origin are raster images only (png, jpeg, webp, gif, avif), with `Content-Security-Policy: default-src 'none'; sandbox`; SVG thumbnails fall back to the generated card.
-- **Rate limits** on sign-in, password, passkey, setup, OAuth token, share-password unlock and upload creation.
+- **Rate limits** on sign-in, password, passkey, setup, OAuth token, share-password unlock, share-link opening, guest comments and upload creation.
 
 ## Annotator ↔ viewer protocol
 
@@ -212,7 +214,7 @@ Types in `packages/shared/src/protocol.ts`. Every message is `{ pinwall: 1, type
 
 ```ts
 type Anchor = {
-  page: string;                                   // file path in the version, e.g. "docs/index.html"
+  page: string;                                   // the frame's path under the grant base, decoded and NFC, a final "index.html" dropped: "" = entry page, "docs/" = docs/index.html, "a.html"
   kind: 'text' | 'element' | 'point';
   quote?: { exact: string; prefix: string; suffix: string };  // text anchors
   dom?: { path: string };                         // CSS selector path from <body>
@@ -230,6 +232,8 @@ type Anchor = {
 | { type: 'show-anchors'; anchors: { id: string; number: number; resolved: boolean; anchor: Anchor }[] }
 | { type: 'focus-anchor'; id: string }
 ```
+
+Contract (M5 builds the annotator, M8 the viewer): the annotator defines one global, `window.__pinwallAnnotator`, and acts only on messages whose `event.source === window.top`; both sides validate with the zod schemas in `@pinwall/shared/protocol`. Each frame posts `ready` at DOMContentLoaded. On every `ready` the viewer sends `set-mode` and `show-anchors` to all descendant frames; each annotator keeps the anchors whose `page` is its own and always answers `anchors-placed`. `found` is true when a text or element anchor re-attached by quote or DOM path (and always for point anchors). A frame with no `ready` within 3 s of its `load` event has no annotator (for example, CSP-blocked) and gets point comments on the viewer's overlay.
 
 ## MCP tools (M6)
 
