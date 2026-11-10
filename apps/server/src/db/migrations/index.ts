@@ -6,7 +6,10 @@ import * as m0001 from './0001_initial.ts';
 // biome-ignore lint/suspicious/noExplicitAny: same as Kysely's own `Migration` type.
 export type MigrationDb = Kysely<any>;
 
-/** A schema change. It receives the dialect so it can pick portable column types. */
+/**
+ * A schema change. It receives the dialect so it can pick portable column types. It runs inside
+ * the transaction of the whole migration run, so it must not open a transaction of its own.
+ */
 export interface PinwallMigration {
   up(db: MigrationDb, dialect: DbDialect): Promise<void>;
 }

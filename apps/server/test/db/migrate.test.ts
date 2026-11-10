@@ -1,14 +1,16 @@
+import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
-import { type Insertable, sql } from 'kysely';
+import { type Insertable, type Kysely, sql } from 'kysely';
 import { describe, expect, onTestFinished, test } from 'vitest';
 import { connectDb, type DbHandle } from '../../src/db/connect.ts';
 import { migrateToLatest, runMigrations } from '../../src/db/migrate.ts';
 import type { MigrationDb } from '../../src/db/migrations/index.ts';
 import type { Database } from '../../src/db/schema.ts';
-import { dialects, withDb } from '../helpers/db.ts';
+import { createPostgresDatabase, dialects, withDb } from '../helpers/db.ts';
 
 const T = 1_762_000_000_000;
 const SHA_A = 'a'.repeat(64);
@@ -265,6 +267,12 @@ async function insertRows(h: DbHandle, rows: Partial<Rows>): Promise<void> {
   }
 }
 
+/** The names Kysely recorded as applied. */
+async function recorded(db: Kysely<Database>): Promise<string[]> {
+  const { rows } = await sql<{ name: string }>`select name from kysely_migration`.execute(db);
+  return rows.map((row) => row.name).sort();
+}
+
 async function ids(h: DbHandle, table: keyof Database, column: string): Promise<unknown[]> {
   const rows = await sql<{ v: unknown }>`select ${sql.ref(column)} as v from ${sql.table(table)}`
     .execute(h.db)
@@ -327,6 +335,29 @@ describe.each(dialects)('%s schema', (dialect) => {
     );
     await expect(sql`select * from half_done`.execute(h.db)).rejects.toThrow();
     expect(await migrateToLatest(h)).toEqual(['0001_initial']);
+  });
+
+  test('a run that fails applies and records none of its migrations', async () => {
+    const h = await open();
+    const createTable = (name: string) => ({
+      up: async (db: MigrationDb) => {
+        await db.schema.createTable(name).addColumn('id', 'text').execute();
+      },
+    });
+    const broken = {
+      up: async () => {
+        throw new Error('boom');
+      },
+    };
+    await expect(
+      runMigrations(h, { '0001_first': createTable('first'), '0002_second': broken }),
+    ).rejects.toThrow('Migration 0002_second failed: boom');
+    await expect(sql`select * from first`.execute(h.db)).rejects.toThrow();
+
+    // Nothing was recorded either, so the next run applies both again.
+    const fixed = { '0001_first': createTable('first'), '0002_second': createTable('second') };
+    expect(await runMigrations(h, fixed)).toEqual(['0001_first', '0002_second']);
+    expect(await recorded(h.db)).toEqual(['0001_first', '0002_second']);
   });
 
   test('every column in the schema types exists and round-trips', async () => {
@@ -495,4 +526,77 @@ describe('sqlite connection', () => {
     await Promise.race([done, failed]);
     expect(await ids(main, 'leases', 'name')).toEqual(['main', 'worker']);
   });
+
+  test('two processes migrating one fresh file at once apply the schema once', async () => {
+    const path = await tempPath();
+    // Both processes load first, then open the new file and migrate it at the same moment.
+    const migrators = [startMigrator(path), startMigrator(path)];
+    await Promise.all(migrators.map((m) => m.ready));
+    for (const m of migrators) m.go();
+    const applied = await Promise.all(migrators.map((m) => m.applied));
+
+    expect(applied.sort((a, b) => a.length - b.length)).toEqual([[], ['0001_initial']]);
+    const h = await connectDb({ kind: 'sqlite', path });
+    onTestFinished(() => h.close());
+    expect(await recorded(h.db)).toEqual(['0001_initial']);
+    expect(await migrateToLatest(h)).toEqual([]);
+    await expect(h.db.selectFrom('users').selectAll().execute()).resolves.toEqual([]);
+  }, 30_000);
 });
+
+describe.runIf(dialects.includes('postgres'))('postgres migrations', () => {
+  test('two connections migrating one fresh database at once apply the schema once', async () => {
+    const database = await createPostgresDatabase();
+    onTestFinished(database.drop);
+    const handles = await Promise.all(
+      [0, 1].map(() => connectDb({ kind: 'postgres', url: database.url, poolSize: 2 })),
+    );
+    onTestFinished(() => Promise.all(handles.map((h) => h.close())).then(() => {}));
+
+    const applied = await Promise.all(handles.map((h) => migrateToLatest(h)));
+    expect(applied.sort((a, b) => a.length - b.length)).toEqual([[], ['0001_initial']]);
+    expect(await recorded(handles[0]?.db as Kysely<Database>)).toEqual(['0001_initial']);
+  });
+});
+
+const MIGRATOR = fileURLToPath(new URL('./sqlite-migrator.child.ts', import.meta.url));
+
+/**
+ * A separate Node process running `sqlite-migrator.child.ts` on `path`. `ready` resolves once it
+ * has loaded; `go()` lets it open and migrate; `applied` is what it reports, or rejects with its
+ * stderr.
+ */
+function startMigrator(path: string) {
+  const child = spawn(process.execPath, [MIGRATOR, path]);
+  onTestFinished(() => {
+    child.kill();
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk: string) => {
+    stderr += chunk;
+  });
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', resolve);
+  });
+  const ready = new Promise<void>((resolve, reject) => {
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+      if (stdout.startsWith('ready\n')) resolve();
+    });
+    exited.then(
+      (code) => reject(new Error(`migrator exited (${code}) before it was ready:\n${stderr}`)),
+      reject,
+    );
+  });
+  const applied = exited.then((code) => {
+    if (code !== 0) throw new Error(`migrator exited with ${code}:\n${stderr}`);
+    const result = stdout.trim().split('\n').at(-1) ?? '';
+    return (JSON.parse(result) as { applied: string[] }).applied;
+  });
+  applied.catch(() => {}); // awaited by the test; marked handled in case `ready` fails first
+  return { ready, go: () => child.stdin.end('go\n'), applied };
+}

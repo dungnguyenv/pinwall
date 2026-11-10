@@ -1,5 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import Sqlite from 'better-sqlite3';
 import { Kysely, PostgresDialect, SqliteDialect, sql } from 'kysely';
 import pg from 'pg';
@@ -21,6 +22,29 @@ export interface DbHandle {
 // counters) fits a double exactly, so parse it to a number. This is process-wide in `pg`.
 pg.types.setTypeParser(20, Number);
 
+/** How long a SQLite statement waits for another connection's lock before failing. */
+const SQLITE_BUSY_TIMEOUT_MS = 5000;
+
+/**
+ * Switches the file to WAL. When two processes open a new file at the same moment, SQLite can
+ * refuse one of them with SQLITE_BUSY at once instead of waiting on busy_timeout; that one tries
+ * again until the other has switched the file (the mode is stored in the file) or time runs out.
+ */
+async function enableWal(database: Sqlite.Database): Promise<void> {
+  const deadline = Date.now() + SQLITE_BUSY_TIMEOUT_MS;
+  for (;;) {
+    try {
+      database.pragma('journal_mode = WAL');
+      return;
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== 'SQLITE_BUSY' || Date.now() >= deadline) {
+        throw error;
+      }
+      await sleep(20);
+    }
+  }
+}
+
 /**
  * Opens the configured database. `logger` receives errors that happen outside any query, such as
  * an idle Postgres connection dropped by the server.
@@ -34,8 +58,8 @@ export async function connectDb(
     const database = new Sqlite(cfg.path);
     try {
       // busy_timeout first, so switching to WAL waits for another connection instead of failing.
-      database.pragma('busy_timeout = 5000');
-      database.pragma('journal_mode = WAL');
+      database.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+      await enableWal(database);
       database.pragma('synchronous = NORMAL');
       database.pragma('foreign_keys = ON');
     } catch (error) {
