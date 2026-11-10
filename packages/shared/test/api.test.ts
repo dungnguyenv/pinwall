@@ -1,7 +1,9 @@
 import { expect, test } from 'vitest';
 import { z } from 'zod';
 import {
+  AddPasskeyRequest,
   CeremonyOptions,
+  ChangePasswordRequest,
   CreateApiTokenRequest,
   ErrorBody,
   Label,
@@ -12,10 +14,12 @@ import {
   PasskeySignInRequest,
   PasswordSignInRequest,
   page,
+  RenamePasskeyRequest,
   SetupPasskeyOptionsRequest,
   SetupRequest,
   SetupTokenRequest,
   Timestamp,
+  UpdateProfileRequest,
 } from '../src/index.ts';
 
 test('Label trims and keeps 1 to 100 characters', () => {
@@ -125,4 +129,31 @@ test('an API token request keeps expiry within 1 to 3650 whole days, or none', (
   expect([parse(undefined), parse(null), parse(1), parse(3650)]).toEqual([true, true, true, true]);
   expect([parse(0), parse(3651), parse(1.5), parse('7')]).toEqual([false, false, false, false]);
   expect(CreateApiTokenRequest.safeParse({ name: '' }).success).toBe(false);
+});
+
+test('profile, password and passkey requests keep their limits', () => {
+  expect(UpdateProfileRequest.parse({})).toEqual({});
+  expect(UpdateProfileRequest.parse({ name: ' Ada ', email: null })).toEqual({
+    name: 'Ada',
+    email: null,
+  });
+  expect(UpdateProfileRequest.safeParse({ email: 'nope' }).success).toBe(false);
+  expect(UpdateProfileRequest.safeParse({ email: `${'a'.repeat(250)}@x.test` }).success).toBe(
+    false,
+  );
+  expect(UpdateProfileRequest.safeParse({ name: '  ' }).success).toBe(false);
+
+  expect(ChangePasswordRequest.safeParse({ new_password: 'x' }).success).toBe(true);
+  expect(ChangePasswordRequest.safeParse({ new_password: '' }).success).toBe(false);
+  expect(ChangePasswordRequest.safeParse({ new_password: 'x'.repeat(1025) }).success).toBe(false);
+  expect(ChangePasswordRequest.safeParse({ current_password: '', new_password: 'x' }).success).toBe(
+    false,
+  );
+
+  expect(RenamePasskeyRequest.parse({ name: ' Phone ' })).toEqual({ name: 'Phone' });
+  expect(RenamePasskeyRequest.safeParse({ name: '' }).success).toBe(false);
+  const ceremony = { ceremony_id: 'c', response: registration };
+  expect(AddPasskeyRequest.safeParse(ceremony).success).toBe(true);
+  expect(AddPasskeyRequest.safeParse({ ...ceremony, name: 'Phone' }).success).toBe(true);
+  expect(AddPasskeyRequest.safeParse({ ceremony_id: 'c' }).success).toBe(false);
 });

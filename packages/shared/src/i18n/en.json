@@ -29,5 +29,9 @@
   "auth.wrongPassword": "Wrong password.",
   "auth.setup.required": "Pinwall is not set up yet. Open the setup link printed in the server log.",
   "auth.tokenLimit": "You have reached the limit of {{max}} API tokens. Revoke one first.",
-  "auth.tokenNotFound": "This API token does not exist, or it was already revoked."
+  "auth.tokenNotFound": "This API token does not exist, or it was already revoked.",
+  "auth.lastCredential": "You cannot remove your last way to sign in. Add a passkey or a password first.",
+  "auth.passkey.numberedName": "Passkey {{number}}",
+  "auth.passkeyNotFound": "This passkey does not exist, or it is not yours.",
+  "auth.passkeyDuplicate": "This passkey is already registered."
 }
