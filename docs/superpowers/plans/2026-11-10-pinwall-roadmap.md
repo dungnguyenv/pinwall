@@ -6,7 +6,7 @@
 
 **Architecture:** One Node.js 24 process. Hono serves the app origin (REST API, OAuth 2.1 authorization server, MCP endpoint, one-time upload URLs, the React SPA) and the artifact content (under `/c/<token>/` in single-domain mode, or on `<token>.<content host>` in content-domain mode). Kysely talks to SQLite (default) or PostgreSQL; a `BlobStore` talks to local disk (default) or S3. Everything that would have to be shared between several instances later sits behind an interface with an in-process implementation now.
 
-**Tech Stack:** TypeScript, Node.js 24 LTS, pnpm workspaces, Hono + `@hono/node-server` + `@hono/zod-openapi`, zod, Kysely + better-sqlite3 + pg, `@aws-sdk/client-s3`, tar-stream + fflate, markdown-it + highlight.js, htmlparser2, openid-client, `@simplewebauthn/server|browser`, `@modelcontextprotocol/sdk`, pino, prom-client, diff, tldts; React 19 + Vite + Tailwind CSS v4 + Radix UI + TanStack Query + React Router + react-i18next + lucide-react; esbuild for the annotator and server bundle; Vitest, Testing Library, oidc-provider (test IdP), Playwright; Biome for lint/format.
+**Tech Stack:** TypeScript, Node.js 24 LTS, pnpm workspaces, Hono + `@hono/node-server` + `@hono/zod-openapi`, zod, Kysely + better-sqlite3 + pg, `@aws-sdk/client-s3`, tar-stream + fflate, markdown-it + highlight.js, htmlparser2, openid-client, `@simplewebauthn/server|browser`, `@modelcontextprotocol/sdk`, pino, @prometheus-io/client, diff, tldts; React 19 + Vite + Tailwind CSS v4 + Radix UI + TanStack Query + React Router + react-i18next + lucide-react; esbuild for the annotator and server bundle; Vitest, Testing Library, oidc-provider (test IdP), Playwright; Biome for lint/format.
 
 **Spec:** `docs/superpowers/specs/2026-11-10-pinwall-design.md` — the plan argues from it; read both.
 
@@ -35,7 +35,7 @@ Every task's requirements implicitly include these. Values are copied from the s
 - Visual style "B — neutral, ChatGPT-like"; dark mode follows the system setting.
 - Do not copy plannotator's interface or branding.
 - **Original work only.** Never copy code, prompts, skill text, documentation, tests, UI markup or styles from another project into this repository — not verbatim and not lightly edited — including plannotator `artifact-server` and its installed `artifact-server` skill, and any other repository, gist or blog. Learn ideas from public docs and standards (RFCs, W3C, MDN, library docs), then write your own. Using a library through its public API is fine; vendoring its source is not. Short snippets from a dependency's own docs (an import line, a config option) are fine.
-- Dependencies must carry a license compatible with Apache-2.0 (MIT, ISC, BSD-2/3, Apache-2.0, 0BSD, BlueOak, CC0, Unicode, Python-2.0). No GPL, LGPL, AGPL, SSPL, BUSL, or unlicensed packages; check before adding one. M9 adds an automated license check and a `NOTICE` listing bundled third-party licenses.
+- Dependencies must carry a license compatible with Apache-2.0 (MIT, ISC, BSD-2/3, Apache-2.0, 0BSD, BlueOak, CC0, Unlicense, Unicode, Python-2.0/PSF-2.0; MPL-2.0 only for build-time tools that never ship in the image or a bundle, e.g. lightningcss under Tailwind). No GPL, LGPL, AGPL, SSPL, BUSL, or unlicensed packages; check before adding one. M9 adds an automated license check and a `NOTICE` listing bundled third-party licenses.
 - Conventional Commits; commit messages end with the trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Work stays local: no `git push`, no image push, no GitHub repository creation.
 
 ## Review Focus
