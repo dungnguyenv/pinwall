@@ -1,0 +1,83 @@
+<h2>Phong cách hình ảnh: hướng nào hợp với sản phẩm?</h2>
+<p class="subtitle">Cùng một trang project, vẽ theo ba phong cách. Hướng nào cũng có chế độ tối. Ở đây chỉ để chọn cảm giác chung (màu, chữ, độ mềm), không phải bản thiết kế cuối.</p>
+
+<style>
+  .vs { border-radius:12px; overflow:hidden; height:250px; display:flex; font-size:11px; line-height:1.4 }
+  .vs .sb { width:112px; padding:10px 7px; display:flex; flex-direction:column; gap:2px }
+  .vs .it { padding:4px 6px; border-radius:7px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .vs .h { font-size:9px; padding:8px 6px 2px; text-transform:uppercase; letter-spacing:.05em; opacity:.6 }
+  .vs .main { flex:1; padding:14px 14px }
+  .vs .ttl { font-size:17px; margin-bottom:2px }
+  .vs .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px }
+  .vs .art { border-radius:10px; overflow:hidden }
+  .vs .th { height:56px }
+  .vs .meta { padding:6px 7px }
+  .vs .btn { display:inline-block; padding:5px 10px; border-radius:8px; margin-top:10px; font-weight:500 }
+
+  /* A: warm, Claude-like */
+  .a { background:#faf9f5; color:#2b2a27; border:1px solid #e8e5dc; font-family: ui-sans-serif, system-ui, sans-serif }
+  .a .sb { background:#f3f1ea; border-right:1px solid #e8e5dc }
+  .a .it.on { background:#e8e4d8 }
+  .a .ttl { font-family: Georgia, "Times New Roman", serif; font-weight:500 }
+  .a .art { background:#fff; border:1px solid #e8e5dc }
+  .a .mut { color:#87837a }
+  .a .btn { background:#c96442; color:#fff }
+
+  /* B: neutral, ChatGPT-like */
+  .b { background:#ffffff; color:#0d0d0d; border:1px solid #e5e5e5; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif }
+  .b .sb { background:#f9f9f9; border-right:1px solid #ececec }
+  .b .it.on { background:#ececec }
+  .b .ttl { font-weight:600 }
+  .b .art { background:#fff; border:1px solid #ececec }
+  .b .mut { color:#8f8f8f }
+  .b .btn { background:#0d0d0d; color:#fff; border-radius:999px }
+
+  /* C: neutral + own accent, dark */
+  .c { background:#111214; color:#ececf1; border:1px solid #26272b; font-family: ui-sans-serif, system-ui, sans-serif }
+  .c .sb { background:#17181b; border-right:1px solid #26272b }
+  .c .it.on { background:#25262b }
+  .c .ttl { font-weight:600; letter-spacing:-.01em }
+  .c .art { background:#1a1b1f; border:1px solid #2a2b30 }
+  .c .mut { color:#8b8d98 }
+  .c .btn { background:#6e56cf; color:#fff }
+</style>
+
+<div class="cards">
+  <div class="card" data-choice="warm" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="vs a">
+        <div class="sb"><div class="it" style="font-weight:600">◆ Artifacts</div><div class="h">Projects</div><div class="it on">Happy Booth</div><div class="it">Homelab</div><div class="it">Block Brain</div></div>
+        <div class="main"><div class="ttl">Happy Booth</div><div class="mut">8 artifact · 2 giờ trước</div>
+          <div class="grid"><div class="art"><div class="th" style="background:linear-gradient(135deg,#ff4f8b,#ff9a62)"></div><div class="meta">homepage-10-mau<br><span class="mut">v3 · 2 comment</span></div></div><div class="art"><div class="th" style="background:linear-gradient(135deg,#7c6f5a,#b8a98c)"></div><div class="meta">Báo cáo bảo mật<br><span class="mut">v1 · riêng tư</span></div></div></div>
+          <span class="btn">Kết nối agent</span></div>
+      </div>
+    </div>
+    <div class="card-body"><h3>A. Ấm áp, kiểu Claude</h3><p>Nền màu kem, tiêu đề dùng chữ có chân, điểm nhấn cam đất. Mang cảm giác như đang đọc tài liệu, dịu mắt khi đọc lâu.</p></div>
+  </div>
+
+  <div class="card" data-choice="neutral" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="vs b">
+        <div class="sb"><div class="it" style="font-weight:600">● Artifacts</div><div class="h">Projects</div><div class="it on">Happy Booth</div><div class="it">Homelab</div><div class="it">Block Brain</div></div>
+        <div class="main"><div class="ttl">Happy Booth</div><div class="mut">8 artifact · 2 giờ trước</div>
+          <div class="grid"><div class="art"><div class="th" style="background:linear-gradient(135deg,#ff4f8b,#ff9a62)"></div><div class="meta">homepage-10-mau<br><span class="mut">v3 · 2 comment</span></div></div><div class="art"><div class="th" style="background:linear-gradient(135deg,#334155,#64748b)"></div><div class="meta">Báo cáo bảo mật<br><span class="mut">v1 · riêng tư</span></div></div></div>
+          <span class="btn">Kết nối agent</span></div>
+      </div>
+    </div>
+    <div class="card-body"><h3>B. Trung tính, kiểu ChatGPT (gợi ý)</h3><p>Nền trắng và xám thuần, chữ không chân, nút đen bo tròn. Giao diện lùi lại phía sau để trang của artifact nổi bật, vì artifact nào cũng có màu sắc riêng.</p></div>
+  </div>
+
+  <div class="card" data-choice="accent-dark" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="vs c">
+        <div class="sb"><div class="it" style="font-weight:600">✦ Artifacts</div><div class="h">Projects</div><div class="it on">Happy Booth</div><div class="it">Homelab</div><div class="it">Block Brain</div></div>
+        <div class="main"><div class="ttl">Happy Booth</div><div class="mut">8 artifact · 2 giờ trước</div>
+          <div class="grid"><div class="art"><div class="th" style="background:linear-gradient(135deg,#ff4f8b,#ff9a62)"></div><div class="meta">homepage-10-mau<br><span class="mut">v3 · 2 comment</span></div></div><div class="art"><div class="th" style="background:linear-gradient(135deg,#334155,#64748b)"></div><div class="meta">Báo cáo bảo mật<br><span class="mut">v1 · riêng tư</span></div></div></div>
+          <span class="btn">Kết nối agent</span></div>
+      </div>
+    </div>
+    <div class="card-body"><h3>C. Trung tính + màu riêng, tối trước</h3><p>Ưu tiên chế độ tối, thêm một màu tím làm nhận diện thương hiệu. Mang chất "công cụ cho dev", giống Linear hay Vercel.</p></div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:16px">Gợi ý của mình: <b>B</b>. Chọn một màu nhấn duy nhất để làm nhận diện, và bật chế độ tối theo cài đặt hệ thống ngay từ đầu.</p>

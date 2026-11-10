@@ -1,0 +1,111 @@
+<h2>Khung ứng dụng: sidebar + Projects, kiểu Claude và ChatGPT</h2>
+<p class="subtitle">Bên trái là trang của một project. Bên phải là màn hình review (bố cục A): khi mở một artifact, sidebar thu lại thành một dải icon để nhường chỗ cho trang. Sau đó chọn cách hiển thị artifact trong project ở phần dưới.</p>
+
+<style>
+  .app { font: 11px/1.4 ui-sans-serif, system-ui, -apple-system, sans-serif; color:#1f1f1f; background:#fff; border:1px solid #e5e5e5; border-radius:12px; overflow:hidden; height:330px; display:flex }
+  .app .sb { width:150px; background:#f9f9f8; border-right:1px solid #ececec; padding:10px 8px; display:flex; flex-direction:column; gap:2px; flex:none }
+  .app .sb .logo { font-weight:600; font-size:12px; padding:2px 6px 10px; display:flex; align-items:center; gap:6px }
+  .app .sb .dot { width:14px; height:14px; border-radius:4px; background:#1f1f1f }
+  .app .sb .it { padding:5px 7px; border-radius:7px; color:#3d3d3d; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .app .sb .it.on { background:#ececea; color:#111; font-weight:500 }
+  .app .sb .h { font-size:9.5px; color:#8a8a8a; padding:10px 7px 3px; text-transform:uppercase; letter-spacing:.04em }
+  .app .sb .btn { border:1px solid #e2e2e0; background:#fff; border-radius:8px; padding:5px 7px; margin-bottom:4px }
+  .app .sb .me { margin-top:auto; display:flex; align-items:center; gap:6px; padding:6px 7px; border-top:1px solid #ececec }
+  .app .av { width:16px; height:16px; border-radius:50%; background:#c96f4a; flex:none }
+  .app .main { flex:1; padding:16px 18px; overflow:hidden }
+  .app .ttl { font-size:16px; font-weight:600; margin-bottom:2px }
+  .app .mut { color:#7a7a7a }
+  .app .instr { margin:10px 0 12px; border:1px solid #ececec; border-radius:10px; padding:8px 10px; background:#fcfcfb }
+  .app .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:9px }
+  .app .art { border:1px solid #ececec; border-radius:10px; overflow:hidden }
+  .app .thumb { height:58px }
+  .app .meta { padding:6px 7px }
+  .app .meta b { display:block; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+  .app .badge { display:inline-block; font-size:9px; padding:1px 5px; border-radius:5px; background:#f1f1ef; color:#666; margin-top:3px }
+  .app .rail { width:38px; background:#f9f9f8; border-right:1px solid #ececec; display:flex; flex-direction:column; align-items:center; gap:10px; padding-top:10px; flex:none }
+  .app .rail i { width:16px; height:16px; border-radius:5px; background:#dcdcd8; display:block }
+  .app .rail i.k { background:#1f1f1f }
+  .app .rv { flex:1; display:flex; flex-direction:column; min-width:0 }
+  .app .bar { height:36px; border-bottom:1px solid #ececec; display:flex; align-items:center; gap:6px; padding:0 10px }
+  .app .chip { padding:3px 7px; border-radius:7px; background:#f3f3f1; white-space:nowrap }
+  .app .chip.on { background:#1f1f1f; color:#fff }
+  .app .stage { flex:1; display:flex; min-height:0 }
+  .app .canvas { flex:1; background:#f6f6f4; padding:12px; display:flex; justify-content:center }
+  .app .page { width:90%; background:#fff; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,.1); position:relative; overflow:hidden }
+  .app .hero { height:44%; background:linear-gradient(135deg,#ff4f8b,#ff9a62) }
+  .app .ln { height:6px; border-radius:3px; background:#ececec; margin:7px 10px }
+  .app .pin { position:absolute; width:16px; height:16px; border-radius:50% 50% 50% 0; background:#1f1f1f; color:#fff; font-size:9px; display:flex; align-items:center; justify-content:center; box-shadow:0 0 0 2px #fff }
+  .app .cm { width:30%; border-left:1px solid #ececec; padding:8px }
+  .app .c { background:#f7f7f5; border-radius:8px; padding:6px 7px; margin-bottom:6px }
+  .app .c b { display:block; font-size:10px; font-weight:500; margin-bottom:2px }
+</style>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Trang project</div>
+    <div class="mockup-body">
+      <div class="app">
+        <div class="sb">
+          <div class="logo"><span class="dot"></span>Artifacts</div>
+          <div class="btn">＋ Project mới</div>
+          <div class="it">⌕ Tìm kiếm</div>
+          <div class="it">⌂ Tất cả artifact</div>
+          <div class="h">Projects</div>
+          <div class="it on">Happy Booth</div>
+          <div class="it">Homelab</div>
+          <div class="it">Block Brain</div>
+          <div class="h">Gần đây</div>
+          <div class="it">homepage-10-mau</div>
+          <div class="it">Báo cáo bảo mật API</div>
+          <div class="me"><span class="av"></span>dungnguyen</div>
+        </div>
+        <div class="main">
+          <div class="ttl">Happy Booth</div>
+          <div class="mut">8 artifact · cập nhật 2 giờ trước</div>
+          <div class="instr"><b>Hướng dẫn cho agent</b> <span class="mut">· Claude đọc được qua MCP</span><br><span class="mut">Dùng tiếng Việt. Màu chủ đạo #FF4F8B. Mỗi mẫu có bản desktop và mobile.</span></div>
+          <div class="grid">
+            <div class="art"><div class="thumb" style="background:linear-gradient(135deg,#ff4f8b,#ff9a62)"></div><div class="meta"><b>homepage-10-mau</b><span class="mut">v3 · 2 comment</span></div></div>
+            <div class="art"><div class="thumb" style="background:linear-gradient(135deg,#334155,#64748b)"></div><div class="meta"><b>Báo cáo bảo mật API</b><span class="mut">v1</span> <span class="badge">riêng tư</span></div></div>
+            <div class="art"><div class="thumb" style="background:linear-gradient(135deg,#0ea5e9,#22d3ee)"></div><div class="meta"><b>Bảng giá 2027</b><span class="mut">v5</span> <span class="badge">link chia sẻ</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">Mở một artifact: review (bố cục A), sidebar thu lại</div>
+    <div class="mockup-body">
+      <div class="app">
+        <div class="rail"><i class="k"></i><i></i><i></i><i></i></div>
+        <div class="rv">
+          <div class="bar"><span class="mut">Happy Booth /</span><b>homepage-10-mau</b><span class="chip">v3 ▾</span><span style="flex:1"></span><span class="chip">🖥 ▭ 📱</span><span class="chip">So sánh</span><span class="chip on">💬 2</span><span class="chip">Chia sẻ</span></div>
+          <div class="stage">
+            <div class="canvas"><div class="page"><div class="hero"></div><div class="ln" style="width:70%"></div><div class="ln" style="width:52%"></div><div class="ln" style="width:64%"></div>
+              <span class="pin" style="left:28%;top:20%">1</span><span class="pin" style="left:60%;top:66%">2</span></div></div>
+            <div class="cm">
+              <div class="c"><b>① Bạn · v3</b>Tiêu đề to quá trên mobile</div>
+              <div class="c"><b>② Bạn · v2</b><span class="mut">✓ đã xử lý ở v3</span><br>Đổi ảnh nền</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:22px">Trong một project, artifact nên hiển thị thế nào?</h3>
+<div class="options">
+  <div class="option" data-choice="grid" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content"><h3>Lưới thumbnail (gợi ý)</h3><p>Mỗi artifact là một thẻ có ảnh chụp trang, version, số comment và trạng thái chia sẻ. Nhìn là nhận ra ngay, hợp với nội dung trực quan như trang web hay dashboard.</p></div>
+  </div>
+  <div class="option" data-choice="list" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content"><h3>Danh sách dòng</h3><p>Giống danh sách cuộc trò chuyện trong Claude và ChatGPT: tên, thời gian, version. Gọn và hiện được nhiều artifact hơn, nhưng không có ảnh xem trước.</p></div>
+  </div>
+  <div class="option" data-choice="both" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content"><h3>Cả hai, có nút chuyển</h3><p>Mặc định là lưới, chuyển sang danh sách bằng một nút. Lựa chọn được nhớ riêng cho từng người.</p></div>
+  </div>
+</div>
+<p class="subtitle" style="margin-top:12px">Ô <b>Hướng dẫn cho agent</b> là ý mình học từ Claude Projects: mỗi project có một đoạn hướng dẫn, và Claude đọc nó qua MCP trước khi publish, nên các trang trong cùng project sẽ giữ chung một phong cách.</p>

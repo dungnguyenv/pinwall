@@ -1,0 +1,90 @@
+<h2>Màn hình review — bố cục nào hợp nhất?</h2>
+<p class="subtitle">Đây là màn hình bạn dùng nhiều nhất: xem trang Claude vừa publish, comment, đổi version. Chỉ cần chọn hướng bố cục, chưa cần để ý màu sắc hay chi tiết.</p>
+
+<style>
+  .ui { font: 11px/1.35 ui-sans-serif, system-ui, sans-serif; color:#1f2430; background:#f4f5f7; border-radius:10px; overflow:hidden; height:260px; display:flex; flex-direction:column; border:1px solid #d9dce3 }
+  .ui .bar { height:34px; background:#fff; border-bottom:1px solid #e3e5ea; display:flex; align-items:center; gap:6px; padding:0 10px; flex:none }
+  .ui .chip { padding:3px 7px; border-radius:6px; background:#eef0f4; color:#3a4150; white-space:nowrap }
+  .ui .chip.on { background:#1f2430; color:#fff }
+  .ui .grow { flex:1 }
+  .ui .page { background:#fff; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,.12); position:relative; overflow:hidden }
+  .ui .hero { height:46%; background:linear-gradient(135deg,#ff4f8b,#ff9a62); }
+  .ui .line { height:6px; border-radius:3px; background:#e6e8ee; margin:7px 10px }
+  .ui .pin { position:absolute; width:16px; height:16px; border-radius:50% 50% 50% 0; background:#4f46e5; color:#fff; font-size:9px; display:flex; align-items:center; justify-content:center; box-shadow:0 0 0 2px #fff }
+  .ui .side { background:#fff; border-left:1px solid #e3e5ea; padding:8px; overflow:hidden }
+  .ui .cmt { background:#f6f7f9; border-radius:6px; padding:6px; margin-bottom:6px }
+  .ui .cmt b { display:block; font-size:10px; margin-bottom:2px }
+  .ui .nav { background:#fff; border-right:1px solid #e3e5ea; padding:8px; overflow:hidden }
+  .ui .nav div { padding:4px 6px; border-radius:5px; margin-bottom:3px; color:#4a5263 }
+  .ui .nav .sel { background:#eef0ff; color:#3730a3 }
+  .ui .dock { position:absolute; left:50%; bottom:10px; transform:translateX(-50%); background:#1f2430; color:#fff; border-radius:999px; padding:5px 8px; display:flex; gap:6px; box-shadow:0 4px 14px rgba(0,0,0,.25) }
+  .ui .dock span { padding:2px 7px; border-radius:999px; background:rgba(255,255,255,.1); white-space:nowrap }
+  .ui .float { position:absolute; width:118px; background:#fff; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.18); padding:6px }
+</style>
+
+<div class="cards">
+  <div class="card" data-choice="focus" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="ui">
+        <div class="bar"><b>homepage-10-mau</b><span class="chip">v3 ▾</span><span class="grow"></span><span class="chip">🖥 ▭ 📱</span><span class="chip">So sánh</span><span class="chip on">Comment 2</span><span class="chip">Chia sẻ</span></div>
+        <div style="flex:1;display:flex;min-height:0">
+          <div style="flex:1;padding:12px;display:flex;justify-content:center">
+            <div class="page" style="width:88%"><div class="hero"></div><div class="line" style="width:70%"></div><div class="line" style="width:50%"></div><div class="line" style="width:62%"></div>
+              <span class="pin" style="left:30%;top:22%">1</span><span class="pin" style="left:62%;top:64%">2</span></div>
+          </div>
+          <div class="side" style="width:31%">
+            <div class="cmt"><b>① Bạn · v3</b>Tiêu đề to quá trên mobile</div>
+            <div class="cmt"><b>② Bạn · v2 → đã xử lý ở v3</b>Đổi ảnh nền</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. Tập trung vào trang</h3>
+      <p>Trang chiếm gần hết màn hình, thanh trên mỏng, panel comment bên phải đóng mở được. Danh sách artifact nằm ở một màn hình khác. Gần với cách Figma và Vercel cho xem preview.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="workspace" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="ui">
+        <div class="bar"><b>Project: Happy Booth</b><span class="grow"></span><span class="chip">Tìm…</span></div>
+        <div style="flex:1;display:flex;min-height:0">
+          <div class="nav" style="width:24%"><div class="sel">homepage-10-mau</div><div>báo cáo bảo mật</div><div>plan migration</div><div>dashboard Q4</div></div>
+          <div style="flex:1;padding:10px;display:flex;justify-content:center">
+            <div class="page" style="width:94%"><div class="hero"></div><div class="line" style="width:70%"></div><div class="line" style="width:50%"></div>
+              <span class="pin" style="left:30%;top:22%">1</span></div>
+          </div>
+          <div class="side" style="width:27%">
+            <div style="display:flex;gap:4px;margin-bottom:6px"><span class="chip on">Comment</span><span class="chip">Version</span><span class="chip">Info</span></div>
+            <div class="cmt"><b>① Bạn</b>Tiêu đề to quá</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. Không gian làm việc ba cột</h3>
+      <p>Danh sách artifact bên trái, trang ở giữa, comment, version và thông tin bên phải. Chuyển giữa các artifact rất nhanh, nhưng phần trang bị hẹp lại. Giống bố cục plannotator đang dùng.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="canvas" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="ui" style="background:#e9ebf0">
+        <div style="flex:1;position:relative;padding:12px;display:flex;justify-content:center">
+          <div class="page" style="width:92%;height:100%"><div class="hero"></div><div class="line" style="width:70%"></div><div class="line" style="width:50%"></div><div class="line" style="width:62%"></div>
+            <span class="pin" style="left:30%;top:22%">1</span>
+            <div class="float" style="left:36%;top:14%"><b style="font-size:10px">Bạn · v3</b><br>Tiêu đề to quá trên mobile<div style="margin-top:4px;color:#4f46e5">Trả lời · Xử lý</div></div>
+          </div>
+          <div class="dock"><span>‹ v3 ›</span><span>🖥 ▭ 📱</span><span>So sánh</span><span>💬 2</span><span>Chia sẻ</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. Toàn màn hình + thanh công cụ nổi</h3>
+      <p>Không có khung giao diện nào cả, chỉ có trang và một thanh công cụ nổi ở dưới. Comment hiện thành thẻ ngay cạnh pin. Gọn và đẹp nhất, nhưng không nhìn được toàn bộ comment cùng lúc.</p>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:18px">Gợi ý của mình: <b>A</b>, vì trang được ưu tiên mà vẫn thấy đủ comment. Danh sách artifact đặt ở màn hình riêng giống thư viện ảnh, và có thể thêm chế độ C dưới dạng nút "Toàn màn hình".</p>
