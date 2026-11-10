@@ -3,9 +3,14 @@ import type { Clock } from '../lib/clock.ts';
 export interface RateLimiter {
   /**
    * Counts one attempt against `key`. At most `limit` attempts are allowed per `windowMs`;
-   * when refused, `retryAfterMs` is how long until the window ends (0 when allowed).
+   * when refused, `retryAfterMs` is how long until the window ends (0 when allowed). Async so a
+   * limiter shared by several instances (database, Redis) can sit behind the same interface.
    */
-  consume(key: string, limit: number, windowMs: number): { allowed: boolean; retryAfterMs: number };
+  consume(
+    key: string,
+    limit: number,
+    windowMs: number,
+  ): Promise<{ allowed: boolean; retryAfterMs: number }>;
 }
 
 /** How often, at most, `consume` scans for windows that ended. */
@@ -27,11 +32,11 @@ export class InMemoryRateLimiter implements RateLimiter {
     return this.windows.size;
   }
 
-  consume(
+  async consume(
     key: string,
     limit: number,
     windowMs: number,
-  ): { allowed: boolean; retryAfterMs: number } {
+  ): Promise<{ allowed: boolean; retryAfterMs: number }> {
     const now = this.clock.now();
     this.sweep(now);
 
