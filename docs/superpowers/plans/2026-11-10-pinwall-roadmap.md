@@ -202,7 +202,7 @@ User-facing links always live on the app origin (`/a/:id`, `/a/:id/v/:n`, `/s/:t
 - **CSRF:** a cookie-authenticated request with a method other than GET/HEAD/OPTIONS is accepted only if `Origin` equals the public origin (missing or `null` is rejected) and `Sec-Fetch-Site`, when present, is `same-origin`. Bearer requests do not read cookies. `/mcp` and `/upload/*` never read cookies.
 - **App pages** send `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-src <content>; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'`, where `<content>` is `'self'` in single-domain mode and `<scheme>://*.<content host>[:port]` in content-domain mode (the lesson of their #132). Plus `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Cross-Origin-Opener-Policy: same-origin`, and HSTS when https.
 - **Content responses** never read cookies and never set them. Every one carries `Cache-Control: private, max-age=300, no-transform`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`. In single-domain mode every content response also carries `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-pointer-lock allow-presentation` (no `allow-same-origin`). Content requests are authorized only by the content token. App routes are never served on content hosts, and content never under app routes.
-- **Review frame:** `<iframe sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-pointer-lock allow-presentation">` pointing at the content URL. Never `srcdoc`.
+- **Review frame:** `<iframe sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-pointer-lock allow-presentation" allow="fullscreen; autoplay; picture-in-picture; clipboard-write" referrerpolicy="no-referrer">` pointing at the content URL, so media behave as on the raw link; camera, microphone and location are never delegated. Never `srcdoc`. The only `srcdoc` frame in the app is M8's rendered Markdown diff, with `sandbox=""` (no permissions), because its HTML comes from the artifact and must never enter the app document.
 - **Annotator:** injected only into `text/html` responses of `review` grants, as `<script src="<grant base>/__pinwall/annotator.js" data-pinwall-annotator></script>` right after `<head>`, or right after the head's last `<meta http-equiv="Content-Security-Policy">` when it has any, so the page's own policy governs the script (spec §3.8: never relax it). Without a head: after `<html>`, else after the doctype, else after a BOM, else at byte 0; never before a doctype; no other byte changes; UTF-16 documents are left alone. The viewer sends anchors and pin numbers to the page, never comment bodies.
 - **Share links:** the token (`newSecret()`) is shown once and stored as `hashSecret(token)`; passwords as `hashPassword`. The unlock cookie is `__Secure-pinwall_share` on https (else `pinwall_share`), set twice with `Path=/s/<token>` and `Path=/api/v1/share/<token>`, `HttpOnly; SameSite=Lax; Secure (https)`, `Max-Age` ≤ 24 h and ≤ the link's expiry, value an HMAC bound to the link. Revoking a link deletes and tombstones the content grants made from it. Share viewers see only threads written on versions up to the one the link shows.
 - **Thumbnails** served from the app origin are raster images only (png, jpeg, webp, gif, avif), with `Content-Security-Policy: default-src 'none'; sandbox`; SVG thumbnails fall back to the generated card.
@@ -223,17 +223,19 @@ type Anchor = {
 };
 // page → viewer
 | { type: 'ready'; page: string; frameId: string }
-| { type: 'anchor-picked'; anchor: Anchor; frameId: string }          // user chose a spot in comment mode
+| { type: 'anchor-picked'; anchor: Anchor; frameId: string; client?: { x: number; y: number } }   // user chose a spot in comment mode; client = pointer position in that frame's viewport (M8)
 | { type: 'anchors-placed'; results: { id: string; found: boolean }[]; frameId: string }
 | { type: 'pin-clicked'; id: string }
 | { type: 'navigated'; page: string; frameId: string }
+| { type: 'scrolled'; frameId: string; x: number; y: number }      // fractions (0..1) of the scroll range; top content frame only (M8, compare scroll sync)
 // viewer → page
 | { type: 'set-mode'; mode: 'browse' | 'comment' }
 | { type: 'show-anchors'; anchors: { id: string; number: number; resolved: boolean; anchor: Anchor }[] }
 | { type: 'focus-anchor'; id: string }
+| { type: 'scroll-to'; x: number; y: number }                       // fractions (0..1); obeyed by the top content frame only (M8)
 ```
 
-Contract (M5 builds the annotator, M8 the viewer): the annotator defines one global, `window.__pinwallAnnotator`, and acts only on messages whose `event.source === window.top`; both sides validate with the zod schemas in `@pinwall/shared/protocol`. Each frame posts `ready` at DOMContentLoaded. On every `ready` the viewer sends `set-mode` and `show-anchors` to all descendant frames; each annotator keeps the anchors whose `page` is its own and always answers `anchors-placed`. `found` is true when a text or element anchor re-attached by quote or DOM path (and always for point anchors). A frame with no `ready` within 3 s of its `load` event has no annotator (for example, CSP-blocked) and gets point comments on the viewer's overlay.
+Contract (M5 builds the annotator, M8 the viewer): the annotator defines one global, `window.__pinwallAnnotator`, and acts only on messages whose `event.source === window.top`; both sides validate with the zod schemas in `@pinwall/shared/protocol`. Each frame posts `ready` at DOMContentLoaded. On every `ready` the viewer sends `set-mode` and `show-anchors` to all descendant frames; each annotator keeps the anchors whose `page` is its own and always answers `anchors-placed`. `found` is true when a text or element anchor re-attached by quote or DOM path (and always for point anchors). A frame with no `ready` within 3 s of its `load` event has no annotator (for example, CSP-blocked) and gets point comments on the viewer's overlay. Only the top content frame (`window.parent === window.top`) posts `scrolled` and obeys `scroll-to`.
 
 ## MCP tools (M6)
 
@@ -252,7 +254,7 @@ Contract (M5 builds the annotator, M8 the viewer): the annotator defines one glo
 | M5 | Comments, sharing, live updates, annotator | `…-m5-review-server.md` | M4 | |
 | M6 | MCP, OAuth authorization server, agent skill | `…-m6-mcp.md` | M3, M5 | |
 | M7 | Web app: shell, library, accounts, admin | `…-m7a-web-shell.md` (Tasks 1–7), `…-m7b-web-accounts-admin.md` (Tasks 8–12) | M3, M4 | |
-| M8 | Web app: review, compare, comments, sharing | `…-m8-web-review.md` | M5, M7 | |
+| M8 | Web app: review, compare, comments, sharing | `…-m8a-web-review.md` (Tasks 1–7), `…-m8b-web-share-compare.md` (Tasks 8–11) | M5, M7 | |
 | M9 | Operations and release | `…-m9-ops-release.md` | M6, M8 | |
 
 M3 and M4 can run in parallel, as can M5 with M7, and M6 with M8 — each pair on its own git worktree and branch, merged into `main` when done.
