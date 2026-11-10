@@ -6,5 +6,7 @@
   "error.server.title": "Something went wrong",
   "error.server.message": "Pinwall ran into an unexpected problem. Try again in a moment. If it keeps happening, share the request ID with whoever runs this Pinwall.",
   "error.requestId": "Request ID",
-  "error.goHome": "Go to Pinwall"
+  "error.goHome": "Go to Pinwall",
+  "auth.passkeyFailed": "This passkey could not be verified. Try again.",
+  "auth.passkeysUnavailable": "Passkeys need Pinwall to run on https or on localhost. Use a password, or set PINWALL_PUBLIC_ORIGIN to an https address."
 }
