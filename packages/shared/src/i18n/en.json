@@ -1,1 +1,10 @@
-{ "app.name": "Pinwall" }
+{
+  "app.name": "Pinwall",
+  "error.notFound.title": "Page not found",
+  "error.notFound.message": "There is nothing here. The link may be incomplete, or what it pointed to was moved or deleted.",
+  "error.client.title": "This request could not be completed",
+  "error.server.title": "Something went wrong",
+  "error.server.message": "Pinwall ran into an unexpected problem. Try again in a moment. If it keeps happening, share the request ID with whoever runs this Pinwall.",
+  "error.requestId": "Request ID",
+  "error.goHome": "Go to Pinwall"
+}

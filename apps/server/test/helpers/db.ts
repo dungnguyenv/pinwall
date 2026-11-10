@@ -31,16 +31,34 @@ async function openSqlite(): Promise<DbHandle> {
 }
 
 async function openPostgres(): Promise<DbHandle> {
+  const database = await createPostgresDatabase();
+  try {
+    const handle = await connectDb({ kind: 'postgres', url: database.url, poolSize: 4 });
+    return withCleanup(handle, database.drop);
+  } catch (error) {
+    await database.drop();
+    throw error;
+  }
+}
+
+/**
+ * Creates an empty Postgres database on the test server and returns its connection URL.
+ * `drop()` removes it, closing any connection still open to it.
+ */
+export async function createPostgresDatabase(): Promise<{ url: string; drop(): Promise<void> }> {
   if (!postgresUrl) throw new Error('PINWALL_TEST_POSTGRES_URL is not set');
   const name = `pinwall_test_${randomBytes(8).toString('hex')}`;
   await runAsAdmin(`create database ${name}`);
   const url = new URL(postgresUrl);
   url.pathname = `/${name}`;
-  const handle = await connectDb({ kind: 'postgres', url: url.href, poolSize: 4 });
-  return withCleanup(handle, () => runAsAdmin(`drop database if exists ${name} with (force)`));
+  return {
+    url: url.href,
+    drop: () => runAsAdmin(`drop database if exists ${name} with (force)`),
+  };
 }
 
-async function runAsAdmin(statement: string): Promise<void> {
+/** Runs one statement on the test server's maintenance database. */
+export async function runAsAdmin(statement: string): Promise<void> {
   const client = new pg.Client({ connectionString: postgresUrl });
   await client.connect();
   try {

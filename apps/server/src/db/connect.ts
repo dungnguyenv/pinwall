@@ -21,7 +21,14 @@ export interface DbHandle {
 // counters) fits a double exactly, so parse it to a number. This is process-wide in `pg`.
 pg.types.setTypeParser(20, Number);
 
-export async function connectDb(cfg: Config['database']): Promise<DbHandle> {
+/**
+ * Opens the configured database. `logger` receives errors that happen outside any query, such as
+ * an idle Postgres connection dropped by the server.
+ */
+export async function connectDb(
+  cfg: Config['database'],
+  logger?: { error(o: object, m: string): void },
+): Promise<DbHandle> {
   if (cfg.kind === 'sqlite') {
     await mkdir(dirname(cfg.path), { recursive: true });
     const database = new Sqlite(cfg.path);
@@ -42,7 +49,9 @@ export async function connectDb(cfg: Config['database']): Promise<DbHandle> {
   // Without a listener, an idle client losing its connection (server restart, network blip)
   // would crash the process. The pool discards that client and the next query reconnects;
   // a lasting outage surfaces as query errors and a failing `ping()`.
-  pool.on('error', () => {});
+  pool.on('error', (err) => {
+    logger?.error({ err }, 'An idle PostgreSQL connection failed; the pool will open a new one');
+  });
   return handle(new Kysely<Database>({ dialect: new PostgresDialect({ pool }) }), 'postgres');
 }
 
