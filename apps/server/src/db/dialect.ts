@@ -23,6 +23,16 @@ export interface SearchDocument {
   body: string;
 }
 
+/**
+ * The words search compares: runs of letters and digits in folded text. The query and, on
+ * Postgres, the indexed text both go through it, so `dashboard.html`, `ops@example.com` and
+ * `/docs/setup` are several words on both sides. Postgres' own parser would keep each whole;
+ * SQLite's `unicode61` tokenizer splits the same way by itself.
+ */
+function searchWords(folded: string): string[] {
+  return folded.split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 0);
+}
+
 /** Indexes (or re-indexes) one artifact. Text is folded with `foldForSearch` first. */
 export async function searchUpsert(h: DbScope, row: SearchDocument): Promise<void> {
   const name = foldForSearch(row.name);
@@ -42,7 +52,7 @@ export async function searchUpsert(h: DbScope, row: SearchDocument): Promise<voi
     return;
   }
 
-  const all = `${name} ${tags} ${body}`;
+  const all = searchWords(`${name} ${tags} ${body}`).join(' ');
   await sql`
     insert into search_index (artifact_id, name, tags, body, document)
     values (${row.artifactId}, ${name}, ${tags}, ${body},
@@ -69,9 +79,7 @@ export async function searchQuery(h: DbScope, q: string, limit: number): Promise
   if (!Number.isSafeInteger(limit) || limit < 0) {
     throw new RangeError(`search limit must be a non-negative integer, got ${limit}`);
   }
-  const words = foldForSearch(q)
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter((word) => word.length > 0);
+  const words = searchWords(foldForSearch(q));
   if (words.length === 0 || limit === 0) return [];
 
   if (h.dialect === 'sqlite') {

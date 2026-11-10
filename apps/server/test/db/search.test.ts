@@ -82,6 +82,39 @@ describe.each(dialects)('%s search', (dialect) => {
     expect(await searchQuery(h, '(plain) -text*', 10)).toEqual(['art_1']);
   });
 
+  test('file names, emails, hosts and paths are split into words, as the query is', async () => {
+    const h = await open('art_1', 'art_2', 'art_3', 'art_4');
+    await searchUpsert(h, { artifactId: 'art_1', name: 'dashboard.html', tags: '', body: '' });
+    await searchUpsert(h, {
+      artifactId: 'art_2',
+      name: 'Contacts',
+      tags: '',
+      body: 'Write to ops@example.com',
+    });
+    await searchUpsert(h, {
+      artifactId: 'art_3',
+      name: 'Guide',
+      tags: '',
+      body: 'See /docs/setup',
+    });
+    await searchUpsert(h, {
+      artifactId: 'art_4',
+      name: 'report_final.v2.html',
+      tags: 'chup.vn',
+      body: 'https://chup.vn/anh-dep?x=1',
+    });
+
+    expect(await searchQuery(h, 'dashboard', 10)).toEqual(['art_1']);
+    expect(await searchQuery(h, 'dashboard.html', 10)).toEqual(['art_1']);
+    expect(await searchQuery(h, 'example', 10)).toEqual(['art_2']);
+    expect(await searchQuery(h, 'ops@example.com', 10)).toEqual(['art_2']);
+    expect(await searchQuery(h, 'setup', 10)).toEqual(['art_3']);
+    expect(await searchQuery(h, 'docs', 10)).toEqual(['art_3']);
+    expect(await searchQuery(h, 'final v2', 10)).toEqual(['art_4']);
+    expect(await searchQuery(h, 'anh dep', 10)).toEqual(['art_4']);
+    expect(await searchQuery(h, 'chup', 10)).toEqual(['art_4']);
+  });
+
   test('operator words in the query are plain words', async () => {
     const h = await open('art_1');
     await searchUpsert(h, {
