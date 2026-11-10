@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Timestamp } from './common.ts';
+import { PasskeyAuthenticationResponse } from './passkeys.ts';
 
 /** The signed-in user, and how this request was authenticated. */
 export const Me = z.object({
@@ -18,3 +19,13 @@ export const Me = z.object({
   created_at: Timestamp,
 });
 export type Me = z.infer<typeof Me>;
+
+export const PasswordSignInRequest = z.object({ password: z.string().min(1).max(1024) });
+export type PasswordSignInRequest = z.infer<typeof PasswordSignInRequest>;
+
+/** Finishes a passkey sign-in begun with `POST /auth/passkey/options`. */
+export const PasskeySignInRequest = z.object({
+  ceremony_id: z.string().min(1).max(200),
+  response: PasskeyAuthenticationResponse,
+});
+export type PasskeySignInRequest = z.infer<typeof PasskeySignInRequest>;

@@ -25,5 +25,7 @@
   "auth.setup.needCredential": "Choose a password, a passkey, or both.",
   "auth.passwordTooShort": "Use at least {{min}} characters.",
   "auth.passwordTooLong": "Use at most {{max}} characters.",
-  "auth.passkey.defaultName": "Passkey 1"
+  "auth.passkey.defaultName": "Passkey 1",
+  "auth.wrongPassword": "Wrong password.",
+  "auth.setup.required": "Pinwall is not set up yet. Open the setup link printed in the server log."
 }

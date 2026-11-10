@@ -8,6 +8,8 @@ import {
   PASSWORD_MIN_LENGTH,
   PasskeyAuthenticationResponse,
   PasskeyRegistrationResponse,
+  PasskeySignInRequest,
+  PasswordSignInRequest,
   page,
   SetupPasskeyOptionsRequest,
   SetupRequest,
@@ -99,4 +101,18 @@ test('a setup request needs a token and a name; email, password and passkey are 
 
 test('the password limits are 12 to 256 characters', () => {
   expect([PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH]).toEqual([12, 256]);
+});
+
+test('sign-in requests need a password, or a ceremony id and an assertion', () => {
+  expect(PasswordSignInRequest.safeParse({ password: 'x' }).success).toBe(true);
+  expect(PasswordSignInRequest.safeParse({ password: '' }).success).toBe(false);
+  expect(PasswordSignInRequest.safeParse({ password: 'x'.repeat(1025) }).success).toBe(false);
+  const response = {
+    id: 'cred',
+    rawId: 'cred',
+    type: 'public-key',
+    response: { clientDataJSON: 'cd', authenticatorData: 'ad', signature: 'sig', userHandle: 'u' },
+  };
+  expect(PasskeySignInRequest.safeParse({ ceremony_id: 'c', response }).success).toBe(true);
+  expect(PasskeySignInRequest.safeParse({ ceremony_id: '', response }).success).toBe(false);
 });
