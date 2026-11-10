@@ -117,8 +117,8 @@ pinwall/
 | `PINWALL_S3_BUCKET`, `_REGION` (`us-east-1`), `_ENDPOINT`, `_ACCESS_KEY_ID`, `_SECRET_ACCESS_KEY`, `_FORCE_PATH_STYLE` (`false`), `_PREFIX` (empty) | | Keys accept `_FILE`. |
 | `PINWALL_ISOLATION` | `single-domain` | or `content-domain`. Change = restart. |
 | `PINWALL_CONTENT_ORIGIN` | — | Required for `content-domain`, e.g. `https://pinwall-content.example`; content URLs are `<scheme>://<token>.<host>[:port]/`. Must not equal the app host or a parent of it; a warning is logged when it shares the app's registrable domain. |
-| `PINWALL_SECRET_KEY` | generated | ≥ 32 bytes, base64 or hex. If unset, generated once into `<data dir>/secret.key` (mode 0600). Keys for encryption and HMAC are derived from it with HKDF per purpose. |
-| `PINWALL_TRUST_PROXY` | `false` | `true` or a comma list of CIDRs; only then is `X-Forwarded-For` used for the client IP. |
+| `PINWALL_SECRET_KEY` | generated | ≥ 32 bytes, base64 or hex. **Required when the database is Postgres** (a generated key would not survive a container without a persistent data dir). If unset with SQLite, generated once into `<data dir>/secret.key` (mode 0600), next to the database it protects. Keys for encryption and HMAC are derived from it with HKDF per purpose. |
+| `PINWALL_TRUST_PROXY` | `false` | `true` (exactly one trusted hop in front) or a comma list of trusted proxy CIDRs; only then is `X-Forwarded-For` used, taking the right-most entry not belonging to a trusted proxy. |
 | `PINWALL_OIDC_ISSUER`, `PINWALL_OIDC_CLIENT_ID`, `PINWALL_OIDC_CLIENT_SECRET` | — | All OIDC is off unless issuer + client id are set. |
 | `PINWALL_OIDC_SCOPES` | `openid email profile offline_access` | |
 | `PINWALL_OIDC_DISPLAY_NAME` | `Single sign-on` | Sign-in button label. |
