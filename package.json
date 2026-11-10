@@ -11,7 +11,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "test:integration": "pnpm -r --if-present test:integration",
+    "test:integration": "docker compose -f docker-compose.test.yml up -d --wait && PINWALL_TEST_POSTGRES_URL=postgres://pinwall:pinwall@localhost:55432/pinwall PINWALL_TEST_S3_ENDPOINT=http://localhost:59000 PINWALL_TEST_S3_BUCKET=pinwall-test PINWALL_TEST_S3_ACCESS_KEY_ID=pinwall PINWALL_TEST_S3_SECRET_ACCESS_KEY=pinwall-secret pnpm test",
     "lint": "biome check .",
     "format": "biome check --write .",
     "typecheck": "pnpm -r exec tsc --noEmit"
