@@ -340,6 +340,17 @@ export function loadConfig(
     secretKeyRaw === undefined
       ? null
       : (r.validate('PINWALL_SECRET_KEY', custom(decodeSecretKey), secretKeyRaw) ?? null);
+  const secretKeySet =
+    r.raw('PINWALL_SECRET_KEY') !== undefined || r.raw('PINWALL_SECRET_KEY_FILE') !== undefined;
+  if (database.kind === 'postgres' && !secretKeySet) {
+    r.fail(
+      'PINWALL_SECRET_KEY',
+      'required when the database is PostgreSQL: without it a key is generated into the data dir, ' +
+        'which a container without a persistent volume loses on every restart, and what was ' +
+        'encrypted with the old key can no longer be read. Set PINWALL_SECRET_KEY or ' +
+        'PINWALL_SECRET_KEY_FILE (generate one with: openssl rand -hex 32)',
+    );
+  }
   const trustProxy = r.read('PINWALL_TRUST_PROXY', custom(parseTrustProxy)) ?? false;
 
   // Single sign-on

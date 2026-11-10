@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,8 +25,9 @@ export interface TestContext {
 
 /**
  * A complete app on a fresh temp data dir: migrated database (SQLite in the data dir, or a new
- * Postgres database on the test server), local blobs, a silent logger unless `PINWALL_LOG_LEVEL`
- * is given. A `PINWALL_DATA_DIR` passed in `env` is used and left in place on close.
+ * Postgres database on the test server, with a random `PINWALL_SECRET_KEY`), local blobs, a
+ * silent logger unless `PINWALL_LOG_LEVEL` is given. A `PINWALL_DATA_DIR` passed in `env` is used
+ * and left in place on close.
  */
 export async function createTestContext(
   opts: { env?: Record<string, string>; dialect?: DbDialect; clock?: FixedClock } = {},
@@ -49,6 +51,10 @@ export async function createTestContext(
       cleanups.push(database.drop);
       env.PINWALL_DATABASE_URL = database.url;
       env.PINWALL_DATABASE_POOL_SIZE = '4';
+      // Postgres needs an explicit key; a `PINWALL_SECRET_KEY_FILE` in `env` replaces it.
+      if (given.PINWALL_SECRET_KEY_FILE === undefined) {
+        env.PINWALL_SECRET_KEY = randomBytes(32).toString('hex');
+      }
     }
     Object.assign(env, given);
 

@@ -15,7 +15,14 @@ describe.each(dialects)('createDeps on %s', (dialect) => {
     expect(tables.map((table) => table.name)).toContain('users');
     const key = ctx.deps.config.secretKey;
     expect(key?.length).toBe(32);
-    expect(await readFile(join(ctx.deps.config.dataDir, 'secret.key'))).toEqual(key);
+    const keyFile = join(ctx.deps.config.dataDir, 'secret.key');
+    if (dialect === 'sqlite') {
+      // Generated on first start, next to the database it protects.
+      expect(await readFile(keyFile)).toEqual(key);
+    } else {
+      // Postgres requires PINWALL_SECRET_KEY, so nothing is generated into the data dir.
+      await expect(readFile(keyFile)).rejects.toThrow(/ENOENT/);
+    }
   });
 
   test('logs what an event handler throws', async () => {

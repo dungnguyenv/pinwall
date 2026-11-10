@@ -23,7 +23,10 @@ export interface Config {
         mode: 'content-domain';
         contentOrigin: { scheme: 'http' | 'https'; host: string; port?: number };
       };
-  /** `null` means `ensureSecretKey` generates and persists one. */
+  /**
+   * `null` means `ensureSecretKey` generates and persists one. Only with SQLite: `loadConfig`
+   * requires a key when the database is Postgres.
+   */
   secretKey: Buffer | null;
   trustProxy: false | true | string[];
   oidc: null | {

@@ -287,18 +287,41 @@ describe('durations and limits', () => {
 });
 
 describe('database and storage', () => {
+  const key = { PINWALL_SECRET_KEY: 'ab'.repeat(32) };
+
   test('postgres url and pool size', () => {
-    expect(loadConfig({ PINWALL_DATABASE_URL: 'postgres://u:p@h/db' }).database).toEqual({
+    expect(loadConfig({ ...key, PINWALL_DATABASE_URL: 'postgres://u:p@h/db' }).database).toEqual({
       kind: 'postgres',
       url: 'postgres://u:p@h/db',
       poolSize: 10,
     });
     expect(
       loadConfig({
+        ...key,
         PINWALL_DATABASE_URL: 'postgresql://u:p@h/db',
         PINWALL_DATABASE_POOL_SIZE: '25',
       }).database,
     ).toMatchObject({ kind: 'postgres', poolSize: 25 });
+  });
+
+  test('postgres requires PINWALL_SECRET_KEY, since a generated key would not survive', () => {
+    const issues = issuesOf({ PINWALL_DATABASE_URL: 'postgres://u:hunter2@h/db' });
+    expect(issues).toEqual([expect.stringMatching(/^PINWALL_SECRET_KEY: required when /)]);
+    expect(issues[0]).toContain('PINWALL_SECRET_KEY_FILE');
+    expect(issues[0]).toMatch(/data dir/);
+    expect(issues[0]).not.toContain('hunter2');
+
+    const fromFile = loadConfig(
+      { PINWALL_DATABASE_URL: 'postgres://u:p@h/db', PINWALL_SECRET_KEY_FILE: '/run/key' },
+      { readFile: () => 'cd'.repeat(32) },
+    );
+    expect(fromFile.secretKey?.equals(Buffer.alloc(32, 0xcd))).toBe(true);
+    // A key that is set but unusable is reported once, as itself.
+    expect(
+      issuesOf({ PINWALL_DATABASE_URL: 'postgres://u:p@h/db', PINWALL_SECRET_KEY: 'abcd' }),
+    ).toEqual([expect.stringMatching(/^PINWALL_SECRET_KEY: must decode to at least 32 bytes/)]);
+    // SQLite keeps generating the key next to the database.
+    expect(loadConfig({ PINWALL_DATABASE_URL: 'sqlite:x.db' }).secretKey).toBeNull();
   });
 
   test('sqlite urls: absolute, relative to the data dir', () => {
