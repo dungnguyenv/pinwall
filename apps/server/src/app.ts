@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { buildApiRouter } from './api/router.ts';
 import type { UserRow } from './db/schema.ts';
 import type { AppDeps } from './deps.ts';
 import { errorHandler, notFoundHandler } from './http/errors.ts';
@@ -63,8 +64,8 @@ function mountHealth(app: Hono<AppEnv>, deps: AppDeps): void {
 
 /**
  * The app origin. Middleware runs in this order: request id, request log, deps injection,
- * security headers; then health checks, the pages stylesheet, later milestones' routers, and the
- * SPA last, since it answers every remaining browser GET.
+ * security headers; then health checks, the pages stylesheet, the API router, later milestones'
+ * routers, and the SPA last, since it answers every remaining browser GET.
  */
 export function buildApp(deps: AppDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -86,6 +87,8 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
       'Cache-Control': 'public, max-age=31536000, immutable',
     }),
   );
+
+  app.route('/api/v1', buildApiRouter());
 
   mountSpa(app, deps.config.webDir ?? defaultWebDir(), deps.logger);
 

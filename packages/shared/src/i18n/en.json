@@ -8,5 +8,8 @@
   "error.requestId": "Request ID",
   "error.goHome": "Go to Pinwall",
   "auth.passkeyFailed": "This passkey could not be verified. Try again.",
-  "auth.passkeysUnavailable": "Passkeys need Pinwall to run on https or on localhost. Use a password, or set PINWALL_PUBLIC_ORIGIN to an https address."
+  "auth.passkeysUnavailable": "Passkeys need Pinwall to run on https or on localhost. Use a password, or set PINWALL_PUBLIC_ORIGIN to an https address.",
+  "error.validation": "Some fields are missing or invalid.",
+  "error.tooLarge": "The request body is too large.",
+  "error.cursor": "This page link is no longer valid. Start from the first page."
 }
