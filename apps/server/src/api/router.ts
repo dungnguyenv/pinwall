@@ -7,6 +7,7 @@ import { registerAuthRoutes } from './auth.ts';
 import { registerConfigRoutes } from './config.ts';
 import { registerMeRoutes } from './me.ts';
 import { registerSetupRoutes } from './setup.ts';
+import { registerTokenRoutes } from './tokens.ts';
 
 /**
  * A bare API router: a body or parameter that fails its schema becomes a `bad_request` listing
@@ -56,6 +57,7 @@ export function buildApiRouter(): OpenAPIHono<AppEnv> {
   registerMeRoutes(api);
   registerAuthRoutes(api);
   registerSetupRoutes(api);
+  registerTokenRoutes(api);
 
   return api;
 }

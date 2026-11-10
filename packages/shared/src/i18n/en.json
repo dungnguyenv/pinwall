@@ -27,5 +27,7 @@
   "auth.passwordTooLong": "Use at most {{max}} characters.",
   "auth.passkey.defaultName": "Passkey 1",
   "auth.wrongPassword": "Wrong password.",
-  "auth.setup.required": "Pinwall is not set up yet. Open the setup link printed in the server log."
+  "auth.setup.required": "Pinwall is not set up yet. Open the setup link printed in the server log.",
+  "auth.tokenLimit": "You have reached the limit of {{max}} API tokens. Revoke one first.",
+  "auth.tokenNotFound": "This API token does not exist, or it was already revoked."
 }

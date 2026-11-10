@@ -1,5 +1,6 @@
 import { CeremonyOptions, Me } from '@pinwall/shared';
 import type { PublicKeyCredentialCreationOptionsJSON } from '@simplewebauthn/server';
+import { createApiToken } from '../../src/auth/api-tokens.ts';
 import type { Role } from '../../src/auth/roles.ts';
 import { sessionCookieName } from '../../src/auth/session-cookie.ts';
 import { type AuthMethod, createSession } from '../../src/auth/sessions.ts';
@@ -97,6 +98,22 @@ export async function createSignedInUser(
     userAgent: 'vitest',
   });
   return { user, cookie: `${sessionCookieName(ctx.deps.config)}=${secret}` };
+}
+
+/**
+ * Makes an API token for `userId` the way the service does and returns its secret, the value to
+ * send as `Authorization: Bearer`. Defaults: named "test", never expires.
+ */
+export async function createUserToken(
+  ctx: TestContext,
+  userId: string,
+  o: { name?: string; expiresInDays?: number | null } = {},
+): Promise<string> {
+  const { secret } = await createApiToken(ctx.deps, userId, {
+    name: o.name ?? 'test',
+    expiresInDays: o.expiresInDays ?? null,
+  });
+  return secret;
 }
 
 /** The password `setupOwner` gives the owner when the test names no credential. */

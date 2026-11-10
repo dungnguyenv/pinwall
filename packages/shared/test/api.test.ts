@@ -2,6 +2,7 @@ import { expect, test } from 'vitest';
 import { z } from 'zod';
 import {
   CeremonyOptions,
+  CreateApiTokenRequest,
   ErrorBody,
   Label,
   PASSWORD_MAX_LENGTH,
@@ -115,4 +116,13 @@ test('sign-in requests need a password, or a ceremony id and an assertion', () =
   };
   expect(PasskeySignInRequest.safeParse({ ceremony_id: 'c', response }).success).toBe(true);
   expect(PasskeySignInRequest.safeParse({ ceremony_id: '', response }).success).toBe(false);
+});
+
+test('an API token request keeps expiry within 1 to 3650 whole days, or none', () => {
+  const parse = (expires_in_days?: unknown) =>
+    CreateApiTokenRequest.safeParse({ name: ' ci ', expires_in_days }).success;
+  expect(CreateApiTokenRequest.parse({ name: ' ci ' })).toEqual({ name: 'ci' });
+  expect([parse(undefined), parse(null), parse(1), parse(3650)]).toEqual([true, true, true, true]);
+  expect([parse(0), parse(3651), parse(1.5), parse('7')]).toEqual([false, false, false, false]);
+  expect(CreateApiTokenRequest.safeParse({ name: '' }).success).toBe(false);
 });
