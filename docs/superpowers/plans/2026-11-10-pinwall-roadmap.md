@@ -182,6 +182,7 @@ App origin (`PINWALL_PUBLIC_ORIGIN`):
 | `GET /auth/oidc/start`, `GET /auth/oidc/callback` | OIDC browser redirects | M3 |
 | `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`, `/.well-known/oauth-protected-resource/mcp` | OAuth metadata | M6 |
 | `POST /oauth/register`, `GET /oauth/authorize`, `POST /oauth/token`, `POST /oauth/revoke` | OAuth 2.1 AS for MCP; `/oauth/authorize` hands off to SPA route `/oauth/consent?request=<id>` | M6 |
+| `GET /api/v1/oauth/requests/:id`, `POST /api/v1/oauth/requests/:id/decision` | consent page API (session only): GET → `{ client_name, client_uri, redirect_host, scopes, user: { name, email } }`; POST `{ approve: boolean }` → `{ redirect_to }` (the SPA then sets `window.location`) | M6 (page in M7) |
 | `/mcp` | MCP Streamable HTTP; bearer only (OAuth access token or API token) | M6 |
 | `POST /upload/:token` | one-time upload URL; no cookies, no bearer | M4 |
 | `GET /a/:artifactId/raw`, `GET /a/:artifactId/v/:n/raw` | members: redirect to a fresh raw content grant | M4 |
