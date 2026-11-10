@@ -1,0 +1,19 @@
+# Keep the build context to what the image build reads.
+.git
+.github
+.superpowers
+.DS_Store
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+.env
+.env.*
+!.env.example
+playwright-report
+test-results
+docs
+deploy
+docker-compose.test.yml
+Dockerfile
+.dockerignore

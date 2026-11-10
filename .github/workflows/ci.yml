@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer run of the same branch or pull request makes the older one pointless.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Lint, typecheck, test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # The same names and values as `pnpm test:integration`; the compose file below publishes
+      # Postgres and MinIO on these ports.
+      PINWALL_TEST_POSTGRES_URL: postgres://pinwall:pinwall@localhost:55432/pinwall
+      PINWALL_TEST_S3_ENDPOINT: http://localhost:59000
+      PINWALL_TEST_S3_BUCKET: pinwall-test
+      PINWALL_TEST_S3_ACCESS_KEY_ID: pinwall
+      PINWALL_TEST_S3_SECRET_ACCESS_KEY: pinwall-secret
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The pnpm version comes from "packageManager" in package.json.
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          cache: true
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+
+      # Postgres 17 and MinIO (with the test bucket) from the file developers use locally. A
+      # GitHub service container cannot give MinIO its `server /data` command, so both start here.
+      - name: Start Postgres and MinIO
+        run: docker compose -f docker-compose.test.yml up -d --wait
+
+      - run: pnpm test
+
+      - name: Show service logs after a failure
+        if: failure()
+        run: docker compose -f docker-compose.test.yml logs --no-color --tail=100
+
+  image:
+    name: Container image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build
+        run: docker build --tag pinwall:ci .
+
+      # The image's own health check has to turn healthy, and the migrate command has to run.
+      - name: Smoke test
+        run: |
+          docker run --detach --name pinwall-smoke --read-only --tmpfs /tmp \
+            --publish 8080:8080 pinwall:ci
+          for _ in $(seq 1 30); do
+            [ "$(docker inspect --format '{{.State.Health.Status}}' pinwall-smoke)" = healthy ] && break
+            sleep 2
+          done
+          curl --fail --silent --show-error http://localhost:8080/healthz
+          curl --fail --silent --show-error http://localhost:8080/readyz
+          docker exec pinwall-smoke pinwall migrate
+
+      - name: Show container logs after a failure
+        if: failure()
+        run: docker logs pinwall-smoke

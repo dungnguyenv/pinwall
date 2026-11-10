@@ -1,0 +1,37 @@
+# Pinwall on one host: SQLite and local blob storage in a named volume, nothing else to run.
+#
+#   docker compose up -d --build
+#
+# Put a TLS-terminating reverse proxy in front of port 8080 and set PINWALL_PUBLIC_ORIGIN to the
+# address people use. For a trial on this machine, use http://localhost:8080 instead.
+name: pinwall
+
+services:
+  pinwall:
+    # Built from this repository until an image is published.
+    image: pinwall:local
+    build:
+      context: ../..
+    restart: unless-stopped
+    environment:
+      # Replace the placeholder. Every link, cookie flag and redirect is built from this origin
+      # (scheme and host, no path), never from the Host header.
+      PINWALL_PUBLIC_ORIGIN: https://pinwall.example.com
+      # The instance secret key is generated into the data volume on first start; back the
+      # volume up. To supply your own, add PINWALL_SECRET_KEY_FILE and mount the file.
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - pinwall-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # The server allows 10 s to close its connections and the database after a stop signal.
+    stop_grace_period: 15s
+
+volumes:
+  pinwall-data:
