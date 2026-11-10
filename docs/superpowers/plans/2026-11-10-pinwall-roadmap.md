@@ -165,6 +165,7 @@ Migration `0001_initial` (M1) creates every table below; later milestones add mi
 | `share_links` | `id`, `artifact_id` (FK cascade), `version_id` (FK cascade, null = follow current), `token_hash` (unique), `password_hash`, `allow_comments`, `expires_at`, `created_by` (FK set null), `created_at`, `last_used_at`, `revoked_at` |
 | `comments` | `id`, `artifact_id` (FK cascade), `version_id` (FK cascade — the version it was written on), `parent_id` (FK cascade, null = thread root), `author_user_id` (FK set null), `guest_name`, `share_link_id` (FK set null), `body`, `anchor` (JSON, roots only), `status` (`open`/`resolved`, roots only), `resolved_in_version_id` (FK set null), `resolved_by` (FK set null), `resolved_at`, `created_at`, `updated_at`, `edited_at` |
 | `leases` | `name`, `holder`, `expires_at` |
+| `tombstones` | (`kind` `artifact`/`content_grant`/`share_link`, `key` = artifact id / grant token / share `token_hash`), `deleted_at`, `expires_at` (null = kept) — migration `0002_publishing` (M4), which also indexes `version_files(sha256)`. Deleted things answer 410 from here. Blob GC defers while lease `maintenance:backup` is held. |
 | `search_index` | SQLite: FTS5 virtual table `(artifact_id UNINDEXED, name, tags, body)` with `tokenize='unicode61 remove_diacritics 2'`. Postgres: table `(artifact_id PK FK cascade, name, tags, body, document tsvector)` + GIN index, `CREATE EXTENSION IF NOT EXISTS unaccent`. Text is passed through `foldForSearch` before indexing and querying in both. |
 
 Effective role: `role_override ?? (kind = 'owner' ? 'admin' : idp_role)`; `blocked` or `disabled_at` set means no access. Deleting a version deletes the comment threads written on it (the UI says so).
@@ -241,7 +242,7 @@ type Anchor = {
 | M1 | Foundation | `…-m1-foundation.md` | — | planned |
 | M2 | Owner account, sessions, API tokens | `…-m2-identity.md` | M1 | |
 | M3 | OIDC, roles, access re-check | `…-m3-oidc.md` | M2 | |
-| M4 | Publishing and content serving | `…-m4-publishing.md` | M2 | |
+| M4 | Publishing and content serving | `…-m4a-publishing-core.md` (Tasks 1–6), `…-m4b-publishing-http.md` (Tasks 7–13) | M2 | |
 | M5 | Comments, sharing, live updates, annotator | `…-m5-review-server.md` | M4 | |
 | M6 | MCP, OAuth authorization server, agent skill | `…-m6-mcp.md` | M3, M5 | |
 | M7 | Web app: shell, library, accounts, admin | `…-m7-web-shell.md` | M3, M4 | |
