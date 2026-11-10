@@ -37,10 +37,17 @@ test('entries a client sent ahead of the trusted proxies are ignored', async () 
   expect(await ipOf(['10.0.0.5', '10.0.0.9'], '10.0.0.5', '1.1.1.1, 203.0.113.7, 10.0.0.9')).toBe(
     '203.0.113.7',
   );
+  // A spoofed entry inside a trusted range is still left of the real client.
+  expect(await ipOf(['10.0.0.0/8'], '10.0.0.5', '10.0.0.66, 203.0.113.7')).toBe('203.0.113.7');
+  // With `true` the one proxy appended 203.0.113.7; whatever the client sent is to its left.
+  expect(await ipOf(true, '10.0.0.5', '1.1.1.1, 203.0.113.7')).toBe('203.0.113.7');
+  expect(await ipOf(true, '10.0.0.5', '10.0.0.66, 1.1.1.1, 203.0.113.7')).toBe('203.0.113.7');
 });
 
-test('trusting every proxy takes the left-most address', async () => {
-  expect(await ipOf(true, '10.0.0.5', '203.0.113.7, 10.0.0.9')).toBe('203.0.113.7');
+test('true trusts exactly one proxy: the right-most entry is the client', async () => {
+  // Only the socket peer is trusted, so the address it appended is the client, even a private one.
+  expect(await ipOf(true, '10.0.0.5', '203.0.113.7, 10.0.0.9')).toBe('10.0.0.9');
+  expect(await ipOf(true, '10.0.0.5', '203.0.113.7')).toBe('203.0.113.7');
   expect(await ipOf(true, '10.0.0.5')).toBe('10.0.0.5');
 });
 

@@ -44,26 +44,35 @@ function rangesOf(entries: string[]): BlockList {
 
 /**
  * The address of the client that sent the request. Without `PINWALL_TRUST_PROXY` it is the
- * socket's peer and `X-Forwarded-For` is ignored. When the peer is a trusted proxy, the header is
- * read right to left, skipping trusted proxies, and the first untrusted address is the client
- * (with `true` every hop is trusted, so that is the left-most one). Entries to the left of it are
- * whatever the client wrote and are never used; an entry that is not an IP address ends the walk.
+ * socket's peer and `X-Forwarded-For` is ignored. Proxies append the address they received the
+ * request from, so only the right end of the header can be believed:
+ * - `true` means exactly one trusted proxy (the peer), so the client is the right-most entry;
+ * - with a list, the peer must be in it, and the header is read right to left, skipping trusted
+ *   proxies: the first address outside the list is the client.
+ * Entries to the left of the client are whatever the client wrote and are never used. An entry
+ * that is not an IP address ends the walk, and the last hop before it is the client.
  */
 export function clientIp(c: Context, trustProxy: Config['trustProxy']): string {
   const peer = socketAddress(c);
   if (trustProxy === false) return peer;
 
-  const isTrusted = (address: string): boolean => {
-    if (trustProxy === true) return true;
-    const family = familyOf(address);
-    return family !== null && rangesOf(trustProxy).check(address, family);
-  };
-  if (!isTrusted(peer)) return peer;
-
   const hops = (c.req.header('x-forwarded-for') ?? '')
     .split(',')
     .map((hop) => unmapIpv4(hop.trim()))
     .filter((hop) => hop.length > 0);
+
+  if (trustProxy === true) {
+    const last = hops.at(-1);
+    return last !== undefined && familyOf(last) !== null ? last : peer;
+  }
+
+  const ranges = rangesOf(trustProxy);
+  const isTrusted = (address: string): boolean => {
+    const family = familyOf(address);
+    return family !== null && ranges.check(address, family);
+  };
+  if (!isTrusted(peer)) return peer;
+
   let client = peer;
   for (const hop of hops.reverse()) {
     if (familyOf(hop) === null) break;
