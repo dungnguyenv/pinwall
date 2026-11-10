@@ -1,13 +1,12 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
-import type { MiddlewareHandler } from 'hono';
-import { bodyLimit } from 'hono/body-limit';
 import type { AppEnv } from '../app.ts';
 import { publicUrl } from '../http/public-url.ts';
-import { badRequest, payloadTooLarge } from '../lib/errors.ts';
+import { badRequest } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { registerAuthRoutes } from './auth.ts';
 import { registerConfigRoutes } from './config.ts';
 import { registerMeRoutes } from './me.ts';
+import { registerSetupRoutes } from './setup.ts';
 
 /**
  * A bare API router: a body or parameter that fails its schema becomes a `bad_request` listing
@@ -27,14 +26,6 @@ export function createApiRouter(): OpenAPIHono<AppEnv> {
     },
   });
 }
-
-/** Route-level guard for routes with a JSON body: more than 64 KiB is a `payload_too_large`. */
-export const jsonBodyLimit: MiddlewareHandler = bodyLimit({
-  maxSize: 65_536,
-  onError: () => {
-    throw payloadTooLarge(t('error.tooLarge'));
-  },
-});
 
 /**
  * The router mounted at `/api/v1`. Every resource module adds one `registerXRoutes(api)` line
@@ -64,6 +55,7 @@ export function buildApiRouter(): OpenAPIHono<AppEnv> {
   registerConfigRoutes(api);
   registerMeRoutes(api);
   registerAuthRoutes(api);
+  registerSetupRoutes(api);
 
   return api;
 }

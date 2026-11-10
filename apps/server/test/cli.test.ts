@@ -42,17 +42,21 @@ async function tempDataDir(): Promise<string> {
   return dir;
 }
 
+/** The first log line with message `msg`, or for which `msg` returns true. */
 async function waitForLog(
   child: ChildProcess,
   output: { stdout: string },
-  msg: string,
+  msg: string | ((entry: Record<string, unknown>) => boolean),
 ): Promise<Record<string, unknown>> {
+  const matches =
+    typeof msg === 'string' ? (entry: Record<string, unknown>) => entry.msg === msg : msg;
+  const what = typeof msg === 'string' ? `"${msg}"` : 'the expected line';
   const deadline = Date.now() + 15_000;
   for (;;) {
-    const line = logLines(output.stdout).find((entry) => entry.msg === msg);
+    const line = logLines(output.stdout).find(matches);
     if (line) return line;
-    if (child.exitCode !== null) throw new Error(`exited before logging "${msg}"`);
-    if (Date.now() > deadline) throw new Error(`timed out waiting for "${msg}"`);
+    if (child.exitCode !== null) throw new Error(`exited before logging ${what}`);
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }
@@ -85,6 +89,10 @@ test('migrate applies the migrations and exits', async () => {
   const h = await connectDb({ kind: 'sqlite', path: join(dataDir, 'pinwall.db') });
   onTestFinished(() => h.close());
   expect((await h.db.introspection.getTables()).map((table) => table.name)).toContain('users');
+
+  // Only a running server can be set up, so migrate prints no setup link.
+  expect(logLines(output.stdout).some((line) => 'setup_url' in line)).toBe(false);
+  expect(output.stdout + output.stderr).not.toContain('/setup?token=');
 }, 20_000);
 
 test('serve listens, answers health checks and stops cleanly on SIGTERM', async () => {
@@ -113,6 +121,19 @@ test('serve listens, answers health checks and stops cleanly on SIGTERM', async 
 
   const r = await fetch(`http://127.0.0.1:${listening.port}/healthz`);
   expect(await r.json()).toEqual({ status: 'ok' });
+
+  // No owner yet: the setup link follows the listening line, in the JSON log and on stderr.
+  const setup = await waitForLog(child, output, (entry) => 'setup_url' in entry);
+  expect(setup).toMatchObject({
+    level: 'warn',
+    setup_url: expect.stringMatching(/^http:\/\/pinwall\.example\.com\/setup\?token=[\w-]{43}$/),
+  });
+  const lines = logLines(output.stdout);
+  const setupAt = lines.findIndex((line) => 'setup_url' in line);
+  expect(setupAt).toBeGreaterThan(lines.findIndex((line) => line.msg === 'listening'));
+  expect(output.stderr).toContain(
+    `Pinwall setup: open ${setup.setup_url} to create the owner account\n`,
+  );
 
   child.kill('SIGTERM');
   expect(await exited).toBe(0);

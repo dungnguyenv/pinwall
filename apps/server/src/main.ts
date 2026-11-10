@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { parseArgs } from 'node:util';
 import { serve } from '@hono/node-server';
 import { buildApp } from './app.ts';
+import { startAuth } from './auth/startup.ts';
 import { type Config, ConfigError, loadConfig } from './config/load.ts';
 import { connectDb } from './db/connect.ts';
 import { migrateToLatest } from './db/migrate.ts';
@@ -69,6 +70,7 @@ async function runServer(config: Config, logger: Logger): Promise<void> {
     port: config.listen.port,
   }) as Server;
 
+  let stopping = false;
   server.once('listening', () => {
     const { address, port } = server.address() as AddressInfo;
     const { isolation } = config;
@@ -86,13 +88,25 @@ async function runServer(config: Config, logger: Logger): Promise<void> {
       },
       'listening',
     );
+    startAuth(deps).then(
+      (setupUrl) => {
+        // Also as plain text, for someone watching `docker run` rather than reading JSON logs.
+        if (setupUrl !== null) {
+          console.error(`Pinwall setup: open ${setupUrl} to create the owner account`);
+        }
+      },
+      (err: unknown) => {
+        if (stopping) return;
+        logger.fatal({ err }, 'Pinwall cannot start');
+        void closeDeps(deps).finally(() => process.exit(1));
+      },
+    );
   });
   server.once('error', (err) => {
     logger.fatal({ err }, 'The server cannot listen');
     void closeDeps(deps).finally(() => process.exit(1));
   });
 
-  let stopping = false;
   const stop = (signal: NodeJS.Signals) => {
     if (stopping) {
       logger.warn({ signal }, 'Second stop signal: exiting now');

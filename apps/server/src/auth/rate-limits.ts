@@ -1,4 +1,4 @@
-import type { Context } from 'hono';
+import type { Context, MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../app.ts';
 import { clientIp } from '../http/client-ip.ts';
 import { rateLimited } from '../lib/errors.ts';
@@ -39,4 +39,15 @@ export async function enforceRateLimit(
     rule.windowMs,
   );
   if (!allowed) throw rateLimited(Math.ceil(retryAfterMs / 1000));
+}
+
+/**
+ * `enforceRateLimit` as route middleware, so the attempt counts before the body is read or
+ * validated: malformed requests use up the limit too.
+ */
+export function rateLimit(rule: RateRule, key?: string): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    await enforceRateLimit(c, rule, key);
+    await next();
+  };
 }

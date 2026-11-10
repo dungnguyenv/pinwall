@@ -18,5 +18,12 @@
   "auth.adminOnly": "Only admins can do this.",
   "auth.sessionRequired": "This needs a browser session; API and OAuth tokens cannot do it.",
   "auth.ownerOnly": "Only the built-in owner account can do this.",
-  "auth.crossOrigin": "Request refused: it came from {{origin}}, but this Pinwall runs at {{expected}}. Open Pinwall at {{expected}}, or set PINWALL_PUBLIC_ORIGIN to the address you use."
+  "auth.crossOrigin": "Request refused: it came from {{origin}}, but this Pinwall runs at {{expected}}. Open Pinwall at {{expected}}, or set PINWALL_PUBLIC_ORIGIN to the address you use.",
+  "log.setupLink": "Pinwall has no owner account yet. Open this link within 24 hours to create it: {{url}}",
+  "auth.setup.invalidLink": "This setup link is invalid or has expired. Restart Pinwall to print a new one in the log.",
+  "auth.setup.done": "Setup is already complete. Sign in instead.",
+  "auth.setup.needCredential": "Choose a password, a passkey, or both.",
+  "auth.passwordTooShort": "Use at least {{min}} characters.",
+  "auth.passwordTooLong": "Use at most {{max}} characters.",
+  "auth.passkey.defaultName": "Passkey 1"
 }
