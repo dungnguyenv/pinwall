@@ -11,5 +11,12 @@
   "auth.passkeysUnavailable": "Passkeys need Pinwall to run on https or on localhost. Use a password, or set PINWALL_PUBLIC_ORIGIN to an https address.",
   "error.validation": "Some fields are missing or invalid.",
   "error.tooLarge": "The request body is too large.",
-  "error.cursor": "This page link is no longer valid. Start from the first page."
+  "error.cursor": "This page link is no longer valid. Start from the first page.",
+  "auth.signInRequired": "Sign in to continue.",
+  "auth.invalidToken": "The bearer token is invalid, expired or revoked.",
+  "auth.accessDenied": "Your account does not have access to this Pinwall.",
+  "auth.adminOnly": "Only admins can do this.",
+  "auth.sessionRequired": "This needs a browser session; API and OAuth tokens cannot do it.",
+  "auth.ownerOnly": "Only the built-in owner account can do this.",
+  "auth.crossOrigin": "Request refused: it came from {{origin}}, but this Pinwall runs at {{expected}}. Open Pinwall at {{expected}}, or set PINWALL_PUBLIC_ORIGIN to the address you use."
 }

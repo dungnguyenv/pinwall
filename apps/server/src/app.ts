@@ -1,15 +1,18 @@
 import { Hono } from 'hono';
 import { buildApiRouter } from './api/router.ts';
+import { resolveAuth } from './auth/resolve.ts';
+import { bearerResolvers } from './auth/resolvers.ts';
 import type { UserRow } from './db/schema.ts';
 import type { AppDeps } from './deps.ts';
 import { errorHandler, notFoundHandler } from './http/errors.ts';
 import { requestLogger } from './http/logging.ts';
+import { originCheck } from './http/origin-check.ts';
 import { requestId } from './http/request-id.ts';
 import { appSecurityHeaders } from './http/security-headers.ts';
 import { defaultWebDir, mountSpa } from './http/spa.ts';
 import { PAGES_CSS, PAGES_CSS_PATH } from './pages/pages.css.ts';
 
-/** Who is making the request, once authentication has run (M2). */
+/** Who is making the request, once `resolveAuth` has run. */
 export interface AuthContext {
   user: UserRow;
   via: 'session' | 'api_token' | 'oauth';
@@ -64,8 +67,9 @@ function mountHealth(app: Hono<AppEnv>, deps: AppDeps): void {
 
 /**
  * The app origin. Middleware runs in this order: request id, request log, deps injection,
- * security headers; then health checks, the pages stylesheet, the API router, later milestones'
- * routers, and the SPA last, since it answers every remaining browser GET.
+ * security headers; then health checks, the pages stylesheet, the API router behind the CSRF
+ * origin check and auth resolution, later milestones' routers, and the SPA last, since it
+ * answers every remaining browser GET.
  */
 export function buildApp(deps: AppDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -88,6 +92,11 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
     }),
   );
 
+  app.use(
+    '/api/v1/*',
+    originCheck(deps.config),
+    resolveAuth({ bearer: bearerResolvers, cookies: true }),
+  );
   app.route('/api/v1', buildApiRouter());
 
   mountSpa(app, deps.config.webDir ?? defaultWebDir(), deps.logger);

@@ -5,7 +5,9 @@ import type { AppEnv } from '../app.ts';
 import { publicUrl } from '../http/public-url.ts';
 import { badRequest, payloadTooLarge } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
+import { registerAuthRoutes } from './auth.ts';
 import { registerConfigRoutes } from './config.ts';
+import { registerMeRoutes } from './me.ts';
 
 /**
  * A bare API router: a body or parameter that fails its schema becomes a `bad_request` listing
@@ -60,6 +62,8 @@ export function buildApiRouter(): OpenAPIHono<AppEnv> {
   }));
 
   registerConfigRoutes(api);
+  registerMeRoutes(api);
+  registerAuthRoutes(api);
 
   return api;
 }
