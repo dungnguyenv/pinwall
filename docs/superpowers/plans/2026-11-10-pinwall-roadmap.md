@@ -245,7 +245,7 @@ Contract (M5 builds the annotator, M8 the viewer): the annotator defines one glo
 
 | # | Milestone | Plan file | Depends on | Status |
 | --- | --- | --- | --- | --- |
-| M1 | Foundation | `…-m1-foundation.md` | — | planned |
+| M1 | Foundation | `…-m1-foundation.md` | — | done |
 | M2 | Owner account, sessions, API tokens | `…-m2-identity.md` | M1 | |
 | M3 | OIDC, roles, access re-check | `…-m3-oidc.md` | M2 | |
 | M4 | Publishing and content serving | `…-m4a-publishing-core.md` (Tasks 1–6), `…-m4b-publishing-http.md` (Tasks 7–13) | M2 | |
