@@ -1,0 +1,49 @@
+{
+  "name": "@pinwall/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1164.0",
+    "@hono/node-server": "^2.1.6",
+    "@hono/zod-openapi": "^1.6.3",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@pinwall/shared": "workspace:*",
+    "@prometheus-io/client": "^0.16.1",
+    "@simplewebauthn/server": "^14.1.0",
+    "better-sqlite3": "^13.0.3",
+    "diff": "^9.0.0",
+    "fflate": "^0.8.3",
+    "highlight.js": "^11.12.0",
+    "hono": "^4.13.17",
+    "htmlparser2": "^12.0.0",
+    "kysely": "^0.29.8",
+    "markdown-it": "^15.0.3",
+    "markdown-it-anchor": "^10.1.0",
+    "openid-client": "^6.8.9",
+    "pg": "^8.23.1",
+    "pino": "^10.4.0",
+    "tar-stream": "^3.2.2",
+    "tldts": "^7.4.19",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/markdown-it": "^14.2.0",
+    "@types/node": "^24.19.2",
+    "@types/pg": "^8.23.1",
+    "@types/tar-stream": "^3.1.5",
+    "esbuild": "^0.28.2",
+    "oidc-provider": "^9.13.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}
