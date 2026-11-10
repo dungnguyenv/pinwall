@@ -35,7 +35,7 @@ Every task's requirements implicitly include these. Values are copied from the s
 - Visual style "B — neutral, ChatGPT-like"; dark mode follows the system setting.
 - Do not copy plannotator's interface or branding.
 - **Original work only.** Never copy code, prompts, skill text, documentation, tests, UI markup or styles from another project into this repository — not verbatim and not lightly edited — including plannotator `artifact-server` and its installed `artifact-server` skill, and any other repository, gist or blog. Learn ideas from public docs and standards (RFCs, W3C, MDN, library docs), then write your own. Using a library through its public API is fine; vendoring its source is not. Short snippets from a dependency's own docs (an import line, a config option) are fine.
-- Dependencies must carry a license compatible with Apache-2.0 (MIT, ISC, BSD-2/3, Apache-2.0, 0BSD, BlueOak, CC0, Unlicense, Unicode, Python-2.0/PSF-2.0; MPL-2.0 only for build-time tools that never ship in the image or a bundle, e.g. lightningcss under Tailwind). No GPL, LGPL, AGPL, SSPL, BUSL, or unlicensed packages; check before adding one. M9 adds an automated license check and a `NOTICE` listing bundled third-party licenses.
+- Dependencies must carry a license compatible with Apache-2.0 (MIT, ISC, BSD-2/3, Apache-2.0, 0BSD, BlueOak, CC0, Unlicense, Unicode, Python-2.0/PSF-2.0; MPL-2.0 only for build-time tools that never ship in the image or a bundle, e.g. lightningcss under Tailwind). No GPL, LGPL, AGPL, SSPL, BUSL, or unlicensed packages; check before adding one. M9 adds an automated license check and a generated `THIRD_PARTY_NOTICES` (shipped in the image and with each release) listing bundled third-party licenses; `NOTICE` stays the project's own notice and points to it.
 - Conventional Commits; commit messages end with the trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Work stays local: no `git push`, no image push, no GitHub repository creation.
 
 ## Review Focus
@@ -87,6 +87,7 @@ pinwall/
     shared/                 # @pinwall/shared — API DTO zod schemas, annotator protocol types, i18n/en.json
     annotator/              # @pinwall/annotator — in-page script, bundled to one IIFE file
   skills/pinwall/SKILL.md   # Agent Skill for Claude Code
+  tools/                    # @pinwall/tools (private, M9): license check, notices, image size, chart check, release, acceptance runner
   deploy/helm/pinwall/  deploy/compose/
   .github/workflows/
   docs/
@@ -94,7 +95,7 @@ pinwall/
 
 ## Module boundaries and shared names
 
-- `AppDeps` (`apps/server/src/deps.ts`): `{ config: Config; db: DbHandle; blobs: BlobStore; events: EventBus; oneTime: OneTimeStore; rateLimiter: RateLimiter; leases: LeaseManager; scheduler: Scheduler; logger: Logger; clock: Clock }`. Services are plain modules or factories taking `AppDeps`; no DI container.
+- `AppDeps` (`apps/server/src/deps.ts`): `{ config: Config; db: DbHandle; blobs: BlobStore; events: EventBus; oneTime: OneTimeStore; rateLimiter: RateLimiter; leases: LeaseManager; scheduler: Scheduler; logger: Logger; clock: Clock; metrics: Metrics }` (`metrics` is added by M9, `apps/server/src/ops/metrics.ts`). Services are plain modules or factories taking `AppDeps`; no DI container.
 - `AppEnv` (`apps/server/src/app.ts`): `{ Variables: { requestId: string; deps: AppDeps; auth: AuthContext | null } }`. `AuthContext = { user: UserRow; via: 'session' | 'api_token' | 'oauth'; sessionId?: string }`.
 - Errors: `AppError(code: ErrorCode, status: number, message: string, details?: Record<string, unknown>)` in `apps/server/src/lib/errors.ts`. `ErrorCode` is one of `bad_request, unauthorized, forbidden, not_found, conflict, version_conflict, gone, payload_too_large, unsupported_media_type, rate_limited, upload_session_used, upload_session_expired, setup_required, setup_done, invalid_credentials, access_denied, internal`. JSON error body: `{ "error": { "code", "message", "details"? } }`.
 - IDs: `newId(prefix)` → `<prefix>_<20 lowercase Crockford base32 chars>`; prefixes `usr prj art ver cmt shr tok cli pky gnt`. Content tokens: `newContentToken()` → 32 lowercase base32 chars (160 bits; valid DNS label). Bearer secrets: `newSecret()` → 43 base64url chars; API tokens are `pw_` + secret; OAuth access tokens `pwa_` + secret and refresh tokens `pwr_` + secret (M6). Only SHA-256 hashes of secrets are stored (`hashSecret`).
@@ -255,7 +256,7 @@ Contract (M5 builds the annotator, M8 the viewer): the annotator defines one glo
 | M6 | MCP, OAuth authorization server, agent skill | `…-m6-mcp.md` | M3, M5 | |
 | M7 | Web app: shell, library, accounts, admin | `…-m7a-web-shell.md` (Tasks 1–7), `…-m7b-web-accounts-admin.md` (Tasks 8–12) | M3, M4 | |
 | M8 | Web app: review, compare, comments, sharing | `…-m8a-web-review.md` (Tasks 1–7), `…-m8b-web-share-compare.md` (Tasks 8–11) | M5, M7 | |
-| M9 | Operations and release | `…-m9-ops-release.md` | M6, M8 | |
+| M9 | Operations and release | `…-m9a-ops.md` (Tasks 1–6), `…-m9b-release.md` (Tasks 7–13) | M6, M8 | |
 
 M3 and M4 can run in parallel, as can M5 with M7, and M6 with M8 — each pair on its own git worktree and branch, merged into `main` when done.
 
