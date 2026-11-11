@@ -218,17 +218,18 @@ export const reviewTools: ToolModule = (server, ctx) => {
       const threads = items.map(toThreadOut);
       const current = await currentVersionOf(deps, artifact);
       const name = oneLine(artifact.name);
+      const status = t(`mcp.comments.status.${a.status}`);
       const summary =
         current === null
           ? t('mcp.comments.summaryNoVersion', {
               count: threads.length,
-              status: a.status,
+              status,
               name,
               artifact_id: artifact.id,
             })
           : t('mcp.comments.summary', {
               count: threads.length,
-              status: a.status,
+              status,
               name,
               artifact_id: artifact.id,
               number: current.number,

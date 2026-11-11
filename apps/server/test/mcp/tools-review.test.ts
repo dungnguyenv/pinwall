@@ -174,7 +174,7 @@ describe.each(dialects)('MCP comment and share-link tools on %s', (dialect) => {
         [
           t('mcp.comments.summary', {
             count: 1,
-            status: 'open',
+            status: t('mcp.comments.status.open'),
             name: 'Một',
             artifact_id: id,
             number: 2,
@@ -185,6 +185,19 @@ describe.each(dialects)('MCP comment and share-link tools on %s', (dialect) => {
           '  Bob: Sửa giá',
           '  Ada: Agreed',
         ].join('\n'),
+      );
+    });
+
+    test('the summary says which threads it counted', async () => {
+      const summary = async (args: Record<string, unknown>) =>
+        toolText(await ok('list_comments', { artifact_id: id, ...args })).split('\n')[0];
+      const current = `current version v2 (${v2.id}).`;
+      expect(await summary({})).toBe(`Comment threads (open) on "Một" (${id}): 1; ${current}`);
+      expect(await summary({ status: 'resolved' })).toBe(
+        `Comment threads (resolved) on "Một" (${id}): 1; ${current}`,
+      );
+      expect(await summary({ status: 'all' })).toBe(
+        `Comment threads (open and resolved) on "Một" (${id}): 2; ${current}`,
       );
     });
 
