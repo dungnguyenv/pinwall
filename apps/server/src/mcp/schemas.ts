@@ -1,3 +1,4 @@
+import { PublishResult, PublishSession } from '@pinwall/shared';
 import { z } from 'zod';
 
 /**
@@ -105,3 +106,19 @@ export const GetArtifactOut = z.object({
   versions: z.array(VersionOut),
 });
 export type GetArtifactOut = z.infer<typeof GetArtifactOut>;
+
+/** `create_publish_session`: the upload URL with its commands, and what publishing to it will do. */
+export const CreatePublishSessionOut = PublishSession.extend({
+  /** How long the URL stays valid, counted from now. */
+  expires_in_seconds: z.number().int(),
+  target: z.object({
+    kind: z.enum(['new_artifact', 'new_version']),
+    /** The artifact that gets the new version; `null` for a new artifact. */
+    artifact_id: z.string().nullable(),
+  }),
+});
+export type CreatePublishSessionOut = z.infer<typeof CreatePublishSessionOut>;
+
+/** `publish_inline`: the version made, as the REST publish returns it. */
+export const PublishInlineOut = PublishResult;
+export type PublishInlineOut = z.infer<typeof PublishInlineOut>;

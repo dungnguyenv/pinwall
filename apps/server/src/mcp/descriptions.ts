@@ -56,7 +56,33 @@ export const DESCRIPTIONS = {
       'raw links of each. Call it before you publish a new version of an existing artifact: ' +
       'the publish must name the current version id it shows.',
   },
+  create_publish_session: {
+    title: 'Start a publish',
+    description:
+      'Start a publish and get a one-time upload URL (valid {{minutes}} minutes) with the exact ' +
+      'shell command that uploads a folder or a single file to it; the command prints the ' +
+      'published version, including its review_url. Use this whenever you can run shell ' +
+      'commands. For a new version of an existing artifact pass artifact_id and ' +
+      'expected_version_id (the current version id from get_artifact or your last publish); ' +
+      'otherwise a new artifact is created in project_id, or in the default project.',
+  },
+  publish_inline: {
+    title: 'Publish text files inline',
+    description:
+      'Publish text files passed directly in this call, for clients that cannot run shell ' +
+      'commands. If you can run commands, use create_publish_session instead. Text files only ' +
+      '(HTML, Markdown, CSS, JavaScript, SVG, JSON), at most {{max}} in total; paths are ' +
+      'relative and the entry page is index.html or index.md. Targets work as in ' +
+      'create_publish_session.',
+  },
 } as const;
+
+/** `template` with each `{{name}}` replaced by its value, for descriptions that name a setting. */
+export function fillDescription(template: string, values: Record<string, string | number>): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (placeholder, name: string) =>
+    Object.hasOwn(values, name) ? String(values[name]) : placeholder,
+  );
+}
 
 /** What the arguments that several tools share mean. */
 export const FIELDS = {

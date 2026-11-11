@@ -644,5 +644,10 @@
   "mcp.artifact.olderVersions": "Older versions are not shown.",
   "mcp.artifact.next": "To publish a new version, call create_publish_session with artifact_id {{artifact_id}} and expected_version_id {{version_id}}.",
   "mcp.version.item": "- {{id}}: version {{number}}{{current}}; files: {{files}}, size: {{size}}, source: {{source}}, created: {{created}}; review: {{review}}; raw: {{raw}}",
-  "mcp.version.current": " (current)"
+  "mcp.version.current": " (current)",
+  "mcp.publish.needExpected": "To publish a new version, pass expected_version_id: the current version id from get_artifact or from your last publish.",
+  "mcp.publish.mixedTarget": "Pass artifact_id (with expected_version_id) for a new version, or project_id, name and tags for a new artifact, not both.",
+  "mcp.publish.session": "Upload URL (single use, expires in {{minutes}} minutes): {{url}}\nTo publish a folder, run:\n{{archive}}\nTo publish one file, run:\n{{single}}\nThe command prints the published version as JSON. Give the user its review_url first.",
+  "mcp.publish.done": "Review link: {{review_url}}\nPublished v{{number}} (version_id {{version_id}}, artifact_id {{artifact_id}}). Give the user the review link first.",
+  "mcp.publish.warning": "Warning: {{message}}"
 }
