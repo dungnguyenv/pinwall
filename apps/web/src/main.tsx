@@ -1,3 +1,5 @@
+// First: zod must be configured before any module builds a schema.
+import './zod-config.ts';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.tsx';

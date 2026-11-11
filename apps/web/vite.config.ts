@@ -24,6 +24,20 @@ const SERVER_PATHS = [
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            // zod is set to jitless by src/zod-config.ts before @pinwall/shared builds its
+            // schemas. Both must sit in one chunk, or the chunk with the schemas would run
+            // before the entry that configures zod.
+            { name: 'zod', test: /[\\/]node_modules[\\/]zod[\\/]|[\\/]src[\\/]zod-config\.ts$/ },
+          ],
+        },
+      },
+    },
+  },
   server: {
     proxy: Object.fromEntries(
       SERVER_PATHS.map((path): [string, ProxyOptions] => [

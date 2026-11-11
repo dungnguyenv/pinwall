@@ -267,3 +267,41 @@ test('main pages have no accessibility violations', async ({ page, context }) =>
     expect((await axe(page)).violations, `/signin, ${scheme}`).toEqual([]);
   }
 });
+
+test('the app loads under its own content security policy without a violation', async ({
+  page,
+}) => {
+  // The browser reports a blocked script, and also an eval that the code tried and caught, as a
+  // securitypolicyviolation event. The function outlives page loads; the listener is in place
+  // before the first script of each one runs.
+  const violations: string[] = [];
+  await page.exposeFunction('reportViolation', (detail: string) => violations.push(detail));
+  await page.addInitScript(() => {
+    document.addEventListener('securitypolicyviolation', (event) => {
+      const report = (window as unknown as { reportViolation(detail: string): void })
+        .reportViolation;
+      report(`${event.violatedDirective} ${event.blockedURI} ${event.sourceFile}`);
+    });
+  });
+  // Chrome also writes a blocked script to the console. (A signed-out visit's 401 from /me is
+  // expected, so only messages about the policy count.)
+  const problems: string[] = [];
+  page.on('console', (message) => {
+    if (/content security policy|refused to|unsafe-eval/i.test(message.text())) {
+      problems.push(`console ${message.type()}: ${message.text()}`);
+    }
+  });
+  page.on('pageerror', (error) => problems.push(`page error: ${error.message}`));
+
+  const response = await page.goto('/signin');
+  expect(response?.headers()['content-security-policy'], 'served with a policy').toContain(
+    "script-src 'self'",
+  );
+  await expect(page.getByRole('heading', { name: 'Sign in to Pinwall' })).toBeVisible();
+  await signInWithPassword(page);
+  await page.goto('/connect');
+  await expect(page.locator('main h1').first()).toBeVisible();
+
+  expect(violations).toEqual([]);
+  expect(problems).toEqual([]);
+});
