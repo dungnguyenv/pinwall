@@ -4,6 +4,7 @@ import { lazy } from 'react';
 import { afterEach, expect, test } from 'vitest';
 import type { ArtifactSummary, Project } from '../../api/dto.ts';
 import i18n from '../../i18n.ts';
+import { fxOwnerRow, serveAdminUsers } from '../../test/admin.ts';
 import { fx } from '../../test/fixtures.ts';
 import { renderRoute, setViewport } from '../../test/render.tsx';
 import { API, apiError, server } from '../../test/server.ts';
@@ -391,10 +392,13 @@ test('account menu shows Admin only to admins and signs out', async () => {
   expect(within(memberMenu).queryByRole('menuitem', { name: 'Admin' })).not.toBeInTheDocument();
   cleanup();
 
+  // The Admin item opens the admin area, which starts on the user list.
+  serveAdminUsers({ users: [fxOwnerRow()] });
   const { user, router, queryClient } = renderRoute('/', { me });
   await user.click(await screen.findByRole('button', { name: 'Ada Lovelace' }));
   await user.click(await screen.findByRole('menuitem', { name: 'Admin' }));
-  await waitFor(() => expect(router.state.location.pathname).toBe('/admin'));
+  await waitFor(() => expect(router.state.location.pathname).toBe('/admin/users'));
+  expect(await screen.findByRole('table', { name: 'Users' })).toBeInTheDocument();
 
   let signedOut = 0;
   server.use(

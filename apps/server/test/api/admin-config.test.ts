@@ -1,6 +1,12 @@
 import { AdminConfig, type ConfigEntry, ConfigSection } from '@pinwall/shared';
+import messages from '@pinwall/shared/i18n/en.json' with { type: 'json' };
 import { afterEach, describe, expect, test } from 'vitest';
-import { describeConfig, formatDuration, redactUrl } from '../../src/api/admin-config.ts';
+import {
+  CONFIG_SETTINGS,
+  describeConfig,
+  formatDuration,
+  redactUrl,
+} from '../../src/api/admin-config.ts';
 import { loadConfig } from '../../src/config/load.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { apiInit, createSignedInUser, createUserToken } from '../helpers/auth.ts';
@@ -362,4 +368,13 @@ describe('GET /admin/config', () => {
       expect(entry(body, env)).toMatchObject({ value: null, secret: true, set: true });
     }
   });
+});
+
+test('the web app explains every setting, and only the settings listed', () => {
+  // The Configuration page prints `web.config.help.<ENV>` under each entry; a setting without
+  // one would show a bare key, and a help text for a removed setting is dead weight.
+  const helped = Object.keys(messages)
+    .filter((key) => key.startsWith('web.config.help.'))
+    .map((key) => key.slice('web.config.help.'.length));
+  expect(helped.sort()).toEqual(CONFIG_SETTINGS.map((setting) => setting.env).sort());
 });

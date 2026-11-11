@@ -31,6 +31,10 @@ export const qk = {
   passkeys: ['passkeys'] as const,
   /** The signed-in person's API tokens, for Settings. Never holds a token's secret. */
   tokens: ['tokens'] as const,
+  /** The admin user list, every page of it. */
+  adminUsers: ['admin', 'users'] as const,
+  /** The effective configuration, for the admin Configuration page. */
+  adminConfig: ['admin', 'config'] as const,
   /** An OAuth authorization request waiting on the consent page. */
   consent: (id: string) => ['oauth', 'consent', id] as const,
 };

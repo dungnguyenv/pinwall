@@ -1,7 +1,7 @@
 import { lazy, type ReactNode, Suspense } from 'react';
 import { Navigate, type RouteObject } from 'react-router';
 import { AuthPageFallback } from '../pages/auth/auth-layout.tsx';
-import { RequireAuth, RequireOwner } from './require-auth.tsx';
+import { RequireAdmin, RequireAuth, RequireOwner } from './require-auth.tsx';
 import { AppShell } from './shell/app-shell.tsx';
 
 /*
@@ -44,6 +44,15 @@ const SetupPage = lazy(() =>
 );
 const ConnectPage = lazy(() =>
   import('../pages/connect/connect-page.tsx').then((m) => ({ default: m.ConnectPage })),
+);
+const AdminLayout = lazy(() =>
+  import('../pages/admin/admin-layout.tsx').then((m) => ({ default: m.AdminLayout })),
+);
+const UsersPage = lazy(() =>
+  import('../pages/admin/users-page.tsx').then((m) => ({ default: m.UsersPage })),
+);
+const ConfigPage = lazy(() =>
+  import('../pages/admin/config-page.tsx').then((m) => ({ default: m.ConfigPage })),
 );
 const ConsentPage = lazy(() =>
   import('../pages/oauth/consent-page.tsx').then((m) => ({ default: m.ConsentPage })),
@@ -122,6 +131,20 @@ export function buildRoutes(): RouteObject[] {
           ],
         },
         { path: 'connect', element: <ConnectPage /> },
+        // Admins only; the guard sits above the layout, so no admin page loads or fetches for others.
+        {
+          path: 'admin',
+          element: (
+            <RequireAdmin>
+              <AdminLayout />
+            </RequireAdmin>
+          ),
+          children: [
+            { index: true, element: <Navigate to="users" replace /> },
+            { path: 'users', element: <UsersPage /> },
+            { path: 'config', element: <ConfigPage /> },
+          ],
+        },
         { path: '*', element: <NotFoundPage /> },
       ],
     },

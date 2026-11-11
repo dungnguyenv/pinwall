@@ -61,24 +61,32 @@ export function usePublicConfig(): UseQueryResult<PublicConfig, ApiError> {
 }
 
 /**
+ * What happens in the browser once the session has ended on the server:
+ * forgets everything cached for this person and opens the sign-in page. With
+ * `returnTo`, signing in again goes back there. Sign-out and "Revoke now" on
+ * your own account both end this way.
+ */
+export function useLeaveSession(o: { returnTo?: string } = {}): () => Promise<void> {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const { returnTo } = o;
+  return async () => {
+    // Signed out first, so the sign-in page does not send the person back in.
+    queryClient.setQueryData(qk.me, null);
+    // Then leave the signed-in pages, in one synchronous render, so none of
+    // them asks for its data again after the cache is emptied.
+    await navigate(returnTo === undefined ? '/signin' : signInPath(returnTo), {
+      flushSync: true,
+    });
+    replaceSession(queryClient, null);
+  };
+}
+
+/**
  * Signs out, forgets everything cached for this user, and opens the sign-in
  * page. With `returnTo`, signing in again goes back there.
  */
 export function useSignOut(o: { returnTo?: string } = {}): UseMutationResult<void, ApiError, void> {
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const { returnTo } = o;
-  return useMutation<void, ApiError, void>({
-    mutationFn: signOut,
-    onSuccess: async () => {
-      // Signed out first, so the sign-in page does not send the person back in.
-      queryClient.setQueryData(qk.me, null);
-      // Then leave the signed-in pages, in one synchronous render, so none of
-      // them asks for its data again after the cache is emptied.
-      await navigate(returnTo === undefined ? '/signin' : signInPath(returnTo), {
-        flushSync: true,
-      });
-      replaceSession(queryClient, null);
-    },
-  });
+  const leave = useLeaveSession(o);
+  return useMutation<void, ApiError, void>({ mutationFn: signOut, onSuccess: leave });
 }
