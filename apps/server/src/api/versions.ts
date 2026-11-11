@@ -14,6 +14,7 @@ import type { AppEnv } from '../app.ts';
 import { authOf, requireAuth } from '../auth/guards.ts';
 import type { VersionFileRow, VersionRow } from '../db/schema.ts';
 import { getArtifact } from '../domain/artifacts.ts';
+import { deleteVersion } from '../domain/deletion.ts';
 import {
   getVersionByNumber,
   listVersionFiles,
@@ -124,6 +125,27 @@ const restoreRoute = createRoute({
   },
 });
 
+const deleteRoute = createRoute({
+  method: 'delete',
+  path: '/artifacts/{id}/versions/{n}',
+  tags: ['versions'],
+  summary: 'Delete a version',
+  description:
+    "Deletes version `n` for good, with the comment threads written on it and its share links. Its links answer 410 from then on, and its number is never given again. If it was the current version, the newest remaining one becomes current; deleting the only version deletes the artifact. Files no remaining version uses are removed from storage at once, or shortly after a backup that is running ends; backups made before still hold them. Only an admin or the artifact's publisher can delete it.",
+  middleware: [requireAuth] as MiddlewareHandler<AppEnv>[],
+  security,
+  request: { params: VersionParams },
+  responses: {
+    204: { description: 'Deleted' },
+    400: error('`n` is not a positive integer'),
+    401: error('Not signed in'),
+    403: error(
+      "Neither an admin nor the artifact's publisher, or a cross-site request with the session cookie (`forbidden`)",
+    ),
+    ...missing,
+  },
+});
+
 const WarningsMeta = z.object({ warnings: z.array(PublishWarning) });
 
 /** The publish warnings kept in a version's `meta`; none when it has none or is unreadable. */
@@ -218,5 +240,11 @@ export function registerVersionRoutes(api: OpenAPIHono<AppEnv>): void {
       expected_version_id,
     );
     return c.json(toVersionSummary(version, version.id), 201, noStore);
+  });
+
+  api.openapi(deleteRoute, async (c) => {
+    const { id, n } = c.req.valid('param');
+    await deleteVersion(c.var.deps, authOf(c), id, n);
+    return c.body(null, 204);
   });
 }

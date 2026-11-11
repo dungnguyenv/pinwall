@@ -6,13 +6,18 @@ import { PublishResult, PublishSession } from '@pinwall/shared';
 import { Hono } from 'hono';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { AppEnv } from '../../src/app.ts';
+import type { Config } from '../../src/config/types.ts';
 import type { UserRow } from '../../src/db/schema.ts';
 import { errorHandler } from '../../src/http/errors.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { hashSecret } from '../../src/lib/ids.ts';
 import { type UploadReceipt, uploadCommands } from '../../src/publish/sessions.ts';
-import { mountUploadRoute, withIdleTimeout } from '../../src/publish/upload-route.ts';
+import {
+  configureServerForUploads,
+  mountUploadRoute,
+  withIdleTimeout,
+} from '../../src/publish/upload-route.ts';
 import { makeTar } from '../helpers/archives.ts';
 import { apiInit, createSignedInUser, createUserToken } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
@@ -40,16 +45,24 @@ const site = (title = 'Hi') =>
 /** The path of an upload URL, for requests over a socket. */
 const pathOf = (url: string) => new URL(url).pathname;
 
-/** Serves `app` on an ephemeral port of the loopback interface. */
-async function listen(app: Hono<AppEnv>): Promise<{ port: number; close(): Promise<void> }> {
+/**
+ * Serves `app` on an ephemeral port of the loopback interface, with the server set up for
+ * uploads as `pinwall serve` sets it up.
+ */
+async function listen(
+  app: Hono<AppEnv>,
+  config: Config,
+): Promise<{ port: number; server: Server; close(): Promise<void> }> {
   const server = await new Promise<Server>((resolve) => {
     const s = serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' }, () =>
       resolve(s as Server),
     ) as Server;
+    configureServerForUploads(s, config);
   });
   const { port } = server.address() as AddressInfo;
   return {
     port,
+    server,
     close: () =>
       new Promise((resolve) => {
         server.closeAllConnections();
@@ -62,6 +75,8 @@ interface SocketReply {
   status: number;
   headers: IncomingHttpHeaders;
   json: unknown;
+  /** Whether the server sent `100 Continue`. */
+  continued: boolean;
 }
 
 /**
@@ -78,13 +93,18 @@ function socketPost(
   return new Promise((resolve, reject) => {
     const req = httpRequest({ host: '127.0.0.1', port, path, method: 'POST', headers: o.headers });
     let answered = false;
+    let continued = false;
+    req.on('continue', () => {
+      continued = true;
+    });
     req.on('response', (res) => {
       const parts: Buffer[] = [];
       res.on('data', (part: Buffer) => parts.push(part));
       res.on('end', () => {
         answered = true;
         const text = Buffer.concat(parts).toString('utf8');
-        resolve({ status: res.statusCode ?? 0, headers: res.headers, json: JSON.parse(text) });
+        const json: unknown = JSON.parse(text);
+        resolve({ status: res.statusCode ?? 0, headers: res.headers, json, continued });
         req.destroy();
       });
       res.on('error', reject);
@@ -460,7 +480,7 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
   test('the documented command publishes over a real socket', async () => {
     await start();
     const s = await newSession();
-    const server = await listen(ctx.app);
+    const server = await listen(ctx.app, ctx.deps.config);
     try {
       const reply = await socketPost(server.port, pathOf(s.upload_url), {
         headers: CURL_HEADERS,
@@ -476,7 +496,7 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
   test('an oversized streamed body is 413 without Content-Length', async () => {
     await start({ PINWALL_MAX_UPLOAD_BYTES: '10000' });
     const s = await newSession();
-    const server = await listen(ctx.app);
+    const server = await listen(ctx.app, ctx.deps.config);
     try {
       // Random bytes after a gzip header: still a tar.gz to the sniffer, but 20 KB of it.
       const big = Buffer.concat([await site(), Buffer.alloc(20_000, 7)]);
@@ -501,7 +521,7 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
   test('a rejection mid-stream still reaches a client that keeps sending', async () => {
     await start({ PINWALL_MAX_UPLOAD_BYTES: '10000' });
     const s = await newSession();
-    const server = await listen(ctx.app);
+    const server = await listen(ctx.app, ctx.deps.config);
     try {
       // Far more than the limit, sent as fast as the socket takes it: the server stops reading
       // long before the client stops writing.
@@ -521,7 +541,7 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
   test('a declared Content-Length over the limit is refused before reading', async () => {
     await start({ PINWALL_MAX_UPLOAD_BYTES: '10000' });
     const s = await newSession();
-    const server = await listen(ctx.app);
+    const server = await listen(ctx.app, ctx.deps.config);
     try {
       const reply = await socketPost(server.port, pathOf(s.upload_url), {
         headers: { 'content-type': 'application/gzip', 'content-length': '10001' },
@@ -535,6 +555,60 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
       await server.close();
     }
     expect(await versions()).toEqual([]);
+  });
+
+  test('a declared Content-Length over the limit gets its 413 before 100 Continue', async () => {
+    await start({ PINWALL_MAX_UPLOAD_BYTES: '10000' });
+    const s = await newSession();
+    const server = await listen(ctx.app, ctx.deps.config);
+    try {
+      const reply = await socketPost(server.port, pathOf(s.upload_url), {
+        headers: {
+          'content-type': 'application/gzip',
+          'content-length': '10001',
+          expect: '100-continue',
+        },
+        chunks: [Buffer.alloc(10_001)],
+      });
+      expect(reply.status).toBe(413);
+      expect(reply.continued).toBe(false);
+      expect(reply.headers.connection).toBe('close');
+      expect(reply.json).toMatchObject({
+        error: {
+          code: 'payload_too_large',
+          details: { limit: 'max_upload_bytes', max: 10000 },
+        },
+      });
+
+      // Within the limit, the client is asked for its body as usual.
+      const body = await site();
+      const fits = await socketPost(server.port, pathOf(s.upload_url), {
+        headers: {
+          'content-type': 'application/gzip',
+          'content-length': String(body.length),
+          expect: '100-continue',
+        },
+        chunks: [body],
+      });
+      expect(fits.status).toBe(201);
+      expect(fits.continued).toBe(true);
+    } finally {
+      await server.close();
+    }
+    expect(await versions()).toHaveLength(1);
+  });
+
+  test('requests have no overall deadline, only one for their headers', async () => {
+    await start();
+    const server = await listen(ctx.app, ctx.deps.config);
+    try {
+      // Node's default of 300 s would cut a 95 MB upload slower than about 2.5 Mbit/s; the
+      // upload route's idle timeout ends a stalled body instead.
+      expect(server.server.requestTimeout).toBe(0);
+      expect(server.server.headersTimeout).toBe(60_000);
+    } finally {
+      await server.close();
+    }
   });
 
   test('upload URLs ignore cookies and bearer tokens', async () => {
@@ -611,7 +685,7 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
     test('times out with 408, removes what it staged, and keeps the session', async () => {
       await start();
       const s = await newSession();
-      const server = await listen(uploadApp(300));
+      const server = await listen(uploadApp(300), ctx.deps.config);
       const stored = vi.spyOn(ctx.deps.blobs, 'put');
       try {
         // a.css arrives whole and is stored; b.bin's data never comes.
@@ -644,7 +718,7 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
     test('a slow but steady upload is not cut off', async () => {
       await start();
       const s = await newSession();
-      const server = await listen(uploadApp(300));
+      const server = await listen(uploadApp(300), ctx.deps.config);
       try {
         const reply = await socketPost(server.port, pathOf(s.upload_url), {
           headers: CURL_HEADERS,

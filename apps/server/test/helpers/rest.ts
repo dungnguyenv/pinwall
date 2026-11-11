@@ -12,8 +12,8 @@ export interface Reply<T = unknown> {
 }
 
 /**
- * JSON calls to `/api/v1` as the holder of `cookie`: `get`, `post` and `patch` return the status,
- * the headers and the parsed body (`null` when there is none).
+ * JSON calls to `/api/v1` as the holder of `cookie`: `get`, `post`, `patch` and `del` return the
+ * status, the headers and the parsed body (`null` when there is none).
  */
 export function restClient(ctx: TestContext, cookie: string) {
   async function call<T>(method: string, path: string, body?: unknown): Promise<Reply<T>> {
@@ -29,5 +29,6 @@ export function restClient(ctx: TestContext, cookie: string) {
     get: <T = unknown>(path: string) => call<T>('GET', path),
     post: <T = unknown>(path: string, body?: unknown) => call<T>('POST', path, body ?? {}),
     patch: <T = unknown>(path: string, body: unknown) => call<T>('PATCH', path, body),
+    del: <T = unknown>(path: string) => call<T>('DELETE', path),
   };
 }

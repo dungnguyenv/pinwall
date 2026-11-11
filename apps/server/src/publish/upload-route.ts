@@ -1,12 +1,40 @@
+import type { Server } from 'node:http';
 import { Readable } from 'node:stream';
 import type { Hono } from 'hono';
 import type { AppEnv } from '../app.ts';
+import type { Config } from '../config/types.ts';
 import { AppError } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { runUpload } from './sessions.ts';
 
 /** An upload that sends nothing for this long while Pinwall waits for its body is ended. */
 export const UPLOAD_IDLE_TIMEOUT_MS = 60_000;
+
+/** A client gets this long to send a request's headers. */
+const HEADERS_TIMEOUT_MS = 60_000;
+
+/**
+ * Sets the Node server up for uploads; `pinwall serve` calls it before the server takes requests.
+ *
+ * - No deadline for a whole request. Node's default of 300 s would cut an upload of 95 MB (the default limit) sent
+ *   slower than about 2.5 Mbit/s; the upload route ends a body that stalls for
+ *   `UPLOAD_IDLE_TIMEOUT_MS` instead. Headers must still arrive within 60 s.
+ * - A request that asks for `100 Continue` and declares a `Content-Length` over
+ *   `PINWALL_MAX_UPLOAD_BYTES` is not asked for its body: the routes refuse such a length
+ *   before reading (413), so the client learns why without sending a byte of it. Node closes the
+ *   connection after that answer, since the client may yet send the body unasked.
+ */
+export function configureServerForUploads(server: Server, config: Config): void {
+  server.requestTimeout = 0;
+  server.headersTimeout = HEADERS_TIMEOUT_MS;
+  const max = config.limits.maxUploadBytes;
+  // With a listener, Node no longer sends `100 Continue` by itself, nor emits `request`.
+  server.on('checkContinue', (req, res) => {
+    const length = declaredLength(req.headers['content-length']);
+    if (length === null || length <= max) res.writeContinue();
+    server.emit('request', req, res);
+  });
+}
 
 /**
  * `POST /upload/:token`: the one-time upload URL. The token in the path is the only credential:

@@ -15,6 +15,7 @@ import {
   RECENT_MAX,
   SEARCH_MAX_CHARS,
 } from '../domain/artifacts.ts';
+import { deleteArtifact } from '../domain/deletion.ts';
 import { getVersionsById } from '../domain/versions.ts';
 import { publicUrl } from '../http/public-url.ts';
 import { jsonBodyLimit } from './body-limit.ts';
@@ -131,6 +132,26 @@ const patchRoute = createRoute({
   },
 });
 
+const deleteRoute = createRoute({
+  method: 'delete',
+  path: '/artifacts/{id}',
+  tags: ['artifacts'],
+  summary: 'Delete an artifact',
+  description:
+    "Deletes the artifact for good, with every version, comment thread and share link. Its links answer 410 from then on. Files no other artifact uses are removed from storage at once, or shortly after a backup that is running ends; backups made before still hold them. Only an admin or the artifact's publisher can delete it.",
+  middleware: [requireAuth] as MiddlewareHandler<AppEnv>[],
+  security,
+  request: { params: IdParam },
+  responses: {
+    204: { description: 'Deleted' },
+    401: error('Not signed in'),
+    403: error(
+      "Neither an admin nor the artifact's publisher, or a cross-site request with the session cookie (`forbidden`)",
+    ),
+    ...missing,
+  },
+});
+
 /**
  * Artifacts as the API shows them, with their tags and current versions loaded for all rows at
  * once, so a page costs the same few queries whatever its size.
@@ -224,5 +245,10 @@ export function registerArtifactRoutes(api: OpenAPIHono<AppEnv>): void {
       ...(body.tags === undefined ? {} : { tags: body.tags }),
     });
     return c.json(await summarize(deps, row), 200, noStore);
+  });
+
+  api.openapi(deleteRoute, async (c) => {
+    await deleteArtifact(c.var.deps, authOf(c), c.req.valid('param').id);
+    return c.body(null, 204);
   });
 }
