@@ -36,9 +36,12 @@ describe.each(dialects)('access re-check on %s', (dialect) => {
     await ctx?.close();
   });
 
-  async function start(provider: TestIdp = idp): Promise<TestContext> {
+  async function start(
+    provider: TestIdp = idp,
+    roleEnv: Record<string, string> = ROLE_ENV,
+  ): Promise<TestContext> {
     clock = new FixedClock(T);
-    ctx = await createTestContext({ dialect, clock, env: provider.env(ROLE_ENV) });
+    ctx = await createTestContext({ dialect, clock, env: provider.env(roleEnv) });
     return ctx;
   }
 
@@ -243,6 +246,47 @@ describe.each(dialects)('access re-check on %s', (dialect) => {
     await setColumns(user.id, { idp_refresh_token: spent, idp_checked_at: T });
     expect(await outcome(user.id)).toBe('sign_in_required');
     await expectSignInRequired(user.id, T);
+  });
+
+  test('an answer without the roles claim asks for a new sign-in, not removal', async () => {
+    await start();
+    const { sub, user } = await signIn();
+    await addCredentials(user.id);
+    const warn = vi.spyOn(ctx.deps.logger, 'warn');
+    // Like an IdP that sends the claim only in the sign-in ID token.
+    idp.setGroups(sub, undefined);
+    clock.advance(12 * H);
+
+    expect(await outcome(user.id)).toBe('sign_in_required');
+    await expectSignInRequired(user.id, T);
+    expect(warn).toHaveBeenCalledWith(
+      { user_id: user.id, class: 'failed', code: 'ROLE_CLAIMS_ABSENT' },
+      'idp re-check: sign-in required',
+    );
+  });
+
+  test('an answer without the email asks for a new sign-in under email rules', async () => {
+    await start(idp, { PINWALL_MEMBER_EMAILS: 'ada@example.com' });
+    const { sub, user } = await signIn({ groups: undefined });
+    expect(user.idp_role).toBe('member');
+    await addCredentials(user.id);
+    idp.addAccount({ sub, name: 'Ada Example' });
+    clock.advance(12 * H);
+
+    expect(await outcome(user.id)).toBe('sign_in_required');
+    await expectSignInRequired(user.id, T);
+  });
+
+  test('an answer without the roles claim still counts when it earns a role anyway', async () => {
+    await start(idp, { ...ROLE_ENV, PINWALL_MEMBER_DOMAINS: 'example.com' });
+    const { sub, user } = await signIn();
+    idp.setGroups(sub, undefined);
+    clock.advance(12 * H);
+
+    expect(await outcome(user.id)).toBe('ok');
+    const after = await row(user.id);
+    expect(after).toMatchObject({ idp_role: 'member', idp_checked_at: clock.now() });
+    expect(plainRefreshToken(after)).toBeTruthy();
   });
 
   test('an unreachable IdP is transient and changes nothing', async () => {
