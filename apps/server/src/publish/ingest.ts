@@ -6,10 +6,10 @@ import type { ArtifactRow, UserRow, VersionRow, VersionSource } from '../db/sche
 import type { AppDeps } from '../deps.ts';
 import { checkTarget, commitVersion, type PublishTarget } from '../domain/versions.ts';
 import { publicUrl } from '../http/public-url.ts';
-import { badRequest, unsupportedMediaType } from '../lib/errors.ts';
+import { AppError, badRequest, unsupportedMediaType } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import type { BlobStore } from '../storage/blob-store.ts';
-import { type ArchiveEntry, readArchive, sniffArchive } from './archive.ts';
+import { type ArchiveEntry, corruptArchive, readArchive, sniffArchive } from './archive.ts';
 import { IngestBudget, limitExceeded } from './limits.ts';
 import {
   chooseEntry,
@@ -289,6 +289,8 @@ function countRequestBytes(body: Readable, budget: IngestBudget): Readable {
 /**
  * The first `n` bytes of `stream` (all of it when shorter) and a stream of every byte: `stream`
  * itself with the head put back, or, when it has already ended, a stream of the head alone.
+ * Rejects with an `AppError` the stream fails with (a limit, the idle timeout) as it is, and as
+ * `corruptArchive()` when the stream breaks off before then, as a client that goes away does.
  */
 function peek(stream: Readable, n: number): Promise<{ head: Buffer; whole: Readable }> {
   return new Promise((resolve, reject) => {
@@ -318,11 +320,11 @@ function peek(stream: Readable, n: number): Promise<{ head: Buffer; whole: Reada
     };
     const onError = (error: Error) => {
       settle();
-      reject(error);
+      reject(error instanceof AppError ? error : corruptArchive());
     };
     const onClose = () => {
       settle();
-      reject(new Error('The upload body closed before it ended'));
+      reject(corruptArchive());
     };
     stream.on('readable', onReadable);
     stream.on('end', onEnd);

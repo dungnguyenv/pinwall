@@ -6,6 +6,7 @@ import { searchQuery } from '../../src/db/dialect.ts';
 import type { UserRow, VersionRow } from '../../src/db/schema.ts';
 import type { PublishTarget } from '../../src/domain/versions.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
+import { AppError } from '../../src/lib/errors.ts';
 import { t } from '../../src/lib/i18n.ts';
 import {
   ingestFiles,
@@ -358,6 +359,36 @@ describe.each(dialects)('ingest on %s', (dialect) => {
       expect(await paths(version)).toEqual(['index.html']);
       expect(version.file_count).toBe(1);
     });
+
+    test.each([
+      ['closes', undefined, { status: 400, details: { reason: 'corrupt_archive' } }],
+      [
+        'fails',
+        new Error('The upload body closed before it ended'),
+        { status: 400, details: { reason: 'corrupt_archive' } },
+      ],
+      [
+        'times out',
+        new AppError('request_timeout', 408, 'idle'),
+        { status: 408, code: 'request_timeout' },
+      ],
+    ] as const)(
+      'a body that %s before its first 512 bytes arrive is a 4xx',
+      async (_name, error, expected) => {
+        const body = new Readable({ read() {} });
+        body.push(Buffer.from('PK\x03\x04', 'latin1'));
+        setImmediate(() => body.destroy(error));
+        await expect(
+          ingestUpload(
+            ctx.deps,
+            newTarget(),
+            { body, contentType: null, contentLength: null, filename: null },
+            opts,
+          ),
+        ).rejects.toMatchObject(expected);
+        await expectNothingStored();
+      },
+    );
 
     test('a rejected upload keeps blobs other versions use', async () => {
       await publishFiles(ctx, actor, { 'a.css': 'x', 'index.html': '1' });
