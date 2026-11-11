@@ -57,7 +57,9 @@ export function clearSessionCookie(c: Context<AppEnv>): void {
 /**
  * Signs the browser in as `user`: ends the session it presented (so a session planted before
  * sign-in never becomes an authenticated one), creates a new session, sets its cookie and makes
- * it this request's `auth`. Checking that the user may sign in is the caller's job.
+ * it this request's `auth`. A request with an `Authorization` header never has its cookie read,
+ * so it ends no session; it still gets a new one. Checking that the user may sign in is the
+ * caller's job.
  */
 export async function startSession(
   c: Context<AppEnv>,
@@ -65,7 +67,7 @@ export async function startSession(
   method: AuthMethod,
 ): Promise<void> {
   const { deps } = c.var;
-  const presented = readSessionCookie(c);
+  const presented = c.req.header('authorization') === undefined ? readSessionCookie(c) : undefined;
   if (presented !== undefined) await deleteSession(deps, hashSecret(presented));
   const { secret, idHash } = await createSession(deps, user.id, method, {
     ip: clientIp(c, deps.config.trustProxy),

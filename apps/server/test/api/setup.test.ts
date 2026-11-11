@@ -5,12 +5,19 @@ import { createSession } from '../../src/auth/sessions.ts';
 import { announceSetupLink, SETUP_LINK_TTL_MS } from '../../src/auth/setup.ts';
 import { startAuth } from '../../src/auth/startup.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
+import { hashPassword } from '../../src/lib/crypto.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { hashSecret } from '../../src/lib/ids.ts';
 import { apiInit, sessionCookieFrom, setupOwner } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 import { SoftAuthenticator } from '../helpers/soft-authenticator.ts';
+
+// Wraps the real hasher so a test can see whether setup ran it.
+vi.mock('../../src/lib/crypto.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/lib/crypto.ts')>();
+  return { ...actual, hashPassword: vi.fn(actual.hashPassword) };
+});
 
 const T = Date.UTC(2026, 10, 10);
 const PASSWORD = 'correct horse battery';
@@ -302,6 +309,31 @@ describe.each(dialects)('owner setup on %s', (dialect) => {
     expect(await errorOf(loser ?? results[0] ?? new Response())).toMatchObject({
       code: 'setup_done',
     });
+    expect(await users(c)).toHaveLength(1);
+  });
+
+  test('setup refuses before hashing a password once an owner exists or the link is wrong', async () => {
+    const c = await start();
+    const token = await newToken(c);
+    const hash = vi.mocked(hashPassword);
+
+    // A wrong token: refused without the slow hash, and the real link is not used up.
+    hash.mockClear();
+    const wrong = await setup(c, { token: 'A'.repeat(43), name: 'Eve', password: PASSWORD });
+    expect(wrong.status).toBe(403);
+    expect(hash).not.toHaveBeenCalled();
+    expect((await check(c, token)).status).toBe(204);
+
+    // The owner exists: the same request, with the link that did work, is refused the same way.
+    expect((await setup(c, { token, name: 'Ada', password: PASSWORD })).status).toBe(201);
+    expect(hash).toHaveBeenCalledTimes(1);
+    hash.mockClear();
+    const done = await setup(c, { token, name: 'Eve', password: PASSWORD });
+    expect(done.status).toBe(409);
+    expect(await errorOf(done)).toEqual({ code: 'setup_done', message: t('auth.setup.done') });
+    const unknown = await setup(c, { token: 'A'.repeat(43), name: 'Eve', password: PASSWORD });
+    expect(unknown.status).toBe(409);
+    expect(hash).not.toHaveBeenCalled();
     expect(await users(c)).toHaveLength(1);
   });
 

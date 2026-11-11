@@ -42,7 +42,8 @@ export async function listUsers(
 /**
  * Sets, or with `null` clears, what an admin decided for a user's role. It wins over the
  * identity provider's role and takes effect on the user's next request. An admin cannot change
- * their own, so no one locks themselves out or leaves Pinwall without an admin.
+ * their own, and nobody can change the owner's: the owner is always an admin, so Pinwall always
+ * has one way in.
  */
 export async function setRoleOverride(
   deps: AppDeps,
@@ -52,13 +53,11 @@ export async function setRoleOverride(
 ): Promise<UserRow> {
   if (actor.id === userId) throw forbidden(t('auth.ownRole'));
   const { db } = deps.db;
-  const result = await db
-    .updateTable('users')
-    .set({ role_override: role })
-    .where('id', '=', userId)
-    .executeTakeFirst();
-  if (result.numUpdatedRows === 0n) throw notFound(t('auth.userNotFound'));
-  return db.selectFrom('users').selectAll().where('id', '=', userId).executeTakeFirstOrThrow();
+  const user = await db.selectFrom('users').selectAll().where('id', '=', userId).executeTakeFirst();
+  if (!user) throw notFound(t('auth.userNotFound'));
+  if (user.kind === 'owner') throw forbidden(t('auth.ownerRole'));
+  await db.updateTable('users').set({ role_override: role }).where('id', '=', userId).execute();
+  return { ...user, role_override: role };
 }
 
 /** Whether a user with this id exists. */

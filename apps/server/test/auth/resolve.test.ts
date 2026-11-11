@@ -2,6 +2,7 @@ import { type Context, Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import type { AppEnv } from '../../src/app.ts';
 import { type BearerResolver, resolveAuth } from '../../src/auth/resolve.ts';
+import { bearerResolvers } from '../../src/auth/resolvers.ts';
 import { startSession } from '../../src/auth/session-cookie.ts';
 import type { UserRow } from '../../src/db/schema.ts';
 import { errorHandler } from '../../src/http/errors.ts';
@@ -100,12 +101,7 @@ describe.each(dialects)('resolveAuth on %s', (dialect) => {
   });
 
   test('a bearer for a user without access is access_denied', async () => {
-    await ctx.deps.db.db
-      .updateTable('users')
-      .set({ role_override: 'blocked' })
-      .where('id', '=', user.id)
-      .execute();
-    user = { ...user, role_override: 'blocked' };
+    ({ user } = await createSignedInUser(ctx, { kind: 'oidc', roleOverride: 'blocked' }));
     const r = await send(bareApp(true), { authorization: 'Bearer st_good' });
     expect(r.status).toBe(403);
     expect(await r.json()).toEqual({
@@ -143,5 +139,16 @@ describe.each(dialects)('resolveAuth on %s', (dialect) => {
     expect(await (await send(app, { cookie: fresh ?? '' })).json()).toMatchObject({
       via: 'session',
     });
+  });
+
+  // OAuth access tokens belong to `/mcp`, which gets its own resolver list; the list `/api/v1`
+  // and `/a/*` share must never honour them, whatever a later milestone adds.
+  test('the shared resolver list takes API tokens only, so an OAuth access token is refused', async () => {
+    expect(bearerResolvers.map((r) => r.name)).toEqual(['api_token']);
+    for (const token of ['pwa_0123456789abcdef', 'pwr_0123456789abcdef']) {
+      const r = await ctx.request('/api/v1/me', apiInit(ctx, { bearer: token }));
+      expect(r.status, token).toBe(401);
+      expect(r.headers.get('www-authenticate'), token).toBe('Bearer error="invalid_token"');
+    }
   });
 });

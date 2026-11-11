@@ -3,7 +3,7 @@ import type { AppDeps } from '../deps.ts';
 import { hashSecret, newSecret } from '../lib/ids.ts';
 
 /** How a browser session was signed in. */
-export type AuthMethod = 'password' | 'passkey'; // M3 adds 'oidc'
+export type AuthMethod = 'password' | 'passkey' | 'oidc';
 
 /** A session is renewed (expiry moved, cookie re-sent) at most this often. */
 export const SESSION_TOUCH_INTERVAL_MS = 300_000;
@@ -74,7 +74,7 @@ export async function resolveSession(
   if (now - session.last_seen_at < SESSION_TOUCH_INTERVAL_MS) {
     return { session, user, refreshed: false };
   }
-  // M3's inline IdP re-check rides on these renewals, in resolveAuth's session branch.
+  // The inline IdP re-check (resolveAuth's session branch) runs on any request once it is due.
   const expiresAt = now + deps.config.ttl.sessionMs;
   const touched = await db
     .updateTable('sessions')

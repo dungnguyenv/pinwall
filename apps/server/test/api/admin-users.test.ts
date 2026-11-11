@@ -231,6 +231,51 @@ describe.each(dialects)('admin users on %s', (dialect) => {
     expect((await me({ cookie })).status).toBe(200);
   });
 
+  test('nobody can override or block the owner', async () => {
+    await start();
+    const { user: owner, cookie: ownerCookie } = await admin();
+    const { cookie } = await member({ name: 'Bao', idpRole: 'admin' });
+    const denied = { code: 'forbidden', message: t('auth.ownerRole') };
+
+    for (const role of ['blocked', 'member', 'admin', null]) {
+      const r = await setRole(owner.id, role, { cookie });
+      expect(r.status, String(role)).toBe(403);
+      expect(await errorOf(r)).toEqual(denied);
+    }
+    const stored = await ctx.deps.db.db
+      .selectFrom('users')
+      .select('role_override')
+      .where('id', '=', owner.id)
+      .executeTakeFirstOrThrow();
+    expect(stored.role_override).toBeNull();
+    expect((await me({ cookie: ownerCookie })).status).toBe(200);
+
+    // An admin who changes their own role is told so, not that the owner is special.
+    const self = await member({ name: 'Chi', idpRole: 'admin' });
+    const own = await setRole(self.user.id, 'blocked', { cookie: self.cookie });
+    expect(own.status).toBe(403);
+    expect(await errorOf(own)).toEqual({ code: 'forbidden', message: t('auth.ownRole') });
+  });
+
+  test('a role override already stored on the owner is ignored', async () => {
+    await start();
+    const { user: owner, cookie } = await admin();
+    const bao = await member({ name: 'Bao' });
+    for (const stored of ['blocked', 'member'] as const) {
+      await ctx.deps.db.db
+        .updateTable('users')
+        .set({ role_override: stored })
+        .where('id', '=', owner.id)
+        .execute();
+      const signedIn = await me({ cookie });
+      expect(signedIn.status, stored).toBe(200);
+      expect(await signedIn.json()).toMatchObject({ kind: 'owner', role: 'admin' });
+      const users = await listed(await list({ cookie }));
+      expect(users.items.find((u) => u.id === owner.id)).toMatchObject({ effective_role: 'admin' });
+      expect(users.items.find((u) => u.id === bao.user.id)?.effective_role).toBe('member');
+    }
+  });
+
   test('an unknown user is not_found', async () => {
     await start();
     const { cookie } = await admin();
@@ -363,6 +408,42 @@ describe.each(dialects)('admin users on %s', (dialect) => {
     });
     expect((await me({ cookie })).status).toBe(401);
     expect((await me({ bearer: token })).status).toBe(401);
+  });
+
+  test('revoking yourself from a browser clears the session cookie like sign-out does', async () => {
+    await start();
+    const { user, cookie } = await admin();
+    const other = await createSession(ctx.deps, user.id, 'password', {
+      ip: '127.0.0.1',
+      userAgent: 'vitest',
+    });
+    const signOut = await ctx.request(
+      '/api/v1/auth/sign-out',
+      apiInit(ctx, { method: 'POST', cookie: `pinwall_session=${other.secret}` }),
+    );
+    const cleared = signOut.headers.getSetCookie();
+    expect(cleared).toHaveLength(1);
+    expect(cleared[0]).toMatch(/^pinwall_session=;.*Max-Age=0/);
+
+    const r = await revoke(user.id, { cookie });
+    expect(r.status).toBe(200);
+    expect(r.headers.getSetCookie()).toEqual(cleared);
+  });
+
+  test('revoking someone else, or yourself by API token, leaves the session cookie alone', async () => {
+    await start();
+    const { user, cookie } = await admin();
+    const bao = await member({ name: 'Bao' });
+    const token = await createUserToken(ctx, user.id);
+
+    const other = await revoke(bao.user.id, { cookie });
+    expect(other.status).toBe(200);
+    expect(other.headers.getSetCookie()).toEqual([]);
+
+    // A bearer request neither reads nor touches cookies, even when it ends the browser's session.
+    const self = await revoke(user.id, { bearer: token, cookie });
+    expect(self.status).toBe(200);
+    expect(self.headers.getSetCookie()).toEqual([]);
   });
 
   test('role changes and revocations are logged', async () => {

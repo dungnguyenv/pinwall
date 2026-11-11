@@ -34,14 +34,20 @@ const member: UserRow = {
 const owner: UserRow = { ...member, id: 'usr_owner', kind: 'owner', idp_role: null };
 
 describe('roles', () => {
-  test('effectiveRole: override, else admin for the owner, else the IdP role', () => {
+  test('effectiveRole: the owner is admin, else an override, else the IdP role', () => {
     expect(effectiveRole(owner)).toBe('admin');
     expect(effectiveRole(member)).toBe('member');
     expect(effectiveRole({ ...member, idp_role: 'admin' })).toBe('admin');
     expect(effectiveRole({ ...member, idp_role: null })).toBeNull();
     expect(effectiveRole({ ...member, role_override: 'admin' })).toBe('admin');
-    expect(effectiveRole({ ...owner, role_override: 'member' })).toBe('member');
-    expect(effectiveRole({ ...owner, role_override: 'blocked' })).toBe('blocked');
+  });
+
+  test('the owner is always an admin: an override stored on the owner is ignored', () => {
+    for (const role_override of ['admin', 'member', 'blocked'] as const) {
+      expect(effectiveRole({ ...owner, role_override })).toBe('admin');
+    }
+    expect(hasAccess({ ...owner, role_override: 'blocked' })).toBe(true);
+    expect(hasAccess({ ...owner, role_override: 'blocked', disabled_at: 1 })).toBe(false);
   });
 
   test('hasAccess needs a role and an enabled account', () => {

@@ -4,6 +4,7 @@ import type { AppDeps } from '../deps.ts';
 import { conflict, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { hashSecret, newId, newSecret } from '../lib/ids.ts';
+import { lockUser } from './account.ts';
 import type { BearerResolver } from './resolve.ts';
 
 /** Every API token secret starts with this; the bearer resolvers tell token kinds apart by it. */
@@ -40,8 +41,11 @@ export async function createApiToken(
     expires_at: p.expiresInDays === null ? null : now + p.expiresInDays * DAY_MS,
     revoked_at: null,
   };
-  // Count and insert together: on SQLite writers take turns, so the limit holds exactly there.
+  // Count and insert together, behind the user's lock: on SQLite writers take turns, and on
+  // Postgres two creates would otherwise both count 99 under READ COMMITTED. So the limit holds
+  // exactly on both.
   await deps.db.db.transaction().execute(async (trx) => {
+    await lockUser(trx, deps.db.dialect, userId);
     const active = await trx
       .selectFrom('api_tokens')
       .select((eb) => eb.fn.countAll().as('n'))

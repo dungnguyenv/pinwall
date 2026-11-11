@@ -231,11 +231,20 @@ describe('origins', () => {
 });
 
 describe('durations and limits', () => {
-  test('recheck interval cannot exceed 24h', () => {
-    expect(() => loadConfig({ PINWALL_ACCESS_RECHECK_INTERVAL: '25h' })).toThrow(/24h/);
-    expect(loadConfig({ PINWALL_ACCESS_RECHECK_INTERVAL: '24h' }).access.recheckIntervalMs).toBe(
-      86_400_000,
-    );
+  test('recheck interval is between 5m and 24h', () => {
+    const interval = (value: string) =>
+      loadConfig({ PINWALL_ACCESS_RECHECK_INTERVAL: value }).access.recheckIntervalMs;
+    expect(loadConfig({}).access.recheckIntervalMs).toBe(12 * 3_600_000);
+    expect(interval('24h')).toBe(86_400_000);
+    expect(interval('5m')).toBe(300_000);
+    expect(issuesOf({ PINWALL_ACCESS_RECHECK_INTERVAL: '25h' })).toEqual([
+      expect.stringMatching(/^PINWALL_ACCESS_RECHECK_INTERVAL: .*24h/),
+    ]);
+    for (const tooShort of ['299999ms', '1m', '1ms']) {
+      expect(issuesOf({ PINWALL_ACCESS_RECHECK_INTERVAL: tooShort }), tooShort).toEqual([
+        expect.stringMatching(/^PINWALL_ACCESS_RECHECK_INTERVAL: .*5m/),
+      ]);
+    }
     expect(() => loadConfig({ PINWALL_ACCESS_RECHECK_INTERVAL: '0' })).toThrow(
       /PINWALL_ACCESS_RECHECK_INTERVAL/,
     );
@@ -480,6 +489,43 @@ describe('proxy, secret key and access', () => {
     expect(issuesOf({ PINWALL_OIDC_ISSUER: 'not a url', PINWALL_OIDC_CLIENT_ID: 'c' })).toEqual([
       expect.stringMatching(/^PINWALL_OIDC_ISSUER: /),
     ]);
+  });
+
+  test('an http: issuer is refused unless PINWALL_OIDC_ALLOW_HTTP_ISSUER is true', () => {
+    const plain = {
+      PINWALL_OIDC_ISSUER: 'http://idp.internal:8081/realms/x',
+      PINWALL_OIDC_CLIENT_ID: 'c',
+    };
+    for (const env of [plain, { ...plain, PINWALL_OIDC_ALLOW_HTTP_ISSUER: 'false' }]) {
+      expect(issuesOf(env)).toEqual([
+        expect.stringMatching(
+          /^PINWALL_OIDC_ISSUER: must use https:.*PINWALL_OIDC_ALLOW_HTTP_ISSUER=true/,
+        ),
+      ]);
+    }
+    // Loopback is no exception: a plain http: IdP is opted into, wherever it runs.
+    expect(
+      issuesOf({ PINWALL_OIDC_ISSUER: 'http://127.0.0.1:9000', PINWALL_OIDC_CLIENT_ID: 'c' }),
+    ).toEqual([expect.stringMatching(/^PINWALL_OIDC_ISSUER: /)]);
+    expect(issuesOf({ ...plain, PINWALL_OIDC_ALLOW_HTTP_ISSUER: 'sure' })).toEqual([
+      expect.stringMatching(/^PINWALL_OIDC_ALLOW_HTTP_ISSUER: must be true or false/),
+      expect.stringMatching(/^PINWALL_OIDC_ISSUER: must use https:/),
+    ]);
+
+    const allowed = loadConfig({ ...plain, PINWALL_OIDC_ALLOW_HTTP_ISSUER: 'true' });
+    expect(allowed.oidc?.issuer).toBe('http://idp.internal:8081/realms/x');
+    expect(allowed.warnings).toEqual([
+      expect.stringMatching(/PINWALL_OIDC_ALLOW_HTTP_ISSUER.*forge/),
+    ]);
+
+    // With an https: issuer the flag changes nothing and warns about nothing.
+    const secure = loadConfig({
+      PINWALL_OIDC_ISSUER: 'https://idp.example',
+      PINWALL_OIDC_CLIENT_ID: 'c',
+      PINWALL_OIDC_ALLOW_HTTP_ISSUER: 'true',
+    });
+    expect(secure.oidc?.issuer).toBe('https://idp.example');
+    expect(secure.warnings).toEqual([]);
   });
 
   test('access lists are lowercased, deduplicated and validated', () => {

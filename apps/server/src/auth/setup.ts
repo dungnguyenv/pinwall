@@ -91,10 +91,13 @@ export async function completeSetup(deps: AppDeps, input: SetupInput): Promise<U
   if (input.password === null && input.passkey === null) {
     throw badRequest(t('auth.setup.needCredential'));
   }
+  // Refuse before the slow hash: these routes stay mounted after setup, so anyone could
+  // otherwise make the server hash passwords for a link that cannot work. This only looks at the
+  // link; it is used up further down.
+  await checkSetupToken(deps, input.token);
   // Hashing is slow, so it happens before any transaction is open.
   const passwordHash =
     input.password === null ? null : await hashPassword(checkNewPassword(input.password));
-  await checkSetupToken(deps, input.token);
   const passkey =
     input.passkey === null
       ? null

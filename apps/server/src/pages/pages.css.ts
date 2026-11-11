@@ -139,6 +139,48 @@ body {
   font-size: 12px;
   user-select: all;
 }
+
+.pw-lead {
+  margin: 0 0 12px;
+  color: var(--pw-muted);
+}
+
+.pw-identity {
+  margin: 0 0 24px;
+  padding: 12px 16px;
+  border: 1px solid var(--pw-border);
+  border-radius: 12px;
+  background: var(--pw-subtle);
+  overflow-wrap: anywhere;
+}
+
+.pw-identity p {
+  margin: 0;
+}
+
+.pw-identity-name {
+  font-weight: 600;
+}
+
+.pw-identity-email {
+  color: var(--pw-muted);
+  font-size: 14px;
+}
+
+.pw-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 8px;
+  border: 1px solid var(--pw-border);
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.pw-hint {
+  margin: 0 0 24px;
+  color: var(--pw-muted);
+  font-size: 14px;
+}
 `;
 
 export const PAGES_CSS_PATH = '/_pinwall/pages.css';
