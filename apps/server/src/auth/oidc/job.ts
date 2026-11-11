@@ -13,7 +13,7 @@ export interface RecheckSummary {
   checked: number;
   ok: number;
   removed: number;
-  /** Refused refresh tokens: the person must sign in again. */
+  /** A refused refresh token, or an answer without the role claims: the person signs in again. */
   signInRequired: number;
   transient: number;
 }
