@@ -685,5 +685,8 @@
   "mcp.shares.summary": "Share links of {{artifact_id}}: {{count}}, newest first.",
   "mcp.shares.noUrls": "Their URLs are not shown: a URL appears only when its link is created.",
   "mcp.shares.truncated": "Only the first {{count}} are listed.",
-  "mcp.share.revoked": "Revoked share link {{id}}; it no longer opens anything."
+  "mcp.share.revoked": "Revoked share link {{id}}; it no longer opens anything.",
+  "backup.busy": "Another backup or restore is running (lease maintenance:backup). Try again when it has finished.",
+  "backup.leaseLost": "The backup lease was lost, so stored files may have been removed meanwhile. Run the backup again.",
+  "backup.blobBad": "Stored file {{sha}} is missing or does not match its SHA-256; the backup was not completed."
 }
