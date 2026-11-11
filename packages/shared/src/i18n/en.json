@@ -582,5 +582,14 @@
   "oauth.register.responseTypes": "The only supported response type is code.",
   "oauth.register.body": "Send the client metadata as a JSON object.",
   "oauth.register.fieldType": "The client metadata field {{field}} has the wrong type.",
-  "oauth.body.tooLarge": "The request body is too large."
+  "oauth.body.tooLarge": "The request body is too large.",
+  "oauth.authorize.title": "This app cannot connect to Pinwall",
+  "oauth.authorize.unknownClient": "This app is not registered with this Pinwall, or its registration expired after 30 days without use. Remove the Pinwall server from your agent and add it again.",
+  "oauth.authorize.badRedirect": "This app asked Pinwall to send you back to an address it did not register ({{uri}}). Pinwall stopped here instead of sending you somewhere unexpected.",
+  "oauth.authorize.responseType": "Only response_type=code is supported.",
+  "oauth.authorize.pkce": "PKCE is required: send code_challenge with code_challenge_method=S256.",
+  "oauth.authorize.state": "The state parameter is longer than 1024 characters.",
+  "oauth.authorize.resource": "This server only issues tokens for {{resource}}.",
+  "oauth.request.expired": "This authorization request has expired or was already answered.",
+  "oauth.consent.unnamedUser": "Unnamed user"
 }

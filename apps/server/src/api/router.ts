@@ -14,6 +14,7 @@ import { registerContentRoutes } from './content.ts';
 import { registerDiffRoutes } from './diff.ts';
 import { registerEventRoutes } from './events.ts';
 import { registerMeRoutes } from './me.ts';
+import { registerOAuthConsentRoutes } from './oauth-consent.ts';
 import { registerProjectRoutes } from './projects.ts';
 import { registerPublishRoutes } from './publish.ts';
 import { registerSetupRoutes } from './setup.ts';
@@ -84,6 +85,7 @@ export function buildApiRouter(): OpenAPIHono<AppEnv> {
   registerShareRoutes(api);
   registerSharePublicRoutes(api);
   registerEventRoutes(api);
+  registerOAuthConsentRoutes(api);
 
   return api;
 }

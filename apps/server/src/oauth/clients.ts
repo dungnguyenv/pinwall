@@ -43,7 +43,7 @@ const QUOTED_URI_MAX = 100;
 const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/gu;
 
 /** `uri` for an error message: controls made visible as percent escapes, then cut with `…`. */
-function quoteUri(uri: string): string {
+export function quoteUri(uri: string): string {
   const chars = Array.from(uri.replace(CONTROL_OR_FORMAT, (ch) => encodeURIComponent(ch)));
   if (chars.length <= QUOTED_URI_MAX) return chars.join('');
   return `${chars.slice(0, QUOTED_URI_MAX - 1).join('')}…`;
