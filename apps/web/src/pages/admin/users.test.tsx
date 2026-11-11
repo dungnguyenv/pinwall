@@ -18,7 +18,13 @@ import { API, apiError, server } from '../../test/server.ts';
 const t = i18n.t;
 const HOUR = 3_600_000;
 
-beforeEach(() => serveSidebar());
+/** A window wide enough that the content area leaves room for the table. */
+const WIDE = 1500;
+
+beforeEach(() => {
+  serveSidebar();
+  setViewport(WIDE);
+});
 
 /** The users table, once it has loaded. */
 const usersTable = () => screen.findByRole('table', { name: 'Users' });
@@ -348,7 +354,7 @@ test('non-admins see the admin-only message and nothing is fetched', async () =>
   expect(fetched).toBe(0);
 });
 
-test('below 768 px the users stack as cards with the same controls', async () => {
+test('the users stack as cards with the same controls on a phone', async () => {
   const { calls } = serveAdminUsers({ users: people() });
   setViewport(360);
   const { user } = renderRoute('/admin/users');
@@ -373,6 +379,30 @@ test('below 768 px the users stack as cards with the same controls', async () =>
   const own = cards.find((c) => within(c).queryByText('Ada Lovelace')) as HTMLElement;
   expect(within(own).getByRole('combobox')).toBeDisabled();
   expect(within(own).getByText(t('auth.ownRole'))).toBeInTheDocument();
+});
+
+test('the table needs 1100 px of content, so a narrower content area gets cards', async () => {
+  // The open sidebar (264 px), its border, the page gutters (2 x 32 px) and a
+  // scrollbar leave about 1100 px of content from 1450 px of window.
+  serveAdminUsers({ users: people() });
+  setViewport(1449);
+  renderRoute('/admin/users');
+
+  expect(await screen.findByRole('list', { name: 'Users' })).toBeInTheDocument();
+  expect(screen.queryByRole('table')).not.toBeInTheDocument();
+
+  setViewport(1450);
+  expect(await usersTable()).toBeInTheDocument();
+  expect(screen.queryByRole('list', { name: 'Users' })).not.toBeInTheDocument();
+});
+
+test('a tablet window shows cards, not a table that needs to scroll sideways', async () => {
+  serveAdminUsers({ users: people() });
+  setViewport(768);
+  renderRoute('/admin/users');
+
+  expect(await screen.findByRole('list', { name: 'Users' })).toBeInTheDocument();
+  expect(screen.queryByRole('table')).not.toBeInTheDocument();
 });
 
 test('admin lists have loading and error states', async () => {

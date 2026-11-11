@@ -398,7 +398,7 @@ test('account menu shows Admin only to admins and signs out', async () => {
   await user.click(await screen.findByRole('button', { name: 'Ada Lovelace' }));
   await user.click(await screen.findByRole('menuitem', { name: 'Admin' }));
   await waitFor(() => expect(router.state.location.pathname).toBe('/admin/users'));
-  expect(await screen.findByRole('table', { name: 'Users' })).toBeInTheDocument();
+  expect(await screen.findByRole('list', { name: 'Users' })).toBeInTheDocument();
 
   let signedOut = 0;
   server.use(

@@ -7,8 +7,9 @@ import { formatDate, formatRelativeTime } from '../../lib/format.ts';
 import { Avatar, Badge, type BadgeTone, Select, Tooltip, toast } from '../../ui/index.ts';
 
 /*
- * The pieces of a user shared by the table (768 px and up) and the stacked
- * cards below it, so both show the same facts and take the same actions.
+ * The pieces of a user shared by the table (wide content areas) and the
+ * stacked cards (everything narrower), so both show the same facts and take
+ * the same actions.
  */
 
 type Role = NonNullable<AdminUser['effective_role']>;

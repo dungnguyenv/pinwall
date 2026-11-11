@@ -5,7 +5,7 @@ import { useAdminUsers, useRevokeUser } from '../../api/admin.ts';
 import { errorMessage } from '../../api/client.ts';
 import type { AdminUser } from '../../api/dto.ts';
 import { useLeaveSession, useMe } from '../../api/session.ts';
-import { PHONE_QUERY, useMediaQuery } from '../../lib/media.ts';
+import { useMediaQuery } from '../../lib/media.ts';
 import { usePageTitle } from '../../lib/page-title.ts';
 import {
   Button,
@@ -19,13 +19,22 @@ import {
 import { useRowDialog } from '../settings/use-row-dialog.ts';
 import { LastSeen, PersonCell, RoleCell, RoleSelect } from './user-parts.tsx';
 
+/**
+ * The table needs about 1100 px of content to breathe. The open sidebar
+ * (264 px and its border), the page gutters (2 x 32 px) and a scrollbar take
+ * roughly 350 px of the window, so a window narrower than this gets the cards.
+ * The rail leaves more room, but the cards fit every case, so one number is
+ * enough.
+ */
+const TABLE_QUERY = '(min-width: 1450px)';
+
 /** `/admin/users`: everyone who has signed in, their role, and the controls to change it. */
 export function UsersPage() {
   const { t } = useTranslation();
   usePageTitle(t('web.admin.users'));
   const users = useAdminUsers();
   const { data: me } = useMe();
-  const phone = useMediaQuery(PHONE_QUERY);
+  const roomForTable = useMediaQuery(TABLE_QUERY);
   const revokeUser = useRevokeUser();
   const leaveSession = useLeaveSession();
   const revoking = useRowDialog<AdminUser>();
@@ -52,10 +61,10 @@ export function UsersPage() {
         />
       ) : (
         <>
-          {phone ? (
-            <UserCards users={items} meId={me?.id} onRevoke={revoking.show} />
-          ) : (
+          {roomForTable ? (
             <UserTable users={items} meId={me?.id} onRevoke={revoking.show} />
+          ) : (
+            <UserCards users={items} meId={me?.id} onRevoke={revoking.show} />
           )}
           {users.isFetchNextPageError ? (
             <p role="alert" className="text-center text-danger text-sm">
@@ -134,7 +143,7 @@ interface UserListProps {
 const TH = 'whitespace-nowrap px-4 py-2.5 text-left font-medium text-fg-muted text-sm';
 const TD = 'px-4 py-3.5 align-middle';
 
-/** From 768 px: one row per user. Where the sidebar leaves less room, the table scrolls within its box. */
+/** Where the content area is wide: one row per user. If it still overflows (large text), the table scrolls within its box. */
 function UserTable({ users, meId, onRevoke }: UserListProps) {
   const { t } = useTranslation();
   return (
@@ -190,7 +199,7 @@ function UserTable({ users, meId, onRevoke }: UserListProps) {
   );
 }
 
-/** Below 768 px: one card per user, the same facts stacked. */
+/** Everywhere narrower: one card per user, the same facts stacked. */
 function UserCards({ users, meId, onRevoke }: UserListProps) {
   const { t } = useTranslation();
   return (
