@@ -70,6 +70,7 @@
   "publish.upload.form": "Send multipart/form-data with a target field and at least one file.",
   "publish.upload.archiveAlone": "An archive sent first without a path is unpacked, so it must be the only file. Send a path field before each file to publish archives as files.",
   "publish.upload.idle": "The upload sent no data for {{seconds}} seconds, so Pinwall stopped waiting. Run the same command again before the upload URL expires.",
+  "publish.upload.interrupted": "The upload was interrupted before all of it arrived. Run the same command again before the upload URL expires.",
   "content.notFound.title": "Not found",
   "content.notFound.message": "This file is not part of the artifact.",
   "content.gone.title": "No longer available",

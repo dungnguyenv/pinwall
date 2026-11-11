@@ -3,7 +3,7 @@ import { Readable } from 'node:stream';
 import type { Hono } from 'hono';
 import type { AppEnv } from '../app.ts';
 import type { Config } from '../config/types.ts';
-import { AppError } from '../lib/errors.ts';
+import { AppError, badRequest } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { runUpload } from './sessions.ts';
 
@@ -56,7 +56,7 @@ export function mountUploadRoute(app: Hono<AppEnv>, opts: { idleTimeoutMs?: numb
   app.post('/upload/:token', async (c) => {
     const raw = c.req.raw;
     const source = raw.body === null ? Readable.from([]) : Readable.fromWeb(raw.body);
-    const body = withIdleTimeout(source, idleMs, () => uploadIdle(idleMs));
+    const body = withIdleTimeout(source, idleMs);
     const result = await runUpload(c.var.deps, c.req.param('token'), {
       body,
       contentType: c.req.header('content-type') ?? null,
@@ -67,11 +67,17 @@ export function mountUploadRoute(app: Hono<AppEnv>, opts: { idleTimeoutMs?: numb
   });
 }
 
+/** The 408 for an upload that sent nothing for `ms`. */
 function uploadIdle(ms: number): AppError {
   const seconds = Math.ceil(ms / 1000);
   return new AppError('request_timeout', 408, t('publish.upload.idle', { seconds }), {
     idle_timeout_seconds: seconds,
   });
+}
+
+/** The 400 for an upload whose body broke off before its end: the client went away. */
+function uploadInterrupted(): AppError {
+  return badRequest(t('publish.upload.interrupted'));
 }
 
 /** `Content-Length` as a number, or null when it is absent or not a plain byte count. */
@@ -82,12 +88,14 @@ export function declaredLength(header: string | undefined): number | null {
 }
 
 /**
- * `source` as a stream that fails with `onIdle()` once no byte has arrived for `ms` while its
- * reader is waiting for one. Time the reader spends on bytes it already has does not count, so
- * a slow store or database cannot make a steady client time out. Destroying the result
- * destroys `source`.
+ * `source`, an upload's body, as a stream that fails with the 408 `request_timeout` once no byte
+ * has arrived for `ms` while its reader is waiting for one, and with a 400 when `source` fails or
+ * closes before its end (the client went away). Its failures are therefore always `AppError`s,
+ * so whatever reads it (sniffing, an archive, a file being staged) answers 4xx, never 500. Time
+ * the reader spends on bytes it already has does not count, so a slow store or database cannot
+ * make a steady client time out. Destroying the result destroys `source`.
  */
-export function withIdleTimeout(source: Readable, ms: number, onIdle: () => Error): Readable {
+export function withIdleTimeout(source: Readable, ms: number): Readable {
   let timer: NodeJS.Timeout | undefined;
   let ended = false;
   const disarm = () => {
@@ -96,7 +104,7 @@ export function withIdleTimeout(source: Readable, ms: number, onIdle: () => Erro
   };
   const arm = () => {
     disarm();
-    timer = setTimeout(() => guarded.destroy(onIdle()), ms);
+    timer = setTimeout(() => guarded.destroy(uploadIdle(ms)), ms);
   };
 
   const guarded = new Readable({
@@ -125,9 +133,11 @@ export function withIdleTimeout(source: Readable, ms: number, onIdle: () => Erro
     disarm();
     guarded.push(null);
   });
-  source.on('error', (error) => guarded.destroy(error));
+  source.on('error', (error) => {
+    guarded.destroy(error instanceof AppError ? error : uploadInterrupted());
+  });
   source.on('close', () => {
-    if (!ended) guarded.destroy(new Error('The upload body closed before it ended'));
+    if (!ended) guarded.destroy(uploadInterrupted());
   });
   source.pause();
   return guarded;

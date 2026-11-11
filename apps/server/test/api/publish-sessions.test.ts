@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+import { request as httpRequest } from 'node:http';
 import { Readable } from 'node:stream';
 import { PublishResult, PublishSession } from '@pinwall/shared';
 import { Hono } from 'hono';
@@ -9,6 +11,7 @@ import { createSession } from '../../src/auth/sessions.ts';
 import type { UserRow } from '../../src/db/schema.ts';
 import { errorHandler } from '../../src/http/errors.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
+import { AppError } from '../../src/lib/errors.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { hashSecret } from '../../src/lib/ids.ts';
 import { type UploadReceipt, uploadCommands } from '../../src/publish/sessions.ts';
@@ -688,6 +691,105 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
       expect((await put(s.upload_url, await site())).status).toBe(201);
     });
 
+    test('a stall after sniffing is 408 for a tar.gz being read and for a single file', async () => {
+      await start();
+      // Random bytes do not compress, so half of the gzip is half of the archive.
+      const tgz = await makeTar(
+        [
+          { name: 'a.css', body: 'p{}' },
+          { name: 'b.bin', body: randomBytes(65_536) },
+        ],
+        { gzip: true },
+      );
+      const cases: { headers: Record<string, string>; query: string; body: Buffer }[] = [
+        { headers: { 'content-type': 'application/gzip' }, query: '', body: tgz },
+        { headers: {}, query: '?filename=big.bin', body: randomBytes(65_536) },
+      ];
+      for (const { headers, query, body } of cases) {
+        const s = await newSession();
+        const server = await listen(uploadApp(300), ctx.deps.config);
+        try {
+          const reply = await socketPost(server.port, `${pathOf(s.upload_url)}${query}`, {
+            headers: { ...headers, 'transfer-encoding': 'chunked' },
+            chunks: [body.subarray(0, body.length / 2)],
+            stall: true,
+          });
+          expect(reply.status, query).toBe(408);
+          expect(reply.json).toMatchObject({
+            error: { code: 'request_timeout', message: t('publish.upload.idle', { seconds: 1 }) },
+          });
+        } finally {
+          await server.close();
+        }
+        expect(await storedBlobs()).toEqual([]);
+        expect(await versions()).toEqual([]);
+      }
+    });
+
+    test('a client that goes away mid-body gets a 400, never a 500, and leaves no blobs', async () => {
+      await start();
+      const tgz = await makeTar(
+        [
+          { name: 'a.css', body: 'p{}' },
+          { name: 'b.bin', body: randomBytes(65_536) },
+        ],
+        { gzip: true },
+      );
+      const cases: { headers: Record<string, string>; query: string; body: Buffer }[] = [
+        { headers: { 'content-type': 'application/gzip' }, query: '', body: tgz },
+        { headers: {}, query: '?filename=big.bin', body: randomBytes(65_536) },
+      ];
+      const blobRows = () => ctx.deps.db.db.selectFrom('blobs').select('sha256').execute();
+      for (const { headers, query, body } of cases) {
+        const s = await newSession();
+        // What earlier cases published: the retry at the end of each one.
+        const before = { objects: await storedBlobs(), rows: await blobRows() };
+        const server = await listen(ctx.app, ctx.deps.config);
+        const errors = vi.spyOn(ctx.deps.logger, 'error');
+        const info = vi.spyOn(ctx.deps.logger, 'info');
+        const stored = vi.spyOn(ctx.deps.blobs, 'put');
+        const receipt = () =>
+          ctx.deps.oneTime.peek<UploadReceipt>(
+            `upload-receipt:${hashSecret(s.upload_url.slice(s.upload_url.lastIndexOf('/') + 1))}`,
+          );
+        try {
+          const req = httpRequest({
+            host: '127.0.0.1',
+            port: server.port,
+            path: `${pathOf(s.upload_url)}${query}`,
+            method: 'POST',
+            headers: { ...headers, 'transfer-encoding': 'chunked' },
+          });
+          req.on('error', () => {});
+          req.write(body.subarray(0, body.length / 2));
+          await vi.waitFor(async () => expect((await receipt())?.state).toBe('running'));
+          // The client vanishes once the server is past sniffing: mid-archive with a.css
+          // stored, or holding part of the single file.
+          if (query === '') await vi.waitFor(() => expect(stored).toHaveBeenCalled());
+          else await new Promise((r) => setTimeout(r, 50));
+          req.destroy();
+          // The failed upload hands its URL back.
+          await vi.waitFor(async () => expect((await receipt())?.state).toBe('open'));
+          await vi.waitFor(() =>
+            expect(info).toHaveBeenCalledWith(
+              expect.objectContaining({ path: '/upload/:token', status: 400 }),
+              'request',
+            ),
+          );
+          expect(errors).not.toHaveBeenCalled();
+        } finally {
+          errors.mockRestore();
+          info.mockRestore();
+          stored.mockRestore();
+          await server.close();
+        }
+        expect({ objects: await storedBlobs(), rows: await blobRows() }).toEqual(before);
+        const published = (await versions()).length;
+        expect((await put(s.upload_url, await site())).status).toBe(201);
+        expect(await versions()).toHaveLength(published + 1);
+      }
+    });
+
     test('a slow but steady upload is not cut off', async () => {
       await start();
       const s = await newSession();
@@ -707,31 +809,59 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
 });
 
 describe('withIdleTimeout', () => {
-  const idle = () => new Error('idle');
+  /** What reading `stream` to its end fails with. */
+  async function failureOf(stream: Readable): Promise<unknown> {
+    try {
+      for await (const _ of stream) {
+        // keep reading
+      }
+    } catch (error) {
+      return error;
+    }
+    throw new Error('expected the stream to fail');
+  }
 
   test('passes every byte through and ends', async () => {
-    const guarded = withIdleTimeout(Readable.from([Buffer.from('ab'), Buffer.from('c')]), 50, idle);
+    const guarded = withIdleTimeout(Readable.from([Buffer.from('ab'), Buffer.from('c')]), 50);
     const parts: Buffer[] = [];
     for await (const part of guarded) parts.push(part as Buffer);
     expect(Buffer.concat(parts).toString()).toBe('abc');
   });
 
-  test('fails when nothing arrives while the reader waits', async () => {
+  test('fails with the 408 when nothing arrives while the reader waits', async () => {
     const source = new Readable({ read() {} });
     source.push(Buffer.from('a'));
-    const guarded = withIdleTimeout(source, 50, idle);
-    const read = (async () => {
-      for await (const _ of guarded) {
-        // keep waiting
-      }
-    })();
-    await expect(read).rejects.toThrow('idle');
+    const error = await failureOf(withIdleTimeout(source, 1_500));
+    expect(error).toBeInstanceOf(AppError);
+    expect(error).toMatchObject({
+      code: 'request_timeout',
+      status: 408,
+      message: t('publish.upload.idle', { seconds: 2 }),
+      details: { idle_timeout_seconds: 2 },
+    });
     expect(source.destroyed).toBe(true);
+  });
+
+  test('a body that fails or closes before its end is an interrupted upload (400)', async () => {
+    const interrupted = {
+      code: 'bad_request',
+      status: 400,
+      message: t('publish.upload.interrupted'),
+    };
+    const failing = new Readable({ read() {} });
+    const guarded = withIdleTimeout(failing, 1_000);
+    setTimeout(() => failing.destroy(new Error('aborted')), 10);
+    expect(await failureOf(guarded)).toMatchObject(interrupted);
+
+    const closing = new Readable({ read() {} });
+    closing.push(Buffer.from('a'));
+    setTimeout(() => closing.destroy(), 10);
+    expect(await failureOf(withIdleTimeout(closing, 1_000))).toMatchObject(interrupted);
   });
 
   test('time the reader spends on what it has does not count', async () => {
     const chunks = Array.from({ length: 64 }, () => Buffer.alloc(16_384, 1));
-    const guarded = withIdleTimeout(Readable.from(chunks), 50, idle);
+    const guarded = withIdleTimeout(Readable.from(chunks), 50);
     let total = 0;
     for await (const part of guarded) {
       total += (part as Buffer).length;
@@ -743,7 +873,7 @@ describe('withIdleTimeout', () => {
 
   test('destroying it destroys the source', () => {
     const source = new Readable({ read() {} });
-    withIdleTimeout(source, 50, idle).destroy();
+    withIdleTimeout(source, 50).destroy();
     expect(source.destroyed).toBe(true);
   });
 });
