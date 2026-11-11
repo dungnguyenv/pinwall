@@ -11,19 +11,29 @@ import { Label, page, Timestamp } from '@pinwall/shared';
 import { z } from 'zod';
 
 export {
+  AddPasskeyRequest,
+  ApiToken,
+  ApiTokenList,
   CeremonyOptions,
+  ChangePasswordRequest,
+  CreateApiTokenRequest,
+  CreatedApiToken,
   ErrorBody,
   Label,
   Me,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
+  Passkey,
   PasskeyAuthenticationResponse,
+  PasskeyList,
   PasskeyRegistrationResponse,
   PasskeySignInRequest,
   PublicConfig,
   page,
+  RenamePasskeyRequest,
   SetupPasskeyOptionsRequest,
   SetupRequest,
+  UpdateProfileRequest,
 } from '@pinwall/shared';
 
 // --- M4 (projects, artifacts, versions). Replace with re-exports once M4 merges. ---

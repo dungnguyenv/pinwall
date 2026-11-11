@@ -1,7 +1,7 @@
 import { lazy, type ReactNode, Suspense } from 'react';
-import type { RouteObject } from 'react-router';
+import { Navigate, type RouteObject } from 'react-router';
 import { AuthPageFallback } from '../pages/auth/auth-layout.tsx';
-import { RequireAuth } from './require-auth.tsx';
+import { RequireAuth, RequireOwner } from './require-auth.tsx';
 import { AppShell } from './shell/app-shell.tsx';
 
 /*
@@ -23,6 +23,18 @@ const ArtifactPage = lazy(() =>
 );
 const NotFoundPage = lazy(() =>
   import('../pages/not-found-page.tsx').then((m) => ({ default: m.NotFoundPage })),
+);
+const SettingsLayout = lazy(() =>
+  import('../pages/settings/settings-layout.tsx').then((m) => ({ default: m.SettingsLayout })),
+);
+const ProfilePage = lazy(() =>
+  import('../pages/settings/profile-page.tsx').then((m) => ({ default: m.ProfilePage })),
+);
+const SecurityPage = lazy(() =>
+  import('../pages/settings/security-page.tsx').then((m) => ({ default: m.SecurityPage })),
+);
+const TokensPage = lazy(() =>
+  import('../pages/settings/tokens-page.tsx').then((m) => ({ default: m.TokensPage })),
 );
 const SignInPage = lazy(() =>
   import('../pages/auth/sign-in-page.tsx').then((m) => ({ default: m.SignInPage })),
@@ -74,6 +86,24 @@ export function buildRoutes(): RouteObject[] {
         { path: 'a/:artifactId', element: <ArtifactPage /> },
         { path: 'a/:artifactId/v/:n', element: <ArtifactPage /> },
         { path: 'a/:artifactId/compare', element: <ArtifactPage /> },
+        {
+          path: 'settings',
+          element: <SettingsLayout />,
+          children: [
+            { index: true, element: <Navigate to="profile" replace /> },
+            { path: 'profile', element: <ProfilePage /> },
+            // Single sign-on users have no password or passkeys to manage.
+            {
+              path: 'security',
+              element: (
+                <RequireOwner fallback="/settings/profile">
+                  <SecurityPage />
+                </RequireOwner>
+              ),
+            },
+            { path: 'tokens', element: <TokensPage /> },
+          ],
+        },
         { path: '*', element: <NotFoundPage /> },
       ],
     },
