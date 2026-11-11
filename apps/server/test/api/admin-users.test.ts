@@ -365,6 +365,42 @@ describe.each(dialects)('admin users on %s', (dialect) => {
     expect((await me({ bearer: token })).status).toBe(401);
   });
 
+  test('revoking yourself from a browser clears the session cookie like sign-out does', async () => {
+    await start();
+    const { user, cookie } = await admin();
+    const other = await createSession(ctx.deps, user.id, 'password', {
+      ip: '127.0.0.1',
+      userAgent: 'vitest',
+    });
+    const signOut = await ctx.request(
+      '/api/v1/auth/sign-out',
+      apiInit(ctx, { method: 'POST', cookie: `pinwall_session=${other.secret}` }),
+    );
+    const cleared = signOut.headers.getSetCookie();
+    expect(cleared).toHaveLength(1);
+    expect(cleared[0]).toMatch(/^pinwall_session=;.*Max-Age=0/);
+
+    const r = await revoke(user.id, { cookie });
+    expect(r.status).toBe(200);
+    expect(r.headers.getSetCookie()).toEqual(cleared);
+  });
+
+  test('revoking someone else, or yourself by API token, leaves the session cookie alone', async () => {
+    await start();
+    const { user, cookie } = await admin();
+    const bao = await member({ name: 'Bao' });
+    const token = await createUserToken(ctx, user.id);
+
+    const other = await revoke(bao.user.id, { cookie });
+    expect(other.status).toBe(200);
+    expect(other.headers.getSetCookie()).toEqual([]);
+
+    // A bearer request neither reads nor touches cookies, even when it ends the browser's session.
+    const self = await revoke(user.id, { bearer: token, cookie });
+    expect(self.status).toBe(200);
+    expect(self.headers.getSetCookie()).toEqual([]);
+  });
+
   test('role changes and revocations are logged', async () => {
     await start();
     const lines: Record<string, unknown>[] = [];

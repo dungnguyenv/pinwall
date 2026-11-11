@@ -7,6 +7,7 @@ import { listUsers, setRoleOverride, userExists } from '../auth/admin-users.ts';
 import { authOf, requireAdmin } from '../auth/guards.ts';
 import { revokeAllCredentials } from '../auth/revoke.ts';
 import { effectiveRole } from '../auth/roles.ts';
+import { clearSessionCookie } from '../auth/session-cookie.ts';
 import type { UserRow } from '../db/schema.ts';
 import { notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
@@ -76,7 +77,7 @@ const revokeNow = createRoute({
   tags: ['admin'],
   summary: 'Revoke now',
   description:
-    "Ends all of the user's browser sessions, API tokens and OAuth grants at once. Revoking yourself is allowed and signs you out everywhere.",
+    "Ends all of the user's browser sessions, API tokens and OAuth grants at once. Revoking yourself is allowed and signs you out everywhere; from a browser, the response also clears the session cookie.",
   middleware: [requireAdmin] as MiddlewareHandler<AppEnv>[],
   security,
   request: { params: UserId },
@@ -129,10 +130,14 @@ export function registerAdminUserRoutes(api: OpenAPIHono<AppEnv>): void {
 
   api.openapi(revokeNow, async (c) => {
     const { deps } = c.var;
-    const actor = authOf(c).user;
+    const auth = authOf(c);
+    const actor = auth.user;
     const { id } = c.req.valid('param');
     if (!(await userExists(deps, id))) throw notFound(t('auth.userNotFound'));
     const result = await revokeAllCredentials(deps, id);
+    // The browser that asked just lost its session: say so, as sign-out does. A bearer request
+    // never touches cookies.
+    if (id === actor.id && auth.via === 'session') clearSessionCookie(c);
     deps.logger.info(
       {
         actor_id: actor.id,
