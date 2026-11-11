@@ -1,5 +1,4 @@
 import { ShareInfo } from '@pinwall/shared';
-import { sql } from 'kysely';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { contentUrl } from '../../src/content/grants.ts';
 import type { UserRow } from '../../src/db/schema.ts';
@@ -9,13 +8,13 @@ import {
   type ShareState,
   shareGrant,
 } from '../../src/domain/share-access.ts';
-import { createShareLink, revokeShareLink } from '../../src/domain/shares.ts';
+import { createShareLink, revokeShareLink, shareUrl } from '../../src/domain/shares.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { hashSecret } from '../../src/lib/ids.ts';
 import { apiInit, createSignedInUser } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
-import { dialects } from '../helpers/db.ts';
+import { dialects, untilWaitingOnALock } from '../helpers/db.ts';
 import { publishFiles } from '../helpers/publish.ts';
 import type { ErrorJson } from '../helpers/rest.ts';
 
@@ -270,6 +269,8 @@ describe.each(dialects)('the share viewer API on %s', (dialect) => {
       follows_current: true,
       allow_comments: true,
       expires_at: null,
+      // "Open original": the stored bytes through a raw grant of its own, made only on a click.
+      original_url: `${shareUrl(ctx.deps.config, discussed.token)}/original`,
       content: {
         url: contentUrl(ctx.deps.config, grant?.token ?? ''),
         mode: 'review',
@@ -292,8 +293,11 @@ describe.each(dialects)('the share viewer API on %s', (dialect) => {
       follows_current: false,
       allow_comments: false,
       expires_at: expiresAt,
+      original_url: `${shareUrl(ctx.deps.config, plain.token)}/original`,
       content: { mode: 'raw', expires_at: expiresAt },
     });
+    // Share info makes the frame's grant only.
+    expect(await grantsOf(plain.linkId)).toHaveLength(1);
   });
 
   test('opening share info is rate limited per link and address', async () => {
@@ -345,29 +349,9 @@ describe.each(dialects)('the share viewer API on %s', (dialect) => {
         () => 'granted',
         (err: unknown) => err,
       );
-      if (dialect === 'postgres') await untilWaitingOnALock(outcome);
+      if (dialect === 'postgres') await untilWaitingOnALock(ctx.deps.db.db, outcome);
     });
     expect(await outcome).toMatchObject({ status: 410, details: { reason: 'revoked' } });
     expect(await grantsOf(linkId)).toEqual([]);
   });
-
-  /**
-   * Resolves once another connection of this test database waits on a row lock, or once
-   * `settled` has (the grant did not wait, which the test then reports).
-   */
-  async function untilWaitingOnALock(settled: Promise<unknown>): Promise<void> {
-    let done = false;
-    void settled.then(() => {
-      done = true;
-    });
-    const deadline = Date.now() + 5000;
-    while (!done && Date.now() < deadline) {
-      const { rows } = await sql<{ n: number }>`
-        select count(*)::int as n from pg_stat_activity
-        where datname = current_database() and wait_event_type = 'Lock'
-      `.execute(ctx.deps.db.db);
-      if ((rows[0]?.n ?? 0) > 0) return;
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  }
 });

@@ -1,38 +1,5 @@
-import { type PageToViewerMessage, parsePageMessage } from '@pinwall/shared/protocol';
-import { expect, type Locator, type Page, test } from '@playwright/test';
-
-/** Where fixture-server.ts serves the viewer. */
-const VIEWER_URL = 'http://127.0.0.1:18472/';
-
-/** What `viewer.html` puts on `window`. */
-interface ViewerHook {
-  __pinwallTest: { received: unknown[]; broadcast(msg: object): void };
-}
-
-/** Every annotator message the viewer has received so far, from any frame of the content. */
-async function received(page: Page): Promise<PageToViewerMessage[]> {
-  const raw = await page.evaluate(
-    () => (globalThis as unknown as ViewerHook).__pinwallTest.received,
-  );
-  return raw.flatMap((data) => parsePageMessage(data) ?? []);
-}
-
-/** The messages of one `type`, narrowed to that type. */
-async function receivedOf<T extends PageToViewerMessage['type']>(
-  page: Page,
-  type: T,
-): Promise<Extract<PageToViewerMessage, { type: T }>[]> {
-  const all = await received(page);
-  return all.filter((m): m is Extract<PageToViewerMessage, { type: T }> => m.type === type);
-}
-
-/** Sends `msg` from the viewer to the window of the content frame and to every frame below it. */
-function broadcast(page: Page, msg: object): Promise<void> {
-  return page.evaluate(
-    (m) => (globalThis as unknown as ViewerHook).__pinwallTest.broadcast(m),
-    msg,
-  );
-}
+import { expect, type Locator, test } from '@playwright/test';
+import { broadcast, receivedOf, VIEWER_URL } from './viewer.ts';
 
 test('pins a comment on text inside a nested frame', async ({ page }) => {
   await page.goto(VIEWER_URL);
@@ -101,7 +68,7 @@ test('pins a comment on text inside a nested frame', async ({ page }) => {
     .poll(async () =>
       (await receivedOf(page, 'anchors-placed')).map((m) => [m.frameId === innerId, m.results]),
     )
-    .toContainEqual([true, [{ id: 'c1', found: true }]]);
+    .toContainEqual([true, [{ id: 'c1', found: true, via: 'quote' }]]);
   const pin = inner.locator('pinwall-overlay [data-pin-id="c1"]');
   await expect(pin).toHaveText('1');
   expect(await target.boundingBox()).toEqual(box);

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { Db } from '../auth/passkeys.ts';
 import { effectiveRole } from '../auth/roles.ts';
 import type { DbDialect } from '../db/connect.ts';
-import type { ArtifactRow, CommentRow, Database, UserRow } from '../db/schema.ts';
+import type { ArtifactRow, CommentRow, Database, ShareLinkRow, UserRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import { decodeCursor, encodeCursor } from '../lib/cursor.ts';
 import { badRequest, forbidden, notFound } from '../lib/errors.ts';
@@ -13,6 +13,7 @@ import { t } from '../lib/i18n.ts';
 import { hashSecret, newId, newSecret } from '../lib/ids.ts';
 import { getArtifact, holdArtifact } from './artifacts.ts';
 import { publishLive } from './live.ts';
+import { holdCommentLink, sharedVersion } from './share-access.ts';
 import { getCurrentVersion, versionOf } from './versions.ts';
 
 /** How long after writing it a guest may still edit or delete a comment. */
@@ -228,7 +229,9 @@ export async function getComment(db: Db, id: string): Promise<CommentRow> {
 /**
  * Opens a thread on version `versionId` of the artifact, or on its current version when null.
  * The version must belong to the artifact (else 400); a missing artifact answers 404 or 410.
- * `body` and `anchor` must already be valid (`CommentBody`, `Anchor`).
+ * `body` and `anchor` must already be valid (`CommentBody`, `Anchor`). A guest's link is
+ * checked again in the transaction (`holdCommentLink`), and a version deleted since the link
+ * showed it answers as `sharedVersion` does.
  */
 export async function createThread(
   deps: AppDeps,
@@ -240,10 +243,13 @@ export async function createThread(
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const artifact = await holdArtifact(trx, dialect, artifactId, now);
+    const link = await holdGuestLink(trx, dialect, actor, now);
     const version =
       p.versionId === null
         ? await getCurrentVersion(trx, artifact)
-        : await versionOf(trx, artifact, p.versionId);
+        : link === null
+          ? await versionOf(trx, artifact, p.versionId)
+          : await sharedVersion(trx, artifact, link, p.versionId);
     const id = newId('cmt');
     await trx
       .insertInto('comments')
@@ -264,7 +270,8 @@ export async function createThread(
 /**
  * Adds a reply to the thread of `commentId`. Threads are flat: replying to a reply adds to the
  * thread it is in. A reply belongs to the version its thread was written on, so deleting a
- * version takes whole threads, never single replies. `body` must already be valid.
+ * version takes whole threads, never single replies. `body` must already be valid. A guest's
+ * link is checked again in the transaction (`holdCommentLink`).
  */
 export async function addReply(
   deps: AppDeps,
@@ -277,6 +284,7 @@ export async function addReply(
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const { comment: target } = await holdComment(trx, dialect, commentId, now);
+    await holdGuestLink(trx, dialect, actor, now);
     const root = target.parent_id === null ? target : await getComment(trx, target.parent_id);
     await trx
       .insertInto('comments')
@@ -296,7 +304,8 @@ export async function addReply(
 
 /**
  * Replaces the text of a comment; only its author may: the member who wrote it, or the guest
- * with its token within `GUEST_EDIT_WINDOW_MS`. Sets `edited_at`.
+ * with its token within `GUEST_EDIT_WINDOW_MS`, through a link still open to comments (checked
+ * again in the transaction). Sets `edited_at`.
  */
 export async function editComment(
   deps: AppDeps,
@@ -308,6 +317,7 @@ export async function editComment(
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const { comment } = await holdComment(trx, dialect, commentId, now);
+    await holdGuestLink(trx, dialect, actor, now);
     if (actor.kind === 'guest') {
       if (!(await guestMayChange(deps, actor, comment))) throw forbidden(t('comment.guestWindow'));
     } else if (comment.author_user_id !== actor.user.id) {
@@ -326,8 +336,9 @@ export async function editComment(
 
 /**
  * Deletes a comment; its author, the artifact's publisher or an admin may, and a guest with its
- * token within `GUEST_EDIT_WINDOW_MS` (the token then ends). Deleting a thread's first comment
- * deletes the thread with its replies.
+ * token within `GUEST_EDIT_WINDOW_MS` (the token then ends), through a link still open to
+ * comments (checked again in the transaction). Deleting a thread's first comment deletes the
+ * thread with its replies.
  */
 export async function deleteComment(
   deps: AppDeps,
@@ -338,6 +349,7 @@ export async function deleteComment(
   const outcome = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const { comment, artifact } = await holdComment(trx, dialect, commentId, now);
+    await holdGuestLink(trx, dialect, actor, now);
     if (actor.kind === 'guest') {
       if (!(await guestMayChange(deps, actor, comment))) throw forbidden(t('comment.guestWindow'));
     } else if (!canDeleteComment(actor.user, comment, artifact)) {
@@ -505,6 +517,19 @@ async function holdComment(
   // A deletion the lock waited for may have taken the comment along.
   const comment = dialect === 'postgres' ? await getComment(trx, id) : seen;
   return { comment, artifact };
+}
+
+/**
+ * For a guest, the link they write through, checked again once the artifact is held (see
+ * `holdCommentLink`); null for a member.
+ */
+async function holdGuestLink(
+  trx: Transaction<Database>,
+  dialect: DbDialect,
+  actor: CommentActor,
+  now: number,
+): Promise<ShareLinkRow | null> {
+  return actor.kind === 'guest' ? holdCommentLink(trx, dialect, actor.shareLinkId, now) : null;
 }
 
 async function readThread(db: Db, threadId: string): Promise<CommentThread> {

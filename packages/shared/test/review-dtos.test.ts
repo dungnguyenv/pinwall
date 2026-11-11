@@ -201,6 +201,7 @@ test('share links and share info round-trip', () => {
     follows_current: true,
     allow_comments: true,
     expires_at: null,
+    original_url: 'https://pinwall.test/s/tok/original',
     content: {
       url: 'https://c.pinwall.test/x/',
       mode: 'raw',
@@ -209,6 +210,8 @@ test('share links and share info round-trip', () => {
     },
   };
   expect(ShareInfo.parse(info)).toEqual(info);
+  const { original_url: _, ...withoutOriginal } = info;
+  expect(ShareInfo.safeParse(withoutOriginal).success).toBe(false);
 });
 
 test('share link requests bound the password', () => {

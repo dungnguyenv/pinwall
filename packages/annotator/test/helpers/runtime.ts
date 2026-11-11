@@ -2,6 +2,7 @@ import type { Anchor } from '@pinwall/shared/protocol';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { type Annotator, type BootOptions, boot } from '../../src/boot.ts';
 import { anchorOf } from './dom.ts';
+import { asUser } from './user-events.ts';
 
 export const SCRIPT_SRC = 'http://localhost:3000/c/tok/__pinwall/annotator.js';
 /** Boot options of a frame whose viewer is this very window (the tests play the viewer). */
@@ -114,7 +115,7 @@ export function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
-/** A cancelable click on `target`, returned after dispatch. */
+/** A cancelable click of the user on `target`, returned after dispatch. */
 export function click(target: EventTarget, init: MouseEventInit = {}): MouseEvent {
   const event = new MouseEvent('click', {
     bubbles: true,
@@ -122,6 +123,11 @@ export function click(target: EventTarget, init: MouseEventInit = {}): MouseEven
     composed: true,
     ...init,
   });
-  target.dispatchEvent(event);
+  target.dispatchEvent(asUser(event));
   return event;
+}
+
+/** The user releasing the mouse button over `target`. */
+export function mouseUp(target: EventTarget): void {
+  target.dispatchEvent(asUser(new MouseEvent('mouseup', { bubbles: true, cancelable: true })));
 }

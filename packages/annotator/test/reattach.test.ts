@@ -2,7 +2,7 @@ import type { Anchor } from '@pinwall/shared/protocol';
 import { expect, test } from 'vitest';
 import { textAnchor } from '../src/anchors.ts';
 import { findQuote, placeAnchor } from '../src/reattach.ts';
-import { buildTextIndex } from '../src/text-index.ts';
+import { buildTextIndex, TEXT_INDEX_LIMITS } from '../src/text-index.ts';
 import { anchorOf, rangeOf, sampleAnchor } from './helpers/dom.ts';
 
 const place = (anchor: Anchor) => placeAnchor(document, buildTextIndex(document), anchor);
@@ -33,6 +33,29 @@ test('picks the occurrence whose context matches', () => {
   expect(
     p.via === 'quote' && p.range.startContainer.parentElement === document.querySelectorAll('p')[1],
   ).toBe(true);
+});
+
+test('a repeated phrase goes to the occurrence whose context matches once normalized', () => {
+  // v1 read "Price list. Total: 10 USD per year."; v2 states "10 USD" earlier too, and a formatter
+  // reflowed the occurrence the comment quotes.
+  const v2 = 'Pricing\n  Fee: 10 USD per month.\n  Total:\n      10 USD\n      per year.\n';
+  const quote = { exact: '10 USD', prefix: 'Price list. Total: ', suffix: ' per year.' };
+  expect(findQuote(v2, quote)?.start).toBe(v2.lastIndexOf('10 USD'));
+
+  // The quoted occurrence now has a no-break space; another one still has a plain space.
+  const nbsp = 'Fee: 10 USD per month. Total: 10\u00a0USD per year.';
+  const total = { exact: '10 USD', prefix: 'Total: ', suffix: ' per year.' };
+  expect(findQuote(nbsp, total)).toEqual({
+    start: nbsp.indexOf('10\u00a0USD'),
+    end: nbsp.indexOf('10\u00a0USD') + 6,
+  });
+
+  // The quoted occurrence's context is now in NFD; an unaccented one comes first.
+  document.body.innerHTML = `<p>Tong: 10 USD/nam.</p><p>${'Tổng: 10 USD/năm.'.normalize('NFD')}</p>`;
+  const nfd = place(anchorOf({ quote: { exact: '10 USD', prefix: 'Tổng: ', suffix: '/năm' } }));
+  expect(nfd.via === 'quote' && nfd.range.startContainer.parentElement).toBe(
+    document.querySelectorAll('p')[1],
+  );
 });
 
 test('falls back to whitespace-normalized matching', () => {
@@ -73,11 +96,48 @@ test('falls back to the DOM path, then to the position', () => {
   document.body.innerHTML = '<section id="price"><h2>Prices</h2></section>';
   const anchor = anchorOf({ dom: { path: '#price > h2' } });
   const placement = place(anchor);
-  expect(placement).toMatchObject({ found: true, via: 'dom' });
+  // The quote is gone: placed at its element, but not found.
+  expect(placement).toMatchObject({ found: false, via: 'dom' });
   expect(placement.via === 'dom' && placement.element).toBe(document.querySelector('h2'));
   document.body.innerHTML = '<section><h2>Prices</h2></section>';
   expect(place(anchor)).toEqual({ found: false, via: 'position' });
   expect(place(anchorOf({ dom: undefined }))).toEqual({ found: false, via: 'position' });
+});
+
+test('a text anchor is found at its DOM path only while that element still holds its quote', () => {
+  const note = '<p id="note">Prices include VAT for every plan.</p>';
+  document.body.innerHTML = `<main><p>Intro</p>${note}</main>`;
+  const anchor = anchorAt('include VAT');
+  expect(anchor.dom).toEqual({ path: '#note' });
+
+  // "Fix this typo": the quoted words were edited, the element stays.
+  document.body.innerHTML = '<main><p>Intro</p><p id="note">Prices exclude VAT.</p></main>';
+  const edited = place(anchor);
+  expect(edited).toMatchObject({ found: false, via: 'dom' });
+  expect(edited.via === 'dom' && edited.element).toBe(document.querySelector('#note'));
+
+  // A positional path now names another paragraph.
+  document.body.innerHTML = '<main><p>One</p><p>Two, rewritten</p></main>';
+  const typo = anchorOf({
+    quote: { exact: 'teh plan', prefix: '', suffix: '' },
+    dom: { path: 'body > main > p:nth-of-type(2)' },
+  });
+  expect(place(typo)).toMatchObject({ found: false, via: 'dom' });
+
+  // A page longer than the index reads: the element itself still holds the quote, reflowed or not.
+  const short = { ...TEXT_INDEX_LIMITS, maxChars: 20 };
+  for (const kept of [note, '<p id="note">Prices include\n   VAT.</p>']) {
+    document.body.innerHTML = `<main><p>${'x'.repeat(50)}</p>${kept}</main>`;
+    expect(placeAnchor(document, buildTextIndex(document, short), anchor)).toMatchObject({
+      found: true,
+      via: 'dom',
+    });
+  }
+  document.body.innerHTML = `<main><p>${'x'.repeat(50)}</p><p id="note">Prices exclude VAT.</p></main>`;
+  expect(placeAnchor(document, buildTextIndex(document, short), anchor)).toMatchObject({
+    found: false,
+    via: 'dom',
+  });
 });
 
 test('an invalid stored selector never throws', () => {
@@ -128,9 +188,9 @@ test('re-attaches across a new version where text moved, changed slightly or was
     '<main><section><p>Prices\n      include\n      VAT for every plan.</p></section></main>';
   expect(placedText(anchor)).toBe('include\n      VAT');
 
-  // Reworded, but the element is still there.
+  // Reworded, but the element is still there: placed there, flagged as not found.
   document.body.innerHTML = '<main><section><p id="note">Prices exclude VAT.</p></section></main>';
-  expect(place(anchor)).toMatchObject({ found: true, via: 'dom' });
+  expect(place(anchor)).toMatchObject({ found: false, via: 'dom' });
 
   // Deleted.
   document.body.innerHTML = '<main><section><h2>Plans</h2></section></main>';

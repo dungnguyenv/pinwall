@@ -2,15 +2,27 @@ import { LiveEvent } from '@pinwall/shared';
 import type { Context } from 'hono';
 import type { AppEnv } from '../app.ts';
 import type { PinwallEvent } from '../infra/event-bus.ts';
+import type { StreamQuota } from '../infra/live-streams.ts';
 import { AppError } from '../lib/errors.ts';
+import { t } from '../lib/i18n.ts';
+import { clientIp } from './client-ip.ts';
 
 /**
  * How often an open stream gets a heartbeat comment, well inside the 100 s after which proxies
  * drop an idle connection. Access is checked again at each one.
  */
 export const SSE_HEARTBEAT_MS = 25_000;
-/** How far, in bytes past what the stream holds, a reader may fall behind before it is cut off. */
+/**
+ * How far, in bytes past what the stream holds, a reader may fall behind before it is cut off.
+ * It is measured before each message goes in, so one message of any size always fits: a reader
+ * that keeps up is never cut off for a single large event.
+ */
 export const SSE_MAX_BUFFERED_BYTES = 1_048_576;
+/**
+ * How many live streams may be open at once from one client address, on one share link, and in
+ * one browser session. One more answers 429 `live.tooManyStreams`.
+ */
+export const LIVE_STREAM_LIMITS = { perAddress: 20, perShareLink: 50, perSession: 10 } as const;
 export const SSE_HEADERS: Record<string, string> = {
   'Content-Type': 'text/event-stream; charset=utf-8',
   'Cache-Control': 'no-cache, no-transform',
@@ -19,6 +31,8 @@ export const SSE_HEADERS: Record<string, string> = {
 
 /** How long a browser waits before it reconnects a stream that ended or broke. */
 const RETRY_MS = 5000;
+/** The longest a Node timer waits at once; a longer wait is made of several. */
+const MAX_TIMER_MS = 2_147_483_647;
 /** What the stream holds, in bytes, before it counts its reader as behind. */
 const HIGH_WATER_BYTES = 65_536;
 const PING = ': ping\n\n';
@@ -29,11 +43,23 @@ export type Forward = 'send' | 'skip' | 'send-and-close';
 export interface LiveStreamOptions {
   /** The `EventBus` topic the stream follows. */
   topic: string;
+  /**
+   * A topic whose every event ends the stream at once: what it follows stopped being open to its
+   * reader (a share link was revoked).
+   */
+  endTopic?: string;
+  /** When the stream ends at the latest, in epoch milliseconds (a share link's expiry). */
+  endsAt?: number | null;
   forward(e: LiveEvent): Forward;
   /** What the reader gets of an event `forward` lets through; the event as it is without it. */
   redact?(e: LiveEvent): LiveEvent;
-  /** Asked at every heartbeat; false or a throw closes the stream. */
+  /** Asked as the stream opens and at every heartbeat; false or a throw closes the stream. */
   stillAllowed(): Promise<boolean>;
+  /**
+   * Caps the stream counts under besides `perAddress` for its client address, which every
+   * stream counts under: `perShareLink` for its link, `perSession` for its session.
+   */
+  quotas?: readonly StreamQuota[];
 }
 
 /** The Node adapter's response, through which a reader that fell behind is cut off. */
@@ -42,27 +68,46 @@ function nodeResponseOf(c: Context<AppEnv>): { destroy(): void } | undefined {
   return env?.outgoing;
 }
 
+/** The answer to a stream that would go over one of its caps. */
+function tooManyStreams(): AppError {
+  return new AppError('rate_limited', 429, t('live.tooManyStreams'));
+}
+
 /**
- * A `text/event-stream` response that follows `o.topic` on the event bus. It opens with
- * `retry: 5000`; each bus event that passes `LiveEvent` and `o.forward` goes out as
- * `event: <type>` and `data: <json>`; every `SSE_HEARTBEAT_MS` a `: ping` comment goes out and
- * `o.stillAllowed` is asked again. The stream ends, unsubscribing and stopping its timer, when
- * an event says so, access is gone, the client goes away, the server shuts down (`closeDeps`),
- * or the reader falls more than `SSE_MAX_BUFFERED_BYTES` behind, which also cuts its connection.
+ * A `text/event-stream` response that follows `o.topic` on the event bus. A stream that would
+ * go over `LIVE_STREAM_LIMITS.perAddress` for its client address, or over one of `o.quotas`,
+ * is refused with 429 `live.tooManyStreams` instead; an open stream holds its places until it
+ * ends. It opens with `retry: 5000`; each bus event that passes `LiveEvent` and `o.forward` goes
+ * out as `event: <type>` and `data: <json>`. `o.stillAllowed` is asked once the stream follows
+ * its topics, so access lost while it opened is not missed, and again every `SSE_HEARTBEAT_MS`,
+ * after a `: ping` comment. The stream ends, unsubscribing and stopping its timers, when an event
+ * says so, an event comes on `o.endTopic`, `o.endsAt` comes, access is gone, the client goes
+ * away, the server shuts down (`closeDeps`), or the reader is more than `SSE_MAX_BUFFERED_BYTES`
+ * behind when a message is to go out, which also cuts its connection.
  */
 export function liveStream(c: Context<AppEnv>, o: LiveStreamOptions): Response {
   // Hono answers HEAD with the GET handler and drops the body unread, so a stream made for one
   // would never end.
   if (c.req.method === 'HEAD') return new Response(null, { headers: SSE_HEADERS });
-  const { events, liveStreams, logger } = c.var.deps;
+  const { clock, config, events, liveStreams, logger } = c.var.deps;
+  const quotas: StreamQuota[] = [
+    { key: `address:${clientIp(c, config.trustProxy)}`, limit: LIVE_STREAM_LIMITS.perAddress },
+    ...(o.quotas ?? []),
+  ];
+  // The places are taken in `start`, which the stream's constructor runs before anything else
+  // can: nothing comes between this check and the `add`.
+  if (!liveStreams.hasRoom(quotas)) throw tooManyStreams();
   const { signal } = c.req.raw;
   const encoder = new TextEncoder();
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   let closed = false;
   let checking = false;
-  let unsubscribe = (): void => {};
+  /** A heartbeat came while a check was running: check again once it ends. */
+  let checkAgain = false;
+  const unsubscribes: (() => void)[] = [];
   let untrack = (): void => {};
   let timer: ReturnType<typeof setInterval> | undefined;
+  let deadline: ReturnType<typeof setTimeout> | undefined;
 
   /**
    * Ends the stream, once. `end` lets the reader have what is queued, `cut` drops it and the
@@ -71,8 +116,9 @@ export function liveStream(c: Context<AppEnv>, o: LiveStreamOptions): Response {
   function close(how: 'end' | 'cut' | 'cancelled'): void {
     if (closed) return;
     closed = true;
-    unsubscribe();
+    for (const unsubscribe of unsubscribes) unsubscribe();
     clearInterval(timer);
+    clearTimeout(deadline);
     untrack();
     signal.removeEventListener('abort', onAbort);
     if (how === 'end') {
@@ -91,11 +137,15 @@ export function liveStream(c: Context<AppEnv>, o: LiveStreamOptions): Response {
 
   function send(text: string): void {
     if (closed) return;
-    controller.enqueue(encoder.encode(text));
+    // What is still queued from earlier messages, not this one: the adapter takes the next chunk
+    // only once the socket drained the last, so a message as large as the budget may wait here
+    // while its reader is keeping up.
     if ((controller.desiredSize ?? 0) < -SSE_MAX_BUFFERED_BYTES) {
       logger.warn({ topic: o.topic }, 'live stream reader fell behind; cut off');
       close('cut');
+      return;
     }
+    controller.enqueue(encoder.encode(text));
   }
 
   function onEvent(raw: PinwallEvent): void {
@@ -111,13 +161,23 @@ export function liveStream(c: Context<AppEnv>, o: LiveStreamOptions): Response {
     if (action === 'send-and-close') close('end');
   }
 
-  async function heartbeat(): Promise<void> {
-    send(PING);
-    // A check still running from the last heartbeat (a slow database) is not doubled.
-    if (closed || checking) return;
+  /**
+   * Asks `o.stillAllowed`, and ends the stream unless it says yes. Checks never overlap: one
+   * asked for while another runs (a slow database) runs once that one ends, so a heartbeat's
+   * check always sees the state after the heartbeat.
+   */
+  async function check(): Promise<void> {
+    if (closed) return;
+    if (checking) {
+      checkAgain = true;
+      return;
+    }
     checking = true;
     try {
-      if (!(await o.stillAllowed())) close('end');
+      do {
+        checkAgain = false;
+        if (!(await o.stillAllowed())) close('end');
+      } while (checkAgain && !closed);
     } catch (err) {
       // An `AppError` is an answer (the link is gone); anything else is worth a look.
       if (!(err instanceof AppError)) {
@@ -129,19 +189,38 @@ export function liveStream(c: Context<AppEnv>, o: LiveStreamOptions): Response {
     }
   }
 
+  async function heartbeat(): Promise<void> {
+    send(PING);
+    await check();
+  }
+
+  /** Ends the stream in `ms`, in steps no timer is too short for. */
+  function endIn(ms: number): void {
+    deadline = setTimeout(
+      () => (ms > MAX_TIMER_MS ? endIn(ms - MAX_TIMER_MS) : close('end')),
+      Math.max(0, Math.min(ms, MAX_TIMER_MS)),
+    );
+  }
+
   const stream = new ReadableStream<Uint8Array>(
     {
       start(streamController) {
         controller = streamController;
         send(`retry: ${RETRY_MS}\n\n`);
-        unsubscribe = events.subscribe(o.topic, onEvent);
+        unsubscribes.push(events.subscribe(o.topic, onEvent));
+        if (o.endTopic !== undefined) {
+          unsubscribes.push(events.subscribe(o.endTopic, () => close('end')));
+        }
         timer = setInterval(() => void heartbeat(), SSE_HEARTBEAT_MS);
+        if (o.endsAt !== undefined && o.endsAt !== null) endIn(o.endsAt - clock.now());
         if (signal.aborted) {
           close('end');
           return;
         }
         signal.addEventListener('abort', onAbort);
-        untrack = liveStreams.add(() => close('end'));
+        untrack = liveStreams.add(() => close('end'), quotas);
+        // Access may have gone between the caller's check and the subscriptions above.
+        void check();
       },
       cancel() {
         close('cancelled');
