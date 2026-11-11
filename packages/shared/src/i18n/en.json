@@ -588,6 +588,8 @@
   "oauth.authorize.title": "This app cannot connect to Pinwall",
   "oauth.authorize.unknownClient": "This app is not registered with this Pinwall, or its registration expired after 30 days without use. Remove the Pinwall server from your agent and add it again.",
   "oauth.authorize.badRedirect": "This app asked Pinwall to send you back to an address it did not register ({{uri}}). Pinwall stopped here instead of sending you somewhere unexpected.",
+  "oauth.authorize.redirectNone": "none given",
+  "oauth.authorize.redirectInvalid": "not a valid URL",
   "oauth.authorize.responseType": "Only response_type=code is supported.",
   "oauth.authorize.pkce": "PKCE is required: send code_challenge with code_challenge_method=S256.",
   "oauth.authorize.state": "The state parameter is longer than 1024 characters.",

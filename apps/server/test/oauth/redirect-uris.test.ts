@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import {
   checkRedirectUri,
+  displayedRedirectUri,
   isLoopbackHost,
   matchRedirectUri,
   type RedirectUriProblem,
@@ -92,5 +93,20 @@ test('isLoopbackHost knows the three loopback names', () => {
   for (const host of ['127.0.0.1', 'localhost', '[::1]']) expect(isLoopbackHost(host)).toBe(true);
   for (const host of ['127.0.0.2', 'localhost.', '::1', 'example.com', '']) {
     expect(isLoopbackHost(host), host).toBe(false);
+  }
+});
+
+test('displayedRedirectUri keeps the scheme, host and path of a URL, and nothing of free text', () => {
+  expect(displayedRedirectUri('https://u:p@evil.example:8443/cb/?q=1#f')).toBe(
+    'https://evil.example:8443/cb/',
+  );
+  expect(displayedRedirectUri('cursor://anysphere.cursor-mcp/oauth/callback?x=1')).toBe(
+    'cursor://anysphere.cursor-mcp/oauth/callback',
+  );
+  expect(displayedRedirectUri('com.example.app:/oauth2redirect?x=1#y')).toBe(
+    'com.example.app:/oauth2redirect',
+  );
+  for (const text of ['Call 555-0100 now', 'Notice: call us', 'https://a.example/\nb', '']) {
+    expect(displayedRedirectUri(text), text).toBeNull();
   }
 });

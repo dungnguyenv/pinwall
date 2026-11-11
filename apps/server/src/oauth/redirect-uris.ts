@@ -98,6 +98,21 @@ export function matchRedirectUri(registered: readonly string[], requested: strin
 }
 
 /**
+ * What a page may repeat of a redirect URI it refuses: the scheme, host and path, without user
+ * info, query or fragment, any of which could carry text posing as Pinwall's own words. Null when
+ * `raw` is not a URL (free text, spaces or control characters included).
+ */
+export function displayedRedirectUri(raw: string): string | null {
+  const url = parse(raw);
+  if (!url) return null;
+  url.username = '';
+  url.password = '';
+  url.search = '';
+  url.hash = '';
+  return url.href;
+}
+
+/**
  * Where the browser goes back to, for the consent page: `host[:port]` for http(s), the scheme
  * and host for a private-use URI with one (`cursor://anysphere.cursor-mcp`), and the scheme alone
  * otherwise (`com.example.app:`). `uri` must have passed `checkRedirectUri`.

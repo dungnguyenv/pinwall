@@ -16,7 +16,7 @@ import {
 import { findOrCreateGrant } from './grants.ts';
 import { mcpResourceUrl, normalizeResource } from './metadata.ts';
 import { isValidPkceString } from './pkce.ts';
-import { matchRedirectUri, redirectHost } from './redirect-uris.ts';
+import { displayedRedirectUri, matchRedirectUri, redirectHost } from './redirect-uris.ts';
 
 /**
  * A validated authorization request waiting for the person to sign in and decide. It is not
@@ -72,6 +72,13 @@ export const codeKey = (code: string): string => `oauth:code:${hashSecret(code)}
 const expired = () => notFound(t('oauth.request.expired'));
 const refused = (message: string) => new AuthorizePageError(400, message);
 
+/** A requested redirect URI as the refusal page names it: never free text from the request. */
+function shownRedirectUri(raw: string | null): string {
+  if (raw === null) return t('oauth.authorize.redirectNone');
+  const shown = displayedRedirectUri(raw);
+  return shown === null ? t('oauth.authorize.redirectInvalid') : quoteUri(shown);
+}
+
 /**
  * The client's redirect URI carrying `params` (those that are not null) and the issuer as `iss`
  * (RFC 9207), so the client can tell which server answered. A query the URI already has is kept.
@@ -106,8 +113,7 @@ export async function startAuthorization(deps: AppDeps, query: URLSearchParams):
 
   const redirectUri = query.get('redirect_uri');
   if (redirectUri === null || !matchRedirectUri(clientRedirectUris(client), redirectUri)) {
-    const uri = redirectUri === null ? '(none)' : quoteUri(redirectUri);
-    throw refused(t('oauth.authorize.badRedirect', { uri }));
+    throw refused(t('oauth.authorize.badRedirect', { uri: shownRedirectUri(redirectUri) }));
   }
 
   if (query.get('response_type') !== 'code') throw refused(t('oauth.authorize.responseType'));

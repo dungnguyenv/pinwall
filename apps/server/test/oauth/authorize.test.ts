@@ -392,20 +392,56 @@ describe.each(dialects)('authorization on %s', (dialect) => {
   test('an unregistered redirect uri gets an HTML page, never a redirect', async () => {
     await start();
     const { challenge } = pkcePair();
-    for (const uri of [
-      'http://evil.example/cb',
-      'http://127.0.0.1:33418/other',
-      'https://evil.example/cb?a=1&b="><script>',
-      null,
-    ]) {
+    for (const [uri, shown] of [
+      ['http://evil.example/cb', 'http://evil.example/cb'],
+      ['http://127.0.0.1:33418/other', 'http://127.0.0.1:33418/other'],
+      ['cursor://anysphere.cursor-mcp/other', 'cursor://anysphere.cursor-mcp/other'],
+      [null, t('oauth.authorize.redirectNone')],
+    ] as const) {
       const url = new URL(
         authorizePath({ clientId, redirectUri: uri ?? '', challenge, state: 'xyz' }),
         ISSUER,
       );
       if (uri === null) url.searchParams.delete('redirect_uri');
       const r = await ctx.request(url.pathname + url.search, { headers: { accept: '*/*' } });
-      await expectPage(r, 400, t('oauth.authorize.badRedirect', { uri: uri ?? '(none)' }));
+      await expectPage(r, 400, t('oauth.authorize.badRedirect', { uri: shown }));
     }
+  });
+
+  test('the page shows only the scheme, host and path of an unregistered redirect uri', async () => {
+    await start();
+    const { challenge } = pkcePair();
+    const page = async (uri: string, shown: string) => {
+      const path = authorizePath({ clientId, redirectUri: uri, challenge });
+      return expectPage(
+        await ctx.request(path),
+        400,
+        t('oauth.authorize.badRedirect', { uri: shown }),
+      );
+    };
+
+    // Free text is not a URL, so none of it is repeated under Pinwall's name.
+    const text = 'Your Pinwall password expired. Call 555-0100 now';
+    expect(await page(text, t('oauth.authorize.redirectInvalid'))).not.toContain('555-0100');
+    for (const almost of [
+      'Notice: call 555-0100',
+      'https://evil.example/a b',
+      'https://evil.example/\tx',
+    ]) {
+      expect(await page(almost, t('oauth.authorize.redirectInvalid'))).not.toContain('evil');
+    }
+
+    // A URL keeps its scheme, host and path; user info, query and fragment are dropped.
+    const html = await page(
+      'https://Your-password-expired@evil.example/cb?call=555-0100&b="><script>#now',
+      'https://evil.example/cb',
+    );
+    for (const dropped of ['Your-password', '555-0100', 'script', 'now']) {
+      expect(html).not.toContain(dropped);
+    }
+    // ...cut to 100 characters.
+    const long = `https://evil.example/${'a'.repeat(200)}`;
+    await page(long, `${long.slice(0, 99)}…`);
   });
 
   // RFC 9700 §4.11.2: anyone may register a client, so its redirect URI is trusted only once the
