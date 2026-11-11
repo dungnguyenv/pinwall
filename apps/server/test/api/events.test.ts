@@ -5,6 +5,7 @@ import { sessionCookieName } from '../../src/auth/session-cookie.ts';
 import { createSession, deleteUserSessions } from '../../src/auth/sessions.ts';
 import type { UserRow, VersionRow } from '../../src/db/schema.ts';
 import { deleteArtifact, deleteVersion } from '../../src/domain/deletion.ts';
+import { SHARE_LINK_TOPIC } from '../../src/domain/live.ts';
 import { ARTIFACT_TOPIC } from '../../src/domain/search.ts';
 import { SHARE_RATES, UNLOCK_MAX_MS } from '../../src/domain/share-access.ts';
 import { createShareLink, revokeShareLink } from '../../src/domain/shares.ts';
@@ -457,6 +458,57 @@ describe.each(dialects)('live updates on %s', (dialect) => {
     await heartbeat();
     expect(await unlocked.done()).toBe(true);
     expect(bus().subscriberCount(topic)).toBe(0);
+  });
+
+  test('revoking a link ends its streams at once, without waiting for a heartbeat', async () => {
+    // No heartbeat runs in this test: only the revoke can end the stream.
+    fakeHeartbeat();
+    const link = await share();
+    const other = await share();
+    const revoked = await stream(sharePath(link.token));
+    const kept = await stream(sharePath(other.token));
+    const member = await stream(memberPath(), { cookie: m.cookie });
+    expect(bus().subscriberCount(topic)).toBe(3);
+
+    await revokeShareLink(ctx.deps, m.user, link.linkId);
+    expect(await revoked.done()).toBe(true);
+    expect(bus().subscriberCount(topic)).toBe(2);
+    expect(bus().subscriberCount(SHARE_LINK_TOPIC(link.linkId))).toBe(0);
+    // Other links and members go on.
+    const thread = await postThread(ctx, m.cookie, id);
+    for (const s of [kept, member]) {
+      expect(eventOf(await s.next())).toMatchObject({ thread: { id: thread.id } });
+    }
+  });
+
+  test('a link ends its streams when it expires', async () => {
+    // Real time: the clock stays put, so only the expiry timer can end the stream.
+    const soon = await share({ expiresAt: clock.now() + 1500 });
+    const later = await share({ expiresAt: clock.now() + 60 * 86_400_000 });
+    const expiring = await stream(sharePath(soon.token));
+    // Longer than a timer can wait at once: it must not fire early.
+    const lasting = await stream(sharePath(later.token));
+    expect(await expiring.done(STAYS_OPEN_MS)).toBe(false);
+    expect(await expiring.done()).toBe(true);
+    expect(await lasting.done(STAYS_OPEN_MS)).toBe(false);
+    expect(bus().subscriberCount(topic)).toBe(1);
+  });
+
+  test('a per-version link ends its streams when its version is deleted', async () => {
+    fakeHeartbeat();
+    const v2 = await publishVersion(v1, '<p>hai</p>');
+    const pinned = await share({ versionId: v1.id });
+    const follows = await share();
+    const p = await stream(sharePath(pinned.token));
+    const f = await stream(sharePath(follows.token));
+    await deleteVersion(ctx.deps, memberAuth(), id, 1);
+    const deleted = `event: version.deleted\ndata: ${JSON.stringify({ type: 'version.deleted', artifact_id: id, number: 1 })}\n\n`;
+    expect(await p.next()).toBe(deleted);
+    expect(await p.done()).toBe(true);
+    // A link that follows the current version still works.
+    expect(await f.next()).toBe(deleted);
+    expect(await f.done(STAYS_OPEN_MS)).toBe(false);
+    expect(v2.number).toBe(2);
   });
 
   test('a locked share stream is refused', async () => {

@@ -30,6 +30,7 @@ import {
   sharedComment,
   sharedThread,
 } from '../domain/comments.ts';
+import { SHARE_LINK_TOPIC } from '../domain/live.ts';
 import { ARTIFACT_TOPIC } from '../domain/search.ts';
 import {
   readUnlockCookie,
@@ -246,7 +247,7 @@ const eventsRoute = createRoute({
   tags: ['share viewer'],
   summary: 'Follow the changes a share link shows',
   description:
-    'The live updates members get, for `EventSource`, kept to what the link shows. A link that follows the current version hears of new and deleted versions; a per-version link only of the deletion of its own version. Comment changes come only when the link allows comments, only for threads written on the version the link shows or an older one, and redacted as the comment routes are. The link and the unlock cookie are checked again at every heartbeat, so the stream ends within 25 seconds of the link being revoked or expiring or of the unlock running out; it also ends after `artifact.deleted`. Needs no account. Opens are limited per address; a link may have 50 streams open at once, and a client address 20.',
+    'The live updates members get, for `EventSource`, kept to what the link shows. A link that follows the current version hears of new and deleted versions; a per-version link only of the deletion of its own version. Comment changes come only when the link allows comments, only for threads written on the version the link shows or an older one, and redacted as the comment routes are. The stream ends at once when the link is revoked or expires, after `artifact.deleted`, and for a per-version link after the `version.deleted` of its version; the link and the unlock cookie are also checked again at every heartbeat, so it ends within 25 seconds of the unlock running out. Needs no account. Opens are limited per address; a link may have 50 streams open at once, and a client address 20.',
   middleware: [rateLimit(SHARE_RATES.events)] as MiddlewareHandler<AppEnv>[],
   request: { params: TokenParam },
   responses: {
@@ -295,7 +296,8 @@ function guestChanger(s: ShareState, guestToken: string | undefined): CommentAct
  * The live stream of share link `s`, opened with `token` and `unlockCookie`. `shown`, the number
  * of the version the link shows, moves with each new version for a link that follows the
  * current one; threads written on newer versions stay out, and what goes out is redacted as
- * `sharedThread` has it. The link and the unlock are checked again at every heartbeat.
+ * `sharedThread` has it. The stream ends at once when the link is revoked (`SHARE_LINK_TOPIC`),
+ * expires, or loses its version; the link and the unlock are checked again at every heartbeat.
  */
 function shareStream(
   deps: AppDeps,
@@ -308,6 +310,9 @@ function shareStream(
   let shown = s.version.number;
   return {
     topic: ARTIFACT_TOPIC(s.artifact.id),
+    // A revoke ends the stream at once, and so does the link's expiry.
+    endTopic: SHARE_LINK_TOPIC(s.link.id),
+    endsAt: s.link.expires_at,
     quotas: [{ key: `share-link:${s.link.id}`, limit: LIVE_STREAM_LIMITS.perShareLink }],
     forward(e) {
       switch (e.type) {
@@ -316,7 +321,9 @@ function shareStream(
           shown = Math.max(shown, e.number);
           return 'send';
         case 'version.deleted':
-          return followsCurrent || e.number === shown ? 'send' : 'skip';
+          if (followsCurrent) return 'send';
+          // A per-version link goes with its version.
+          return e.number === shown ? 'send-and-close' : 'skip';
         case 'artifact.deleted':
           return 'send-and-close';
         case 'comment.deleted':
