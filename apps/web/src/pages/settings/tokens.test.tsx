@@ -54,6 +54,14 @@ test('the token secret is shown once', async () => {
   ]);
   expect(cached).not.toContain(NEW_TOKEN_SECRET);
 
+  // A stray Escape or click beside the dialog cannot throw the secret away.
+  await user.keyboard('{Escape}');
+  await user.click(
+    screen.getByRole('dialog', { name: 'Token created' }).parentElement as HTMLElement,
+  );
+  expect(screen.getByRole('dialog', { name: 'Token created' })).toBeInTheDocument();
+  expect(result.getByLabelText('Your token')).toHaveValue(NEW_TOKEN_SECRET);
+
   await user.click(result.getByRole('button', { name: 'Done' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   expect(screen.queryByText(NEW_TOKEN_SECRET)).not.toBeInTheDocument();

@@ -99,6 +99,8 @@ export function CreateTokenDialog({
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
+      // Closing drops the secret for good, so it takes Done or the close button.
+      dismissible={created === null}
       title={t(created ? 'web.tokens.createdTitle' : 'web.tokens.createTitle')}
       description={
         created

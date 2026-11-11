@@ -107,7 +107,7 @@ test('field wires label, description and error', () => {
   expect(screen.getByText('Optional')).toBeInTheDocument();
 });
 
-function DialogHarness() {
+function DialogHarness({ dismissible }: { dismissible?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -116,6 +116,7 @@ function DialogHarness() {
         open={open}
         onOpenChange={setOpen}
         title="Rename project"
+        {...(dismissible === undefined ? {} : { dismissible })}
         footer={<Button onClick={() => setOpen(false)}>Save</Button>}
       >
         <Input aria-label="Project name" />
@@ -149,6 +150,32 @@ test('dialog has a labelled close button', async () => {
   render(<DialogHarness />);
   await user.click(screen.getByRole('button', { name: 'Rename' }));
   await user.click(await screen.findByRole('button', { name: 'Close' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+});
+
+/** The backdrop: the dialog's overlay, which wraps the panel. */
+const backdropOf = (dialog: HTMLElement) => dialog.parentElement as HTMLElement;
+
+test('dialog closes on a backdrop click by default', async () => {
+  const user = userEvent.setup();
+  render(<DialogHarness />);
+  await user.click(screen.getByRole('button', { name: 'Rename' }));
+  await user.click(backdropOf(await screen.findByRole('dialog', { name: 'Rename project' })));
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+});
+
+test('a dialog that refuses dismissal ignores Escape and the backdrop', async () => {
+  const user = userEvent.setup();
+  render(<DialogHarness dismissible={false} />);
+  await user.click(screen.getByRole('button', { name: 'Rename' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Rename project' });
+
+  await user.keyboard('{Escape}');
+  await user.click(backdropOf(dialog));
+  expect(screen.getByRole('dialog', { name: 'Rename project' })).toBeInTheDocument();
+
+  // Its own buttons still close it.
+  await user.click(within(dialog).getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 });
 

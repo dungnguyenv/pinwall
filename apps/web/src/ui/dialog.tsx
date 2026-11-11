@@ -66,6 +66,7 @@ export function Dialog({
   size = 'md',
   footer,
   children,
+  dismissible = true,
   onCloseAutoFocus,
 }: {
   open: boolean;
@@ -75,6 +76,12 @@ export function Dialog({
   size?: DialogSize;
   footer?: ReactNode;
   children?: ReactNode;
+  /**
+   * `false` keeps the dialog open on Escape and on a click beside it, so only
+   * its own buttons close it. For steps whose content is lost once closed,
+   * such as a secret shown once.
+   */
+  dismissible?: boolean;
   /**
    * Runs as the dialog closes, before focus goes back to the opener. Calling
    * `event.preventDefault()` leaves focus alone, e.g. when the dialog opened a
@@ -92,6 +99,12 @@ export function Dialog({
           <RadixDialog.Content
             className={panelClass(size)}
             onOpenAutoFocus={returnFocus.onOpenAutoFocus}
+            onEscapeKeyDown={(event) => {
+              if (!dismissible) event.preventDefault();
+            }}
+            onInteractOutside={(event) => {
+              if (!dismissible) event.preventDefault();
+            }}
             onCloseAutoFocus={(event) => {
               onCloseAutoFocus?.(event);
               returnFocus.onCloseAutoFocus(event);
