@@ -1,6 +1,5 @@
 import { HttpResponse, http } from 'msw';
-import type { Project } from '../api/dto.ts';
-import type { LibraryArtifact } from '../api/library.ts';
+import type { ArtifactSummary, Project } from '../api/dto.ts';
 import { fx } from './fixtures.ts';
 import { API, server } from './server.ts';
 
@@ -13,7 +12,7 @@ export function hoursAgo(hours: number): number {
  * Serves what the sidebar asks for on every signed-in page: the active
  * projects (`projects`, default none), no archived ones, and `recent`.
  */
-export function serveSidebar(o: { projects?: Project[]; recent?: LibraryArtifact[] } = {}): void {
+export function serveSidebar(o: { projects?: Project[]; recent?: ArtifactSummary[] } = {}): void {
   server.use(
     http.get(`${API}/projects`, ({ request }) => {
       const archived = new URL(request.url).searchParams.get('archived') === 'true';

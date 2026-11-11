@@ -1,6 +1,6 @@
 import { AppWindow, FileText } from 'lucide-react';
 import { useState } from 'react';
-import type { LibraryArtifact } from '../api/library.ts';
+import type { ArtifactSummary } from '../api/dto.ts';
 import { cn } from '../ui/index.ts';
 import { generatedCardColors } from './colors.ts';
 
@@ -11,13 +11,13 @@ export type ThumbSize = 'card' | 'row' | 'hero';
  * current version has none. The version id makes a new version a new URL, so
  * a cached image never outlives the version it shows.
  */
-export function thumbnailUrl(a: LibraryArtifact): string | null {
+export function thumbnailUrl(a: ArtifactSummary): string | null {
   const version = a.current_version;
   if (!version?.has_thumbnail) return null;
   return `/api/v1/artifacts/${encodeURIComponent(a.id)}/thumbnail?v=${encodeURIComponent(version.id)}`;
 }
 
-export function KindGlyph({ kind }: { kind: LibraryArtifact['kind'] }) {
+export function KindGlyph({ kind }: { kind: ArtifactSummary['kind'] }) {
   return kind === 'markdown' ? <FileText /> : <AppWindow />;
 }
 
@@ -38,7 +38,7 @@ const TILE: Record<ThumbSize, string> = {
  * its own), the kind of page as a glyph, and its title set large. It repeats
  * what the name already says, so assistive technology skips it.
  */
-function GeneratedCard({ artifact, size }: { artifact: LibraryArtifact; size: ThumbSize }) {
+function GeneratedCard({ artifact, size }: { artifact: ArtifactSummary; size: ThumbSize }) {
   const version = artifact.current_version;
   const colors = generatedCardColors(artifact.id, version?.theme_color ?? null);
   const title = version?.title?.trim() || artifact.name;
@@ -78,7 +78,7 @@ function GeneratedCard({ artifact, size }: { artifact: LibraryArtifact; size: Th
  * The artifact's picture on a fixed 16:10 box: its raster thumbnail when it
  * has one, else, or when the image fails to load, the generated card.
  */
-export function ArtifactThumb({ artifact, size }: { artifact: LibraryArtifact; size: ThumbSize }) {
+export function ArtifactThumb({ artifact, size }: { artifact: ArtifactSummary; size: ThumbSize }) {
   const url = thumbnailUrl(artifact);
   // The URL that failed; a new version brings a new URL, which gets its own try.
   const [failed, setFailed] = useState<string | null>(null);

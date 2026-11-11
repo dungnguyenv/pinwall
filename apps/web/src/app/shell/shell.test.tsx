@@ -2,8 +2,7 @@ import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
 import { HttpResponse, http } from 'msw';
 import { lazy } from 'react';
 import { afterEach, expect, test } from 'vitest';
-import type { Project } from '../../api/dto.ts';
-import type { LibraryArtifact } from '../../api/library.ts';
+import type { ArtifactSummary, Project } from '../../api/dto.ts';
 import i18n from '../../i18n.ts';
 import { fx } from '../../test/fixtures.ts';
 import { renderRoute, setViewport } from '../../test/render.tsx';
@@ -29,7 +28,7 @@ afterEach(() => localStorage.clear());
  * Returns the requests each sidebar list received.
  */
 function serveLibrary(
-  o: { projects?: Project[]; archived?: Project[]; recent?: LibraryArtifact[] } = {},
+  o: { projects?: Project[]; archived?: Project[]; recent?: ArtifactSummary[] } = {},
 ) {
   const seen = { projects: 0, archived: 0, recent: 0 };
   const allProjects = [

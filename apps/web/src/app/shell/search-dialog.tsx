@@ -4,7 +4,8 @@ import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState 
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { errorMessage } from '../../api/client.ts';
-import { type LibraryArtifact, useArtifactSearch, useProjects } from '../../api/library.ts';
+import type { ArtifactSummary } from '../../api/dto.ts';
+import { useArtifactSearch, useProjects } from '../../api/library.ts';
 import { formatRelativeTime } from '../../lib/format.ts';
 import { OVERLAY_CLASS, panelClass, useReturnFocus } from '../../ui/dialog.tsx';
 import { Button, cn, IconButton, isApplePlatform, Spinner } from '../../ui/index.ts';
@@ -38,7 +39,7 @@ function useDebounced<T>(value: T, ms: number): T {
   return debounced;
 }
 
-function ResultIcon({ kind }: { kind: LibraryArtifact['kind'] }) {
+function ResultIcon({ kind }: { kind: ArtifactSummary['kind'] }) {
   return (
     <span
       aria-hidden="true"

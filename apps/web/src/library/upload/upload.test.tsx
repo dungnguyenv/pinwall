@@ -2,8 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event';
 import { delay, HttpResponse, http } from 'msw';
 import { expect, onTestFinished, test, vi } from 'vitest';
-import type { Project, PublishResult, PublishWarning } from '../../api/dto.ts';
-import type { LibraryArtifact } from '../../api/library.ts';
+import type { ArtifactSummary, Project, PublishResult, PublishWarning } from '../../api/dto.ts';
 import i18n from '../../i18n.ts';
 import { dir, fakeDrop, file, folderFile } from '../../test/fake-entries.ts';
 import { fx } from '../../test/fixtures.ts';
@@ -47,7 +46,7 @@ interface SentUpload {
  * and `GET /artifacts/art_9`. Each upload is recorded and answered by `respond`.
  */
 function serveLibrary(o: { project?: Project; respond?: () => Response | Promise<Response> }) {
-  const state: { artifacts: LibraryArtifact[]; uploads: SentUpload[] } = {
+  const state: { artifacts: ArtifactSummary[]; uploads: SentUpload[] } = {
     artifacts: [],
     uploads: [],
   };

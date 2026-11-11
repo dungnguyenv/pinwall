@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { errorMessage } from '../api/client.ts';
-import type { LibraryArtifact, useArtifacts } from '../api/library.ts';
+import type { ArtifactSummary } from '../api/dto.ts';
+import type { useArtifacts } from '../api/library.ts';
 import { Button, ErrorState, LoadingRegion, Skeleton } from '../ui/index.ts';
 import { ArtifactCard } from './artifact-card.tsx';
 import { ArtifactRow } from './artifact-row.tsx';
@@ -46,9 +47,9 @@ function CollectionSkeleton({ view, label }: { view: LibraryView; label: string 
 }
 
 /** The pages loaded so far, in order. An artifact that moved between pages while they loaded shows once. */
-function uniqueItems(pages: { items: LibraryArtifact[] }[]): LibraryArtifact[] {
+function uniqueItems(pages: { items: ArtifactSummary[] }[]): ArtifactSummary[] {
   const seen = new Set<string>();
-  const items: LibraryArtifact[] = [];
+  const items: ArtifactSummary[] = [];
   for (const page of pages) {
     for (const artifact of page.items) {
       if (seen.has(artifact.id)) continue;

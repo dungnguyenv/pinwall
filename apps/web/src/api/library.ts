@@ -10,28 +10,16 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { z } from 'zod';
 import { type ApiError, api } from './client.ts';
 import {
+  ArtifactList,
   ArtifactSummary,
   type CreateProjectRequest,
   Project,
   ProjectList,
-  page,
   type UpdateProjectRequest,
 } from './dto.ts';
 import { type ArtifactFilter, qk } from './keys.ts';
-
-/** An artifact as the library shows it. */
-export const LibraryArtifact = ArtifactSummary.extend({
-  // M5 adds both to ArtifactSummary as required fields; until it merges they are absent.
-  open_thread_count: z.number().int().min(0).optional(),
-  share_link_count: z.number().int().min(0).optional(),
-});
-export type LibraryArtifact = z.infer<typeof LibraryArtifact>;
-
-export const LibraryArtifactList = page(LibraryArtifact);
-export type LibraryArtifactList = z.infer<typeof LibraryArtifactList>;
 
 /** Artifacts per page of a library list: a multiple of 2, 3, 4 and 6 columns. */
 export const ARTIFACT_PAGE_SIZE = 48;
@@ -69,8 +57,8 @@ export function updateProject(id: string, body: UpdateProjectRequest): Promise<P
   return api(`/projects/${encodeURIComponent(id)}`, { method: 'PATCH', body, schema: Project });
 }
 
-export function getArtifact(id: string): Promise<LibraryArtifact> {
-  return api(`/artifacts/${encodeURIComponent(id)}`, { schema: LibraryArtifact });
+export function getArtifact(id: string): Promise<ArtifactSummary> {
+  return api(`/artifacts/${encodeURIComponent(id)}`, { schema: ArtifactSummary });
 }
 
 /** Artifacts, the latest updated first; with `q`, the best matches first. */
@@ -79,16 +67,16 @@ export function listArtifacts(p: {
   q?: string;
   cursor?: string | null;
   limit?: number;
-}): Promise<LibraryArtifactList> {
+}): Promise<ArtifactList> {
   return api('/artifacts', {
     query: { project_id: p.projectId, q: p.q, cursor: p.cursor, limit: p.limit },
-    schema: LibraryArtifactList,
+    schema: ArtifactList,
   });
 }
 
 /** The artifacts the signed-in person opened last, the latest first. */
-export function listRecent(limit: number): Promise<LibraryArtifactList> {
-  return api('/artifacts/recent', { query: { limit }, schema: LibraryArtifactList });
+export function listRecent(limit: number): Promise<ArtifactList> {
+  return api('/artifacts/recent', { query: { limit }, schema: ArtifactList });
 }
 
 /** The sidebar's projects: the first 200, active or archived. */
@@ -108,8 +96,8 @@ export function useProjectNames(): Map<string, string> {
   );
 }
 
-export function useRecent(): UseQueryResult<LibraryArtifactList, ApiError> {
-  return useQuery<LibraryArtifactList, ApiError>({
+export function useRecent(): UseQueryResult<ArtifactList, ApiError> {
+  return useQuery<ArtifactList, ApiError>({
     queryKey: qk.recent,
     queryFn: () => listRecent(SIDEBAR_RECENT),
   });
@@ -119,9 +107,9 @@ export function useRecent(): UseQueryResult<LibraryArtifactList, ApiError> {
  * The first matches for `q`, for the search dialog. Runs only for a term with
  * something besides spaces; the caller debounces typing.
  */
-export function useArtifactSearch(q: string): UseQueryResult<LibraryArtifactList, ApiError> {
+export function useArtifactSearch(q: string): UseQueryResult<ArtifactList, ApiError> {
   const term = q.trim();
-  return useQuery<LibraryArtifactList, ApiError>({
+  return useQuery<ArtifactList, ApiError>({
     queryKey: qk.search(term),
     queryFn: () => listArtifacts({ q: term, limit: SEARCH_PREVIEW }),
     enabled: term !== '',
@@ -176,14 +164,14 @@ export function useUpdateProject(
  */
 export function useArtifacts(
   f: ArtifactFilter,
-): UseInfiniteQueryResult<InfiniteData<LibraryArtifactList>, ApiError> {
+): UseInfiniteQueryResult<InfiniteData<ArtifactList>, ApiError> {
   const filter: ArtifactFilter = {};
   if (f.projectId !== undefined) filter.projectId = f.projectId;
   if (f.q !== undefined) filter.q = f.q.trim().slice(0, SEARCH_MAX_CHARS);
   return useInfiniteQuery<
-    LibraryArtifactList,
+    ArtifactList,
     ApiError,
-    InfiniteData<LibraryArtifactList>,
+    InfiniteData<ArtifactList>,
     ReturnType<typeof qk.artifacts>,
     string | null
   >({
@@ -196,8 +184,8 @@ export function useArtifacts(
   });
 }
 
-export function useArtifact(id: string): UseQueryResult<LibraryArtifact, ApiError> {
-  return useQuery<LibraryArtifact, ApiError>({
+export function useArtifact(id: string): UseQueryResult<ArtifactSummary, ApiError> {
+  return useQuery<ArtifactSummary, ApiError>({
     queryKey: qk.artifact(id),
     queryFn: () => getArtifact(id),
   });

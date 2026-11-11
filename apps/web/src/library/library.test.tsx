@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { HttpResponse } from 'msw';
 import { afterEach, expect, onTestFinished, test, vi } from 'vitest';
-import type { LibraryArtifact } from '../api/library.ts';
+import type { ArtifactSummary } from '../api/dto.ts';
 import i18n from '../i18n.ts';
 import { fx } from '../test/fixtures.ts';
 import { hoursAgo, serveArtifacts, serveSidebar } from '../test/library.ts';
@@ -15,7 +15,7 @@ const launchSite = fx.project({ id: 'prj_2', name: 'Launch site' });
 afterEach(() => localStorage.clear());
 
 /** Renders artifact cards on their own page inside the app. */
-function renderCards(artifacts: LibraryArtifact[]) {
+function renderCards(artifacts: ArtifactSummary[]) {
   return renderRoute('/', {
     routes: [
       {

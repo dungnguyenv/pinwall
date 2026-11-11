@@ -1,6 +1,6 @@
 import { useId } from 'react';
 import { Link } from 'react-router';
-import type { LibraryArtifact } from '../api/library.ts';
+import type { ArtifactSummary } from '../api/dto.ts';
 import { ArtifactSignals, useArtifactMeta } from './artifact-meta.tsx';
 import { ArtifactThumb } from './artifact-thumb.tsx';
 
@@ -13,7 +13,7 @@ export function ArtifactRow({
   artifact,
   projectName,
 }: {
-  artifact: LibraryArtifact;
+  artifact: ArtifactSummary;
   projectName?: string;
 }) {
   const nameId = useId();

@@ -1,7 +1,8 @@
 import { ChevronRight, ExternalLink } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router';
-import { type LibraryArtifact, useArtifact, useProject } from '../../api/library.ts';
+import type { ArtifactSummary } from '../../api/dto.ts';
+import { useArtifact, useProject } from '../../api/library.ts';
 import { PageHeader } from '../../app/shell/page-header.tsx';
 import { formatRelativeTime } from '../../lib/format.ts';
 import { usePageTitle } from '../../lib/page-title.ts';
@@ -14,7 +15,7 @@ import { NotFoundPage } from '../not-found-page.tsx';
 const VERSION_NUMBER = /^[1-9]\d*$/;
 
 /** Project / artifact, above the title. The project's name loads on its own. */
-function Breadcrumb({ artifact }: { artifact: LibraryArtifact }) {
+function Breadcrumb({ artifact }: { artifact: ArtifactSummary }) {
   const { t } = useTranslation();
   const project = useProject(artifact.project_id);
   return (

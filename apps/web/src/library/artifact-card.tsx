@@ -1,6 +1,6 @@
 import { useId } from 'react';
 import { Link } from 'react-router';
-import type { LibraryArtifact } from '../api/library.ts';
+import type { ArtifactSummary } from '../api/dto.ts';
 import { ArtifactSignals, useArtifactMeta } from './artifact-meta.tsx';
 import { ArtifactThumb } from './artifact-thumb.tsx';
 
@@ -9,7 +9,7 @@ import { ArtifactThumb } from './artifact-thumb.tsx';
  * The whole card is a single link named by the artifact's name; the rest of
  * the card describes it.
  */
-export function ArtifactCard({ artifact }: { artifact: LibraryArtifact }) {
+export function ArtifactCard({ artifact }: { artifact: ArtifactSummary }) {
   const nameId = useId();
   const metaId = useId();
   const meta = useArtifactMeta(artifact);

@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { Me, Project, PublicConfig, page, VersionSummary } from '../api/dto.ts';
-import { LibraryArtifact } from '../api/library.ts';
+import { ArtifactSummary, Me, Project, PublicConfig, page, VersionSummary } from '../api/dto.ts';
 
 const CREATED = Date.UTC(2026, 10, 1);
 
@@ -82,9 +81,9 @@ export const fx = {
   },
 
   /** An HTML artifact in `prj_1` with one version; its links follow `id`. */
-  artifact(o: Partial<LibraryArtifact> = {}): LibraryArtifact {
+  artifact(o: Partial<ArtifactSummary> = {}): ArtifactSummary {
     const id = o.id ?? 'art_1';
-    return LibraryArtifact.parse({
+    return ArtifactSummary.parse({
       id,
       project_id: 'prj_1',
       name: 'Homepage',
@@ -92,6 +91,8 @@ export const fx = {
       tags: [],
       current_version: fx.version(),
       latest_number: 1,
+      open_thread_count: 0,
+      share_link_count: 0,
       created_by: 'usr_0000000000000000000a',
       created_at: CREATED,
       updated_at: CREATED,
