@@ -52,10 +52,9 @@ async function enforceAuthorizeRate(c: Context<AppEnv>): Promise<void> {
 }
 
 /**
- * `GET /oauth/authorize`: hands a valid request to the consent page, or a protocol error back to
- * the client. Until the client and its redirect URI are validated, a refusal is an HTML page
- * whatever `Accept` says, so the browser is never sent to an address nobody vouched for. No
- * answer is cached: each one carries a fresh request id, code or refusal.
+ * `GET /oauth/authorize`: hands a valid request to the consent page. Any refusal is an HTML page
+ * whatever `Accept` says, so the browser is never sent to an address the person has not seen on
+ * the consent page. No answer is cached: each one carries a fresh request id or refusal.
  */
 async function authorize(c: Context<AppEnv>): Promise<Response> {
   c.header('Cache-Control', 'no-store');

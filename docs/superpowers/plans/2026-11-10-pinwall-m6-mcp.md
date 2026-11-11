@@ -62,7 +62,7 @@ The roadmap's Global Constraints apply, plus these for M6:
 - **Protocol:** public clients only (`token_endpoint_auth_method: none`); PKCE `S256` only; the only scope is `pinwall`; response type `code`, response mode `query`.
 - **Errors:**
   - `/oauth/register`, `/oauth/token` and `/oauth/revoke` answer RFC 6749 JSON, `{ "error", "error_description" }`, with `Cache-Control: no-store`.
-  - `/oauth/authorize` answers an HTML page (M1 `renderErrorPage`), whatever `Accept` says, until both `client_id` and `redirect_uri` are validated. Pinwall never redirects to an unvalidated URI.
+  - `/oauth/authorize` answers every refusal with an HTML page (M1 `renderErrorPage`), whatever `Accept` says. Only the person's decision on the consent page (approve or deny) goes back to the redirect URI. *(M6 review fix I1: this departs from RFC 6749 §4.1.2.1, which sends protocol errors to a validated redirect URI. Anyone can register a client, so before the signed-in person has seen the URI on the consent page, a redirect there would make Pinwall an open redirector. RFC 9700 §4.11.2 requires authenticating the person first and redirecting only to trusted URIs.)*
 - **`/mcp`:** bearer only, never cookies. A present `Origin` other than the public origin is refused. Stateless (`sessionIdGenerator: undefined`), with `enableJsonResponse: true`, so no SSE stream crosses proxies. No CORS headers anywhere in M6.
 - **Audience:** OAuth access tokens are accepted on `/mcp` only. The OAuth resolver is not appended to `bearerResolvers`, so `/api/v1/*` and `/a/*` never resolve `pwa_` tokens.
 - **Tool copy:** tool descriptions are agent-facing protocol text and live as constants in `mcp/descriptions.ts`. Tool result text and every error message go through `t()`, with the exact copy given here.
@@ -342,7 +342,7 @@ test('an unregistered redirect uri gets an HTML page, never a redirect', ...);
 test.each([
   [{ responseType: 'token' }, 'unsupported_response_type'], [{ challenge: '' }, 'invalid_request'], [{ method: 'plain' }, 'invalid_request'],
   [{ resource: 'https://other.example/mcp' }, 'invalid_target'], [{ state: 's'.repeat(1025) }, 'invalid_request'],
-])('protocol errors go back to the client: %o', ...);   // 302 to redirectUri with error, error_description, iss (and state when short)
+])('protocol errors before consent are a page, never a redirect: %s', ...);   // M6 review fix I1: 400 text/html without location (was a 302 to redirectUri)
 test('resource defaults to the MCP endpoint and tolerates its spellings', ...);
   // absent, 'http://localhost:8080/mcp/' and 'http://LOCALHOST:8080/mcp' → consent; the grant's resource 'http://localhost:8080/mcp'
 test('unknown scopes are ignored and pinwall is granted', ...);   // scope 'openid offline_access' → consent scopes ['pinwall']
@@ -357,7 +357,7 @@ test('authorize is rate limited per IP', ...);   // 60 → 302; the 61st → 429
   1. `enforceRateLimit(OAUTH_RATES.authorize)` runs in the route; a refusal becomes `AuthorizePageError(429, err.message)`.
   2. No client for `client_id` → `AuthorizePageError(400, t('oauth.authorize.unknownClient'))`.
   3. A missing `redirect_uri`, or one that fails `matchRedirectUri` → `AuthorizePageError(400, t('oauth.authorize.badRedirect', { uri }))`.
-  4. From here on, errors are a 302 to `authorizationRedirect(config, redirectUri, { error, error_description, state })`:
+  4. From here on, errors are also `AuthorizePageError(400, message)`, never a redirect (M6 review fix I1; see Global Constraints). The messages, in this order:
      - `response_type !== 'code'` → `unsupported_response_type` `t('oauth.authorize.responseType')`;
      - `code_challenge_method !== 'S256'` or `!isValidPkceString(code_challenge)` → `invalid_request` `t('oauth.authorize.pkce')`;
      - `state` longer than `MAX_STATE_LENGTH` → `invalid_request` `t('oauth.authorize.state')`, sent without the state;

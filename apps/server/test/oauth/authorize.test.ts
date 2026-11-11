@@ -47,8 +47,8 @@ async function expectError(r: Response, status: number, code: string, message?: 
   if (message !== undefined) expect(body.error.message).toBe(message);
 }
 
-/** An HTML error page that sends the browser nowhere. */
-async function expectPage(r: Response, status: number, message: string) {
+/** An HTML error page that sends the browser nowhere; returns its HTML. */
+async function expectPage(r: Response, status: number, message: string): Promise<string> {
   expect(r.status).toBe(status);
   expect(r.headers.get('content-type')).toContain('text/html');
   expect(r.headers.get('location')).toBeNull();
@@ -56,6 +56,7 @@ async function expectPage(r: Response, status: number, message: string) {
   const html = await r.text();
   expect(html).toContain(escapeHtml(t('oauth.authorize.title')));
   expect(html).toContain(escapeHtml(message));
+  return html;
 }
 
 describe.each(dialects)('authorization on %s', (dialect) => {
@@ -407,49 +408,78 @@ describe.each(dialects)('authorization on %s', (dialect) => {
     }
   });
 
+  // RFC 9700 §4.11.2: anyone may register a client, so its redirect URI is trusted only once the
+  // signed-in person has seen it on the consent page. Until then nothing is sent there.
   test.each([
-    [{ responseType: 'token' }, 'unsupported_response_type', t('oauth.authorize.responseType')],
-    [{ challenge: '' }, 'invalid_request', t('oauth.authorize.pkce')],
-    [{ challenge: 'a'.repeat(129) }, 'invalid_request', t('oauth.authorize.pkce')],
-    [{ method: 'plain' }, 'invalid_request', t('oauth.authorize.pkce')],
+    ['response_type=token', { responseType: 'token' }, t('oauth.authorize.responseType')],
+    ['no code_challenge', { challenge: '' }, t('oauth.authorize.pkce')],
+    ['a 129-character code_challenge', { challenge: 'a'.repeat(129) }, t('oauth.authorize.pkce')],
+    ['code_challenge_method=plain', { method: 'plain' }, t('oauth.authorize.pkce')],
     [
+      'another resource',
       { resource: 'https://other.example/mcp' },
-      'invalid_target',
       t('oauth.authorize.resource', { resource: MCP }),
     ],
-    [{ state: 's'.repeat(1025) }, 'invalid_request', t('oauth.authorize.state')],
+    ['a 1025-character state', { state: 's'.repeat(1025) }, t('oauth.authorize.state')],
     [
+      'response_type=token and a 1025-character state',
       { responseType: 'token', state: 's'.repeat(1025) },
-      'unsupported_response_type',
       t('oauth.authorize.responseType'),
     ],
-  ] as [AuthorizeOptions, string, string][])(
-    'protocol errors go back to the client: %j',
-    async (o, error, description) => {
+  ] as [string, AuthorizeOptions, string][])(
+    'protocol errors before consent are a page, never a redirect: %s',
+    async (_label, o, message) => {
       await start();
-      const r = await authorize({ state: 'xyz', ...o });
-      expect(r.status).toBe(302);
-      expect(r.headers.get('cache-control')).toBe('no-store');
-      const to = new URL(r.headers.get('location') ?? '');
-      expect(to.origin + to.pathname).toBe(redirectUri);
-      expect(Object.fromEntries(to.searchParams)).toEqual({
-        error,
-        error_description: description,
-        ...(o.state === undefined ? { state: 'xyz' } : {}),
-        iss: ISSUER,
-      });
+      const r = await authorize(
+        { state: 'xyz', ...o },
+        { headers: { accept: 'application/json' } },
+      );
+      await expectPage(r, 400, message);
     },
   );
 
-  test('more than one resource is invalid_target', async () => {
+  test('more than one resource is invalid_target, shown as a page', async () => {
     await start();
     const path = authorizePath({ clientId, redirectUri, challenge: pkcePair().challenge });
     const r = await ctx.request(
       `${path}&resource=${encodeURIComponent(MCP)}&resource=${encodeURIComponent(MCP)}`,
     );
-    expect(r.status).toBe(302);
-    const to = new URL(r.headers.get('location') ?? '');
-    expect(to.searchParams.get('error')).toBe('invalid_target');
+    await expectPage(r, 400, t('oauth.authorize.resource', { resource: MCP }));
+  });
+
+  test.each([
+    ['https://evil.example/login', 'evil.example'],
+    ['cursor://anysphere.cursor-mcp/oauth/callback', 'cursor://anysphere.cursor-mcp'],
+    ['http://127.0.0.1:50123/callback', '127.0.0.1:50123'],
+  ])('a self-registered %s gets no redirect before consent, only after it', async (uri, host) => {
+    await start();
+    const self = await registerTestClient(ctx, { name: 'Anything', redirectUris: [uri] });
+
+    // A request naming only the client and its redirect URI (no response_type, no PKCE).
+    const bare = new URLSearchParams({ client_id: self.clientId, redirect_uri: uri, state: 'xyz' });
+    const html = await expectPage(
+      await ctx.request(`/oauth/authorize?${bare}`),
+      400,
+      t('oauth.authorize.responseType'),
+    );
+    // The page repeats nothing the request carried.
+    expect(html).not.toContain(new URL(uri).host);
+    expect(html).not.toContain('xyz');
+
+    // A valid request reaches the consent page, which names where the answer goes; once the
+    // person has seen that, their decision is sent there, a refusal included.
+    const id = await pending({ ...self, state: 'xyz' });
+    const shown = (await (await describeRequest(id)).json()) as OAuthConsentRequest;
+    expect(shown.redirect_host).toBe(host);
+    const to = new URL(
+      ((await (await decide(id, false)).json()) as OAuthDecisionResult).redirect_to,
+    );
+    expect(to.href.startsWith(`${uri}?`)).toBe(true);
+    expect(Object.fromEntries(to.searchParams)).toEqual({
+      error: 'access_denied',
+      state: 'xyz',
+      iss: ISSUER,
+    });
   });
 
   test('resource defaults to the MCP endpoint and tolerates its spellings', async () => {
