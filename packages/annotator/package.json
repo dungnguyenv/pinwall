@@ -7,7 +7,12 @@
   "engines": {
     "node": ">=24"
   },
+  "exports": {
+    "./bundle": "./bundle.mjs",
+    "./dist/annotator.js": "./dist/annotator.js"
+  },
   "scripts": {
+    "build": "node build.mjs",
     "test": "vitest run"
   },
   "dependencies": {

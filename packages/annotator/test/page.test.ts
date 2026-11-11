@@ -34,3 +34,12 @@ test('odd URLs keep what cannot be decoded and never throw', () => {
   expect(grantBase('/__pinwall/annotator.js')).toBeNull();
   expect(grantBase('')).toBeNull();
 });
+
+test('a page longer than any message may carry has no page', () => {
+  const b = 'http://localhost:8080/c/tok/';
+  expect(pageOf(`${b}${'p'.repeat(1024)}`, b)).toBe('p'.repeat(1024));
+  expect(pageOf(`${b}${'p'.repeat(1025)}`, b)).toBeNull();
+  // Measured after decoding: 342 escaped "à" are 342 characters.
+  expect(pageOf(`${b}${'%C3%A0'.repeat(342)}`, b)).toBe('à'.repeat(342));
+  expect(pageOf(`${b}${'p'.repeat(1015)}/index.html`, b)).toBe(`${'p'.repeat(1015)}/`);
+});

@@ -4,6 +4,7 @@
  */
 import type { Anchor, Quote } from '@pinwall/shared/protocol';
 import { isCssPath } from './css-path.ts';
+import { eachMatch, matches, normalize, querySelector } from './pristine.ts';
 import type { TextIndex } from './text-index.ts';
 
 /**
@@ -88,17 +89,17 @@ function fold(source: string): Folded {
     for (let k = 0; k < piece.length; k++) origins[size++] = sameOrigin ? origin : origin + k;
     parts.push(piece);
   };
-  for (const match of source.matchAll(/\s+|\S+/g)) {
+  eachMatch(/\s+|\S+/g, source, (match) => {
     const word = match[0];
     const at = match.index;
-    if (/^\s/.test(word)) emit(' ', at, true);
-    else if (word.normalize('NFC') === word) emit(word, at, false);
+    if (matches(/^\s/, word)) emit(' ', at, true);
+    else if (normalize(word, 'NFC') === word) emit(word, at, false);
     else {
-      for (const cluster of word.matchAll(CLUSTER)) {
-        emit(cluster[0].normalize('NFC'), at + cluster.index, true);
-      }
+      eachMatch(CLUSTER, word, (cluster) => {
+        emit(normalize(cluster[0], 'NFC'), at + cluster.index, true);
+      });
     }
-  }
+  });
   origins[size] = source.length;
   return { text: parts.join(''), origins: origins.subarray(0, size + 1) };
 }
@@ -137,7 +138,7 @@ export function findQuote(text: string, q: Quote): { start: number; end: number 
 function elementAt(doc: Document, path: string): Element | null {
   if (!isCssPath(path)) return null;
   try {
-    const element = doc.querySelector(path);
+    const element = querySelector(doc, path);
     const body = doc.body;
     return element && body && element !== body && body.contains(element) ? element : null;
   } catch {

@@ -4,6 +4,7 @@
  * `:nth-of-type()` where siblings share a name, joined by ` > `.
  */
 import { DOM_PATH_MAX_CHARS } from '@pinwall/shared/protocol';
+import { eachMatch, matches, querySelector, querySelectorAll } from './pristine.ts';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const SEPARATOR = ' > ';
@@ -52,7 +53,7 @@ const PATH = new RegExp(
  * reviewers, so anything else (`:has()`, `*`, lists) is never handed to `querySelector`.
  */
 export function isCssPath(selector: string): boolean {
-  return selector.length <= DOM_PATH_MAX_CHARS && PATH.test(selector);
+  return selector.length <= DOM_PATH_MAX_CHARS && matches(PATH, selector);
 }
 
 /** Ids that frameworks or build tools generate, which change from one build to the next. */
@@ -62,11 +63,12 @@ const GENERATED_ID =
 const HEX_RUN = /[0-9a-f]{8,}/gi;
 
 function looksGenerated(id: string): boolean {
-  if (GENERATED_ID.test(id)) return true;
-  for (const [run] of id.matchAll(HEX_RUN)) {
-    if (/\d/.test(run) && /[a-f]/i.test(run)) return true;
-  }
-  return false;
+  if (matches(GENERATED_ID, id)) return true;
+  let hashLike = false;
+  eachMatch(HEX_RUN, id, ([run]) => {
+    if (matches(/\d/, run) && matches(/[a-f]/i, run)) hashLike = true;
+  });
+  return hashLike;
 }
 
 /** `#id` for an element whose id is unique in its document and looks hand-written, else null. */
@@ -75,7 +77,7 @@ function idSelector(doc: Document, el: Element): string | null {
   if (!id || looksGenerated(id)) return null;
   const selector = `#${cssEscape(id)}`;
   try {
-    return doc.querySelectorAll(selector).length === 1 ? selector : null;
+    return querySelectorAll(doc, selector).length === 1 ? selector : null;
   } catch {
     return null;
   }
@@ -139,7 +141,7 @@ export function cssPath(el: Element): string | null {
   const path = parts.reverse().join(SEPARATOR);
   if (path.length > DOM_PATH_MAX_CHARS) return null;
   try {
-    return doc.querySelector(path) === start ? path : null;
+    return querySelector(doc, path) === start ? path : null;
   } catch {
     return null;
   }

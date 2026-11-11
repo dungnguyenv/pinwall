@@ -17,6 +17,8 @@ export interface LayoutStub {
   scrollY?: number;
   /** The one client rect of each element or range; any other has none. */
   rects?: [Element | Range, StubRect][];
+  /** The client rects of ranges `rects` does not list, such as ranges the code makes itself. */
+  rangeRects?: (range: Range) => StubRect[];
 }
 
 type Restore = () => void;
@@ -55,7 +57,8 @@ export function stubLayout(stub: LayoutStub): void {
     restores.push(
       override(proto, 'getClientRects', function (this: Element | Range) {
         const rect = rects.get(this);
-        return rect ? [domRect(rect)] : [];
+        if (rect) return [domRect(rect)];
+        return this instanceof Range && stub.rangeRects ? stub.rangeRects(this).map(domRect) : [];
       }),
       override(proto, 'getBoundingClientRect', function (this: Element | Range) {
         return domRect(rects.get(this));

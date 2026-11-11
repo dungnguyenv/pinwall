@@ -1,3 +1,5 @@
+import { createRange, setEnd, setStart } from './pristine.ts';
+
 /**
  * The page's text as one string, with a way back and forth between offsets in that string and
  * points in the DOM. Quotes are made and searched against it, so a quote may run across any
@@ -140,7 +142,7 @@ export function buildTextIndex(
       return startOf(lo);
     },
     toRange(start, end) {
-      const range = doc.createRange();
+      const range = createRange(doc);
       if (nodes.length === 0) return range;
       const from = clamp(start, 0, text.length);
       const to = clamp(end, from, text.length);
@@ -151,8 +153,8 @@ export function buildTextIndex(
         const node = nodes[i] as Text;
         return [node, clamp(offset - startOf(i), 0, node.length)];
       };
-      range.setStart(...at(startNode, from));
-      range.setEnd(...at(endNode, to));
+      setStart(range, ...at(startNode, from));
+      setEnd(range, ...at(endNode, to));
       return range;
     },
   };

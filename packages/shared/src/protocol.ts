@@ -18,8 +18,12 @@
  *   (its own Content-Security-Policy may block the script); the viewer places point comments for
  *   it on its own overlay.
  * - The viewer sends anchors, pin numbers and resolved flags to pages, never comment bodies.
+ *
+ * The schemas use only the functional API that `zod` and `zod/mini` share (`z.optional(s)`,
+ * `s.check(z.maxLength(n))`, no chained `.max()` or `.optional()`): the annotator bundle builds
+ * these same schemas with `zod/mini` to stay small, while the server and the app use `zod`.
  */
-import { z } from 'zod';
+import * as z from 'zod';
 
 export const PROTOCOL_VERSION = 1;
 /** The annotator script, relative to a grant's base URL. */
@@ -37,29 +41,29 @@ export const DOM_PATH_MAX_CHARS = 2000;
 export const MAX_ANCHORS = 1000;
 
 /** Longest page path of an anchor or message. */
-const PAGE_MAX_CHARS = 1024;
+export const PAGE_MAX_CHARS = 1024;
 /** Widest frame an anchor records, in CSS pixels. */
 const VIEWPORT_MAX_WIDTH = 100_000;
 
 /** A comment or frame id inside a message. */
-const MessageId = z.string().min(1).max(64);
+const MessageId = z.string().check(z.minLength(1), z.maxLength(64));
 
 /**
  * The frame's path under the grant base, decoded and NFC, with a final `index.html` dropped:
  * `""` is the entry page, `"docs/"` is `docs/index.html`.
  */
-const PagePath = z.string().max(PAGE_MAX_CHARS);
+const PagePath = z.string().check(z.maxLength(PAGE_MAX_CHARS));
 
 /** The text a comment points at, with a little of the text before and after it. */
 export const Quote = z.object({
-  exact: z.string().min(1).max(QUOTE_MAX_CHARS),
-  prefix: z.string().max(QUOTE_CONTEXT_CHARS),
-  suffix: z.string().max(QUOTE_CONTEXT_CHARS),
+  exact: z.string().check(z.minLength(1), z.maxLength(QUOTE_MAX_CHARS)),
+  prefix: z.string().check(z.maxLength(QUOTE_CONTEXT_CHARS)),
+  suffix: z.string().check(z.maxLength(QUOTE_CONTEXT_CHARS)),
 });
 export type Quote = z.infer<typeof Quote>;
 
 /** A fraction of the document's scroll size, 0 at the top or left edge and 1 at the other. */
-const Fraction = z.number().min(0).max(1);
+const Fraction = z.number().check(z.gte(0), z.lte(1));
 
 /**
  * Where on a page a comment thread sits. A `text` anchor needs `quote`, an `element` anchor needs
@@ -69,25 +73,31 @@ export const Anchor = z
   .object({
     page: PagePath,
     kind: z.enum(['text', 'element', 'point']),
-    quote: Quote.optional(),
+    quote: z.optional(Quote),
     /** A CSS selector path from `<body>`. */
-    dom: z.object({ path: z.string().min(1).max(DOM_PATH_MAX_CHARS) }).optional(),
+    dom: z.optional(
+      z.object({ path: z.string().check(z.minLength(1), z.maxLength(DOM_PATH_MAX_CHARS)) }),
+    ),
     position: z.object({ x: Fraction, y: Fraction }),
     /** The frame's width when the anchor was made. */
-    viewport: z.object({ width: z.number().int().min(0).max(VIEWPORT_MAX_WIDTH) }),
+    viewport: z.object({
+      width: z.number().check(z.int(), z.gte(0), z.lte(VIEWPORT_MAX_WIDTH)),
+    }),
   })
-  .superRefine((anchor, ctx) => {
-    if (anchor.kind === 'text' && anchor.quote === undefined) {
-      ctx.addIssue({ code: 'custom', path: ['quote'], message: 'A text anchor needs a quote' });
-    }
-    if (anchor.kind === 'element' && anchor.dom === undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['dom'],
-        message: 'An element anchor needs a DOM path',
-      });
-    }
-  });
+  .check(
+    z.superRefine((anchor, ctx) => {
+      if (anchor.kind === 'text' && anchor.quote === undefined) {
+        ctx.addIssue({ code: 'custom', path: ['quote'], message: 'A text anchor needs a quote' });
+      }
+      if (anchor.kind === 'element' && anchor.dom === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['dom'],
+          message: 'An element anchor needs a DOM path',
+        });
+      }
+    }),
+  );
 export type Anchor = z.infer<typeof Anchor>;
 
 /** Fields of every message, in either direction. */
@@ -103,7 +113,9 @@ export const PageToViewerMessage = z.discriminatedUnion('type', [
   z.object({
     ...envelope,
     type: z.literal('anchors-placed'),
-    results: z.array(z.object({ id: MessageId, found: z.boolean() })).max(MAX_ANCHORS),
+    results: z
+      .array(z.object({ id: MessageId, found: z.boolean() }))
+      .check(z.maxLength(MAX_ANCHORS)),
     frameId: MessageId,
   }),
   /** The reviewer clicked the pin of thread `id`. */
@@ -125,12 +137,12 @@ export const ViewerToPageMessage = z.discriminatedUnion('type', [
       .array(
         z.object({
           id: MessageId,
-          number: z.number().int().min(1),
+          number: z.number().check(z.int(), z.gte(1)),
           resolved: z.boolean(),
           anchor: Anchor,
         }),
       )
-      .max(MAX_ANCHORS),
+      .check(z.maxLength(MAX_ANCHORS)),
   }),
   /** Scroll to the pin of thread `id` and highlight it. */
   z.object({ ...envelope, type: z.literal('focus-anchor'), id: MessageId }),

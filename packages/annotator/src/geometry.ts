@@ -71,3 +71,16 @@ export function originOf(target: Range | Element): DocPoint | null {
     return null;
   }
 }
+
+/**
+ * The size of `doc`'s viewport in CSS pixels, without scrollbars where the browser reports it
+ * (`clientWidth`/`clientHeight` of the root), else the window's inner size; zeros without a window.
+ */
+export function viewportSize(doc: Document): { width: number; height: number } {
+  const root = doc.documentElement;
+  const win = doc.defaultView;
+  return {
+    width: finite(root?.clientWidth) || finite(win?.innerWidth),
+    height: finite(root?.clientHeight) || finite(win?.innerHeight),
+  };
+}

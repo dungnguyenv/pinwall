@@ -6,6 +6,7 @@
 import { type Anchor, QUOTE_CONTEXT_CHARS, QUOTE_MAX_CHARS } from '@pinwall/shared/protocol';
 import { cssPath, pathTarget } from './css-path.ts';
 import { clientToDoc, type DocPoint, originOf, toFraction } from './geometry.ts';
+import { matches } from './pristine.ts';
 import { buildTextIndex } from './text-index.ts';
 
 export interface AnchorContext {
@@ -49,14 +50,14 @@ export function textAnchor(ctx: AnchorContext, range: Range): Anchor | null {
   const { text } = index;
   let start = index.toOffset(range.startContainer, range.startOffset);
   let end = index.toOffset(range.endContainer, range.endOffset);
-  while (start < end && SPACE.test(text[start] as string)) start++;
+  while (start < end && matches(SPACE, text[start] as string)) start++;
   if (end > start + QUOTE_MAX_CHARS) {
     end = start + QUOTE_MAX_CHARS;
     // Never leave a letter without its marks, or half a surrogate pair, in the quote.
-    while (end > start && (isLowSurrogate(text[end]) || CONTINUATION.test(text[end] as string)))
+    while (end > start && (isLowSurrogate(text[end]) || matches(CONTINUATION, text[end] as string)))
       end--;
   }
-  while (end > start && SPACE.test(text[end - 1] as string)) end--;
+  while (end > start && matches(SPACE, text[end - 1] as string)) end--;
   if (start >= end) return null;
 
   let prefix = text.slice(Math.max(0, start - QUOTE_CONTEXT_CHARS), start);
