@@ -568,5 +568,19 @@
   "share.expired.message": "This share link has expired. Ask the person who shared it for a new one.",
   "share.passwordRequired": "Enter the password to open this link.",
   "share.commentsOff": "Comments are turned off for this share link.",
-  "version.notInArtifact": "That version does not belong to this artifact."
+  "version.notInArtifact": "That version does not belong to this artifact.",
+  "oauth.client.unnamed": "Unnamed app",
+  "oauth.register.publicOnly": "Only public clients are supported: register with token_endpoint_auth_method \"none\" and use PKCE.",
+  "oauth.register.redirectCount": "Register between 1 and 10 redirect URIs.",
+  "oauth.register.redirect.not_a_url": "{{uri}} is not a valid URL.",
+  "oauth.register.redirect.fragment": "{{uri}} must not contain a fragment (#).",
+  "oauth.register.redirect.userinfo": "{{uri}} must not contain a user name or password.",
+  "oauth.register.redirect.insecure_http": "{{uri}}: plain http is allowed only for 127.0.0.1, localhost and [::1]. Use https.",
+  "oauth.register.redirect.forbidden_scheme": "{{uri}} uses a scheme that cannot be a redirect URI.",
+  "oauth.register.redirect.too_long": "A redirect URI is longer than 2048 characters.",
+  "oauth.register.grantTypes": "Supported grant types are authorization_code and refresh_token.",
+  "oauth.register.responseTypes": "The only supported response type is code.",
+  "oauth.register.body": "Send the client metadata as a JSON object.",
+  "oauth.register.fieldType": "The client metadata field {{field}} has the wrong type.",
+  "oauth.body.tooLarge": "The request body is too large."
 }
