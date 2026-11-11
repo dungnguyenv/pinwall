@@ -1,33 +1,18 @@
 import type { InfiniteData, UseInfiniteQueryResult } from '@tanstack/react-query';
-import {
-  ChevronRight,
-  GitCompareArrows,
-  MessageSquare,
-  MessageSquarePlus,
-  Share,
-} from 'lucide-react';
-import { useContext, useEffect, useId, useRef, useState } from 'react';
+import { ChevronRight, GitCompareArrows, Share } from 'lucide-react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router';
 import type { ApiError } from '../../api/client.ts';
 import type { ArtifactSummary, VersionList, VersionSummary } from '../../api/dto.ts';
 import { useProject } from '../../api/library.ts';
 import { HeadingFocusContext } from '../../app/shell/page-header.tsx';
-import {
-  ariaKeyShortcuts,
-  Button,
-  cn,
-  IconButton,
-  Kbd,
-  MenuItem,
-  Skeleton,
-  Tooltip,
-} from '../../ui/index.ts';
+import { Button, MenuItem, Skeleton } from '../../ui/index.ts';
 import type { Device } from '../frame/device.ts';
 import { ShareDialog } from '../share/share-dialog.tsx';
+import { CommentModeToggle, CommentsToggle } from './comment-toggles.tsx';
 import { DevicePicker } from './device-picker.tsx';
 import { ReviewMenu } from './review-menu.tsx';
-import { keysOf } from './shortcuts.ts';
 import { VersionSwitcher } from './version-switcher.tsx';
 
 export interface TopBarProps {
@@ -114,55 +99,6 @@ function Breadcrumb({ artifact, phone }: { artifact: ArtifactSummary; phone: boo
   );
 }
 
-/** Comments, with the open count after it; pressed while they show. */
-function CommentsToggle({
-  open,
-  count,
-  onToggle,
-}: {
-  open: boolean;
-  count: number | null;
-  onToggle(): void;
-}) {
-  const { t } = useTranslation();
-  const countId = useId();
-  const keys = keysOf('togglePanel');
-  return (
-    <Tooltip
-      side="bottom"
-      content={
-        <>
-          <span>{t('web.review.comments')}</span>
-          <Kbd keys={keys} />
-        </>
-      }
-    >
-      <Button
-        variant="ghost"
-        size="sm"
-        aria-label={t('web.review.comments')}
-        aria-pressed={open}
-        aria-describedby={count === null ? undefined : countId}
-        aria-keyshortcuts={ariaKeyShortcuts(keys)}
-        leadingIcon={<MessageSquare />}
-        onClick={onToggle}
-        className="gap-1.5 px-2.5 text-fg-muted hover:text-fg aria-pressed:bg-selected aria-pressed:text-fg"
-      >
-        {count === null ? null : (
-          <span className="tabular-nums" aria-hidden="true">
-            {count}
-          </span>
-        )}
-        {count === null ? null : (
-          <span id={countId} className="sr-only">
-            {t('web.review.openCount', { count })}
-          </span>
-        )}
-      </Button>
-    </Tooltip>
-  );
-}
-
 /**
  * The review screen's slim bar. Left: where the artifact lives and its name,
  * then the version. Right: screen sizes, Compare, comment mode, comments,
@@ -171,7 +107,6 @@ function CommentsToggle({
  */
 export function TopBar(p: TopBarProps) {
   const { t } = useTranslation();
-  const commentKeys = keysOf('commentMode');
   const [sharing, setSharing] = useState(false);
   // The versions read so far; a next page means there are more than the first page holds.
   const versionCount = p.versions.hasNextPage
@@ -214,21 +149,7 @@ export function TopBar(p: TopBarProps) {
           </Link>
         </Button>
       )}
-      {p.canComment ? (
-        <IconButton
-          label={t('web.review.commentMode')}
-          icon={<MessageSquarePlus />}
-          size="sm"
-          tooltipSide="bottom"
-          shortcut={commentKeys}
-          aria-pressed={p.commentMode}
-          onClick={p.onCommentMode}
-          className={cn(
-            'text-fg-muted hover:text-fg',
-            p.commentMode && 'bg-accent text-primary-fg hover:bg-accent/90 hover:text-primary-fg',
-          )}
-        />
-      ) : null}
+      {p.canComment ? <CommentModeToggle on={p.commentMode} onToggle={p.onCommentMode} /> : null}
       <CommentsToggle open={p.commentsOpen} count={p.openCount} onToggle={p.onComments} />
       {p.phone ? null : (
         <Button

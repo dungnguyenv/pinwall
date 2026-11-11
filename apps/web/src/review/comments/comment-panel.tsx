@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, Info, MessageSquare, Plus, X } from 'lucide-react';
-import { useId, useState } from 'react';
+import { type ReactNode, useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import { errorMessage } from '../../api/client.ts';
 import {
@@ -7,9 +7,7 @@ import {
   cn,
   EmptyState,
   ErrorState,
-  Field,
   IconButton,
-  Input,
   LoadingRegion,
   Segmented,
   Skeleton,
@@ -23,16 +21,14 @@ import { composerFloats } from './composer-position.ts';
 import { ThreadCard } from './thread-card.tsx';
 import type { ReviewComments } from './use-review-comments.ts';
 
-/** The longest guest name the server accepts. */
-const GUEST_NAME_MAX = 60;
-
 /**
  * The review's comments: a filter with counts, the composer when the spot
  * picked has no point to float beside, and the threads of the version shown.
  * `dock` is the column at the right of the desktop layout, with its own title
  * and close button; `sheet` goes inside `CommentSheet`, which has them.
  * With `onStep`, the docked title row also steps to the previous and next
- * thread (the K and J keys).
+ * thread (the K and J keys). `footer` sits under the threads, such as the
+ * name a share-link guest comments under.
  */
 export function CommentPanel({
   c,
@@ -43,7 +39,7 @@ export function CommentPanel({
   onAddComment,
   onClose,
   onStep,
-  guestName,
+  footer,
 }: {
   c: ReviewComments;
   bridge: FrameBridge;
@@ -53,7 +49,7 @@ export function CommentPanel({
   onAddComment(): void;
   onClose(): void;
   onStep?(step: 1 | -1): void;
-  guestName?: { value: string; onChange(v: string): void };
+  footer?: ReactNode;
 }) {
   const { t } = useTranslation();
   const headingId = useId();
@@ -164,8 +160,6 @@ export function CommentPanel({
         </p>
       ) : null}
 
-      {guestName ? <GuestName value={guestName.value} onChange={guestName.onChange} /> : null}
-
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
         {c.draft !== null && !composerFloats(c.draft, variant) ? (
           <div className="mb-2">
@@ -195,6 +189,7 @@ export function CommentPanel({
           </>
         ) : null}
       </p>
+      {footer}
     </Root>
   );
 }
@@ -282,39 +277,5 @@ function ThreadList({
         </li>
       ))}
     </ol>
-  );
-}
-
-/**
- * The name a share-link guest signs with. What is typed stays in the field and
- * is handed on when the guest leaves it, so the name is not trimmed under the
- * cursor.
- */
-function GuestName({ value, onChange }: { value: string; onChange(v: string): void }) {
-  const { t } = useTranslation();
-  const [typed, setTyped] = useState({ from: value, text: value });
-  // A name set from elsewhere (trimmed, or another tab) replaces what the field shows.
-  let text = typed.text;
-  if (typed.from !== value) {
-    text = value;
-    setTyped({ from: value, text: value });
-  }
-  return (
-    <div className="shrink-0 border-border border-b px-4 py-3">
-      <Field label={t('web.comments.guestName')} description={t('web.comments.guestNameHint')}>
-        {(control) => (
-          <Input
-            {...control}
-            value={text}
-            maxLength={GUEST_NAME_MAX}
-            autoComplete="name"
-            onChange={(event) => setTyped({ from: value, text: event.target.value })}
-            onBlur={() => {
-              if (text !== value) onChange(text);
-            }}
-          />
-        )}
-      </Field>
-    </div>
   );
 }

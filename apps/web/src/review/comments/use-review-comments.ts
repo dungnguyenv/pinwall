@@ -103,10 +103,12 @@ export function useReviewComments(o: {
   shown: number;
   versionId: string | null;
   filterPrefKey: string | null;
+  /** False where there are no comments to read: a share link that does not allow them. */
+  enabled?: boolean;
 }): ReviewComments {
   const { backend, permissions, shown, versionId } = o;
   const queryClient = useQueryClient();
-  const query = useThreads(backend);
+  const query = useThreads(backend, o.enabled ?? true);
   const actions = useCommentActions(backend);
   const list = query.data;
 

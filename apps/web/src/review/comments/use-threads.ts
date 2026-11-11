@@ -1,4 +1,5 @@
 import {
+  skipToken,
   type UseMutationResult,
   type UseQueryResult,
   useMutation,
@@ -11,11 +12,14 @@ import { qk } from '../../api/keys.ts';
 import type { CommentBackend } from './backend.ts';
 import { removeComment, upsertComment, upsertThread } from './threads.ts';
 
-/** Every thread of the review, resolved ones too. */
-export function useThreads(b: CommentBackend): UseQueryResult<CommentThread[], ApiError> {
+/** Every thread of the review, resolved ones too. Not read at all while `enabled` is false. */
+export function useThreads(
+  b: CommentBackend,
+  enabled = true,
+): UseQueryResult<CommentThread[], ApiError> {
   return useQuery<CommentThread[], ApiError>({
     queryKey: qk.threads(b.scope),
-    queryFn: () => b.list(),
+    queryFn: enabled ? () => b.list() : skipToken,
   });
 }
 

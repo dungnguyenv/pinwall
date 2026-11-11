@@ -57,6 +57,9 @@ const ConfigPage = lazy(() =>
 const ConsentPage = lazy(() =>
   import('../pages/oauth/consent-page.tsx').then((m) => ({ default: m.ConsentPage })),
 );
+const SharePage = lazy(() =>
+  import('../pages/share/share-page.tsx').then((m) => ({ default: m.SharePage })),
+);
 
 function AuthRoute({ wide, children }: { wide?: boolean; children: ReactNode }) {
   return <Suspense fallback={<AuthPageFallback wide={wide} />}>{children}</Suspense>;
@@ -84,6 +87,15 @@ export function buildRoutes(): RouteObject[] {
         <AuthRoute wide>
           <SetupPage />
         </AuthRoute>
+      ),
+    },
+    // A share link's viewer: no account, no shell. The server decides which links reach it.
+    {
+      path: '/s/:token',
+      element: (
+        <Suspense fallback={<div className="min-h-dvh bg-canvas" />}>
+          <SharePage />
+        </Suspense>
       ),
     },
     {

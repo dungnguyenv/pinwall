@@ -34,6 +34,7 @@ export {
   ErrorBody,
   FileChange,
   GuestCreated,
+  GuestName,
   GuestReplyRequest,
   GuestThreadRequest,
   Label,

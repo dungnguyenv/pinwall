@@ -3,7 +3,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
-import { useMemo } from 'react';
+import { type ReactNode, useMemo } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 import type { Comment, CommentThread } from '../../api/dto.ts';
 import { qk } from '../../api/keys.ts';
@@ -93,13 +93,13 @@ function Harness({
   permissions,
   liveStatus,
   onPosted,
-  guestName,
+  footer,
 }: {
   bridge: FrameBridge;
   permissions: Permissions;
   liveStatus: StreamStatus;
   onPosted(t: CommentThread): void;
-  guestName?: { value: string; onChange(v: string): void };
+  footer?: ReactNode;
 }) {
   const backend = useMemo(() => memberBackend('art_1'), []);
   c = useReviewComments({
@@ -119,7 +119,7 @@ function Harness({
         liveStatus={liveStatus}
         onAddComment={() => {}}
         onClose={() => {}}
-        guestName={guestName}
+        footer={footer}
       />
       {/* What the review page does for a pick in the top frame: float the composer beside it. */}
       {c.draft && composerFloats(c.draft, 'dock') ? (
@@ -161,7 +161,7 @@ function setup(
     annotator?: FrameBridge['annotator'];
     placements?: Record<string, PinPlacement>;
     liveStatus?: StreamStatus;
-    guestName?: { value: string; onChange(v: string): void };
+    footer?: ReactNode;
   } = {},
 ) {
   if (o.filter) localStorage.setItem(PREF, o.filter);
@@ -183,7 +183,7 @@ function setup(
         permissions={o.permissions ?? memberPermissions(ME, { created_by: 'usr_1' })}
         liveStatus={o.liveStatus ?? 'open'}
         onPosted={onPosted}
-        guestName={o.guestName}
+        footer={o.footer}
       />
     </QueryClientProvider>,
   );
@@ -620,14 +620,13 @@ test('the overlay notice appears when the annotator is missing', async () => {
   expect(screen.queryByText('Reconnecting…')).not.toBeInTheDocument();
 });
 
-test('a guest names themselves in the panel, kept when they leave the field', async () => {
-  const onChange = vi.fn();
-  const { user } = setup({ guestName: { value: '', onChange } });
-  const name = await screen.findByRole('textbox', { name: 'Your name' });
-  await user.type(name, 'Lan ');
-  expect(onChange).not.toHaveBeenCalled();
-  await user.tab();
-  expect(onChange).toHaveBeenCalledWith('Lan ');
+test('a footer sits under the threads', async () => {
+  setup({ footer: <p>Commenting as Lan</p> });
+  const panel = await screen.findByRole('region', { name: 'Comments' });
+  await card('Comment 1 by Ada');
+  const footer = within(panel).getByText('Commenting as Lan');
+  const list = within(panel).getByRole('list');
+  expect(list.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 test('on a phone the panel sits in a bottom sheet', async () => {

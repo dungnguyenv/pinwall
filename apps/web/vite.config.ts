@@ -20,6 +20,8 @@ const SERVER_PATHS = [
   '^/oauth/(authorize|token|register|revoke)',
   // Raw links, which redirect to a content grant.
   '^/a/[^/]+/(v/\\d+/)?raw',
+  // A share link's "Open original", which redirects to a raw grant.
+  '^/s/[^/]+/original',
 ];
 
 export default defineConfig({

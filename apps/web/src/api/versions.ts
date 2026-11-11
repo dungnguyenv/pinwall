@@ -89,13 +89,17 @@ export function useReviewGrant(
     refetchIntervalInBackground: true,
     refetchInterval: (query) => {
       const grant = query.state.data;
-      if (!grant) return false;
-      return Math.max(
-        MIN_RENEW_INTERVAL_MS,
-        grant.expires_at - Date.now() - RENEW_BEFORE_EXPIRY_MS,
-      );
+      return grant ? grantRenewDelay(grant.expires_at) : false;
     },
   });
+}
+
+/**
+ * How long until a content grant that expires at `expiresAt` (epoch ms) is
+ * asked for again: five minutes before it expires, and at least a minute from now.
+ */
+export function grantRenewDelay(expiresAt: number, now: number = Date.now()): number {
+  return Math.max(MIN_RENEW_INTERVAL_MS, expiresAt - now - RENEW_BEFORE_EXPIRY_MS);
 }
 
 /**
