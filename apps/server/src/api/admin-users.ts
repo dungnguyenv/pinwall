@@ -57,7 +57,7 @@ const putRole = createRoute({
   tags: ['admin'],
   summary: 'Set or clear a role override',
   description:
-    'An override wins over the identity provider role; `null` clears it. `blocked` locks the user out at once. You cannot change your own role.',
+    "An override wins over the identity provider role; `null` clears it. `blocked` locks the user out at once. You cannot change your own role, and nobody can change the owner's: the owner is always an admin.",
   middleware: [requireAdmin, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
   security,
   request: {
@@ -67,6 +67,7 @@ const putRole = createRoute({
   responses: {
     200: { description: 'The user', content: { 'application/json': { schema: AdminUser } } },
     ...adminErrors,
+    403: error('Not an admin, or the user is you or the owner (`forbidden`)'),
     404: error('No such user (`not_found`)'),
   },
 });

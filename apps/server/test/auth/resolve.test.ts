@@ -101,12 +101,7 @@ describe.each(dialects)('resolveAuth on %s', (dialect) => {
   });
 
   test('a bearer for a user without access is access_denied', async () => {
-    await ctx.deps.db.db
-      .updateTable('users')
-      .set({ role_override: 'blocked' })
-      .where('id', '=', user.id)
-      .execute();
-    user = { ...user, role_override: 'blocked' };
+    ({ user } = await createSignedInUser(ctx, { kind: 'oidc', roleOverride: 'blocked' }));
     const r = await send(bareApp(true), { authorization: 'Bearer st_good' });
     expect(r.status).toBe(403);
     expect(await r.json()).toEqual({

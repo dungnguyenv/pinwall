@@ -58,10 +58,11 @@ describe.each(dialects)('owner sign-in on %s', (dialect) => {
 
   const errorOf = async (r: Response) => ((await r.json()) as { error: unknown }).error;
   const sessions = () => ctx.deps.db.db.selectFrom('sessions').selectAll().execute();
-  const block = (id: string) =>
+  // The owner is always an admin and cannot be blocked, so access is lost by being disabled.
+  const disable = (id: string) =>
     ctx.deps.db.db
       .updateTable('users')
-      .set({ role_override: 'blocked' })
+      .set({ disabled_at: clock.now(), disabled_reason: 'test' })
       .where('id', '=', id)
       .execute();
 
@@ -241,11 +242,11 @@ describe.each(dialects)('owner sign-in on %s', (dialect) => {
     expect(sessionCookieFrom(r)).toBeNull();
   });
 
-  test('a blocked owner cannot sign in', async () => {
+  test('an owner without access cannot sign in', async () => {
     await start();
     const a = new SoftAuthenticator({ origin: ctx.deps.config.publicOrigin });
     const { me } = await setupOwner(ctx, { password: PASSWORD, passkey: a });
-    await block(me.id);
+    await disable(me.id);
 
     const byPassword = await signIn(PASSWORD);
     expect(byPassword.status).toBe(403);

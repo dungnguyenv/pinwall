@@ -244,7 +244,7 @@ describe.each(dialects)('sessions and /me on %s', (dialect) => {
 
   test("a blocked user's session ends at once", async () => {
     const c = await start();
-    const { user, cookie } = await createSignedInUser(c);
+    const { user, cookie } = await createSignedInUser(c, { kind: 'oidc' });
     await c.deps.db.db
       .updateTable('users')
       .set({ role_override: 'blocked' })

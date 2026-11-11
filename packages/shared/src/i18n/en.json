@@ -35,5 +35,6 @@
   "auth.passkeyNotFound": "This passkey does not exist, or it is not yours.",
   "auth.passkeyDuplicate": "This passkey is already registered.",
   "auth.ownRole": "You cannot change your own role.",
+  "auth.ownerRole": "The owner account is always an admin. Its role cannot be changed or blocked.",
   "auth.userNotFound": "This user does not exist."
 }

@@ -414,7 +414,7 @@ describe.each(dialects)('API tokens on %s', (dialect) => {
 
   test('a token of a user without access is access_denied', async () => {
     await start();
-    const { user } = await createSignedInUser(ctx);
+    const { user } = await createSignedInUser(ctx, { kind: 'oidc' });
     const secret = await createUserToken(ctx, user.id);
     await ctx.deps.db.db
       .updateTable('users')
