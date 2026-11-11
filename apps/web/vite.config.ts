@@ -29,6 +29,12 @@ export default defineConfig({
       output: {
         codeSplitting: {
           groups: [
+            // The framework changes rarely and the app often: one chunk of its own stays
+            // cached across releases, so an upgrade of the app re-downloads only the app.
+            {
+              name: 'vendor',
+              test: /[\\/]node_modules[\\/](react|react-dom|react-router|scheduler)[\\/]/,
+            },
             // zod is set to jitless by src/zod-config.ts before @pinwall/shared builds its
             // schemas. Both must sit in one chunk, or the chunk with the schemas would run
             // before the entry that configures zod.
