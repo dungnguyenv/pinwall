@@ -116,6 +116,7 @@ describe.each(dialects)('access re-check job on %s', (dialect) => {
       checked: 3,
       ok: 3,
       removed: 0,
+      signInRequired: 0,
       transient: 0,
     });
     for (const u of [a, d, f]) expect(await checkedAt(u)).toBe(clock.now());
@@ -140,6 +141,7 @@ describe.each(dialects)('access re-check job on %s', (dialect) => {
       checked: 1,
       ok: 1,
       removed: 0,
+      signInRequired: 0,
       transient: 0,
     });
     expect(await checkedAt(overridden)).toBe(clock.now());
@@ -156,20 +158,23 @@ describe.each(dialects)('access re-check job on %s', (dialect) => {
     expect(await checkedAt(a)).toBe(clock.now());
   });
 
-  test('the job counts removals and transient failures', async () => {
+  test('the job counts removals, refused refresh tokens and transient failures', async () => {
     await start();
     const kept = await signIn();
     const removed = await signIn();
+    const refused = await signIn();
     const failing = await signIn();
     idp.setGroups(removed.sub, ['other']);
+    await idp.revokeGrants(refused.sub);
     idp.failTokenRequests({ status: 503, error: 'temporarily_unavailable', sub: failing.sub });
     const info = vi.spyOn(ctx.deps.logger, 'info');
     clock.advance(12 * H);
 
     const summary = await runAccessRecheck(ctx.deps);
-    expect(summary).toEqual({ checked: 3, ok: 1, removed: 1, transient: 1 });
+    expect(summary).toEqual({ checked: 4, ok: 1, removed: 1, signInRequired: 1, transient: 1 });
     expect(info).toHaveBeenCalledWith(summary, 'access re-check');
     expect(await checkedAt(kept)).toBe(clock.now());
+    expect(await checkedAt(refused)).toBe(T);
     expect(await checkedAt(failing)).toBe(T);
   });
 
@@ -181,6 +186,7 @@ describe.each(dialects)('access re-check job on %s', (dialect) => {
       checked: 0,
       ok: 0,
       removed: 0,
+      signInRequired: 0,
       transient: 0,
     });
     expect(info).not.toHaveBeenCalled();
@@ -233,6 +239,7 @@ describe.each(dialects)('access re-check job on %s', (dialect) => {
       checked: 0,
       ok: 0,
       removed: 0,
+      signInRequired: 0,
       transient: 0,
     });
     expect(warn).toHaveBeenCalledWith(

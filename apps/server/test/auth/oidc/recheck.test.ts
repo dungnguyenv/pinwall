@@ -69,6 +69,70 @@ describe.each(dialects)('access re-check on %s', (dialect) => {
     (await recheckUser(ctx.deps, userId)).outcome;
   const plainRefreshToken = (u: UserRow) => openRefreshToken(ctx.deps, u.idp_refresh_token ?? '');
 
+  /** Gives the user an API token and an OAuth grant with an access token, beside the session. */
+  async function addCredentials(userId: string): Promise<void> {
+    await createUserToken(ctx, userId);
+    const { db } = ctx.deps.db;
+    const now = clock.now();
+    // OAuth belongs to M6; the rows are inserted directly, as in M2's Revoke now test.
+    await db
+      .insertInto('oauth_clients')
+      .values({ id: 'cli_1', name: 'Agent', redirect_uris: '[]', created_at: now })
+      .execute();
+    await db
+      .insertInto('oauth_grants')
+      .values({
+        id: 'grt_1',
+        client_id: 'cli_1',
+        user_id: userId,
+        resource: 'https://pinwall.test/mcp',
+        scope: 'artifacts',
+        created_at: now,
+      })
+      .execute();
+    await db
+      .insertInto('oauth_tokens')
+      .values({
+        token_hash: 'h_access',
+        grant_id: 'grt_1',
+        kind: 'access',
+        created_at: now,
+        expires_at: now + H,
+      })
+      .execute();
+  }
+
+  /**
+   * The user must sign in again: still enabled, the refresh token dropped, the last good check
+   * kept (so the gate refuses what is left once it is due), no browser session, and the API
+   * token and OAuth grant from `addCredentials` untouched.
+   */
+  async function expectSignInRequired(userId: string, checkedAt: number): Promise<void> {
+    const { db } = ctx.deps.db;
+    expect(await row(userId)).toMatchObject({
+      disabled_at: null,
+      disabled_reason: null,
+      idp_refresh_token: null,
+      idp_checked_at: checkedAt,
+    });
+    const sessions = await db
+      .selectFrom('sessions')
+      .select('id_hash')
+      .where('user_id', '=', userId)
+      .execute();
+    expect(sessions).toHaveLength(0);
+    const tokens = await db
+      .selectFrom('api_tokens')
+      .select('revoked_at')
+      .where('user_id', '=', userId)
+      .execute();
+    expect(tokens).toEqual([{ revoked_at: null }]);
+    const grants = await db.selectFrom('oauth_grants').select(['id', 'revoked_at']).execute();
+    expect(grants).toEqual([{ id: 'grt_1', revoked_at: null }]);
+    const oauthTokens = await db.selectFrom('oauth_tokens').select('token_hash').execute();
+    expect(oauthTokens).toEqual([{ token_hash: 'h_access' }]);
+  }
+
   test('a still-admitted user is checked and keeps access', async () => {
     await start();
     const { user } = await signIn();
@@ -100,35 +164,8 @@ describe.each(dialects)('access re-check on %s', (dialect) => {
   test('removal from the groups disables and revokes everything', async () => {
     await start();
     const { sub, user } = await signIn();
-    await createUserToken(ctx, user.id);
+    await addCredentials(user.id);
     const { db } = ctx.deps.db;
-    const now = clock.now();
-    // OAuth belongs to M6; the rows are inserted directly, as in M2's Revoke now test.
-    await db
-      .insertInto('oauth_clients')
-      .values({ id: 'cli_1', name: 'Agent', redirect_uris: '[]', created_at: now })
-      .execute();
-    await db
-      .insertInto('oauth_grants')
-      .values({
-        id: 'grt_1',
-        client_id: 'cli_1',
-        user_id: user.id,
-        resource: 'https://pinwall.test/mcp',
-        scope: 'artifacts',
-        created_at: now,
-      })
-      .execute();
-    await db
-      .insertInto('oauth_tokens')
-      .values({
-        token_hash: 'h_access',
-        grant_id: 'grt_1',
-        kind: 'access',
-        created_at: now,
-        expires_at: now + H,
-      })
-      .execute();
     const info = vi.spyOn(ctx.deps.logger, 'info');
 
     idp.setGroups(sub, ['other']);
@@ -165,29 +202,47 @@ describe.each(dialects)('access re-check on %s', (dialect) => {
     expect(info).toHaveBeenCalledWith({ user_id: user.id }, 'oidc user removed');
   });
 
-  test('a disabled IdP account is removed', async () => {
+  test('a refused refresh token asks for a new sign-in: sessions end, other credentials stay', async () => {
     await start();
     const { sub, user } = await signIn();
-    idp.disable(sub);
-    clock.advance(12 * H);
-    expect(await outcome(user.id)).toBe('removed');
-    expect(await row(user.id)).toMatchObject({
-      disabled_at: clock.now(),
-      disabled_reason: 'idp_removed',
-      idp_refresh_token: null,
-    });
-  });
-
-  test('revoked IdP grants are removed', async () => {
-    await start();
-    const { sub, user } = await signIn();
+    await addCredentials(user.id);
+    const warn = vi.spyOn(ctx.deps.logger, 'warn');
+    const info = vi.spyOn(ctx.deps.logger, 'info');
     await idp.revokeGrants(sub);
     clock.advance(12 * H);
-    expect(await outcome(user.id)).toBe('removed');
-    expect(await row(user.id)).toMatchObject({
-      disabled_at: clock.now(),
-      disabled_reason: 'idp_removed',
-    });
+
+    const r = await recheckUser(ctx.deps, user.id);
+    expect(r.outcome).toBe('sign_in_required');
+    expect(r.user).toEqual(await row(user.id));
+    await expectSignInRequired(user.id, T);
+    expect(warn).toHaveBeenCalledWith(
+      { user_id: user.id, class: 'invalid_grant', code: 'invalid_grant' },
+      'idp re-check: sign-in required',
+    );
+    expect(info).not.toHaveBeenCalledWith(expect.anything(), 'oidc user removed');
+  });
+
+  test('a disabled IdP account is refused the same way, without being removed', async () => {
+    await start();
+    const { sub, user } = await signIn();
+    await addCredentials(user.id);
+    idp.disable(sub);
+    clock.advance(12 * H);
+    expect(await outcome(user.id)).toBe('sign_in_required');
+    await expectSignInRequired(user.id, T);
+  });
+
+  test('a refresh token spent by a lost IdP answer asks for a new sign-in, not removal', async () => {
+    await start();
+    const { user } = await signIn();
+    await addCredentials(user.id);
+    const spent = (await row(user.id)).idp_refresh_token;
+    clock.advance(12 * H);
+    expect(await outcome(user.id)).toBe('ok');
+    // As if the rotated token never reached Pinwall: it still holds the one the IdP spent.
+    await setColumns(user.id, { idp_refresh_token: spent, idp_checked_at: T });
+    expect(await outcome(user.id)).toBe('sign_in_required');
+    await expectSignInRequired(user.id, T);
   });
 
   test('an unreachable IdP is transient and changes nothing', async () => {
@@ -262,7 +317,7 @@ describe.each(dialects)('access re-check on %s', (dialect) => {
     expect(await outcome(user.id)).toBe('ok');
   });
 
-  test('role_override keeps a user after group removal but not after IdP removal', async () => {
+  test('role_override keeps a user after group removal, not past a refused refresh token', async () => {
     await start();
     const { sub, user } = await signIn();
     await setColumns(user.id, { role_override: 'member' satisfies RoleOverride });
@@ -276,9 +331,15 @@ describe.each(dialects)('access re-check on %s', (dialect) => {
     });
 
     idp.disable(sub);
+    const checkedAt = clock.now();
     clock.advance(12 * H);
-    expect(await outcome(user.id)).toBe('removed');
-    expect(await row(user.id)).toMatchObject({ disabled_reason: 'idp_removed' });
+    expect(await outcome(user.id)).toBe('sign_in_required');
+    expect(await row(user.id)).toMatchObject({
+      role_override: 'member',
+      disabled_at: null,
+      idp_refresh_token: null,
+      idp_checked_at: checkedAt,
+    });
   });
 
   test('concurrent re-checks of one user share one refresh', async () => {

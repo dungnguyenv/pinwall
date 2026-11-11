@@ -13,6 +13,8 @@ export interface RecheckSummary {
   checked: number;
   ok: number;
   removed: number;
+  /** Refused refresh tokens: the person must sign in again. */
+  signInRequired: number;
   transient: number;
 }
 
@@ -98,7 +100,13 @@ async function forEachLimited<T>(
  * transient and is tried again next run. While discovery fails, nobody is checked.
  */
 export async function runAccessRecheck(deps: AppDeps): Promise<RecheckSummary> {
-  const summary: RecheckSummary = { checked: 0, ok: 0, removed: 0, transient: 0 };
+  const summary: RecheckSummary = {
+    checked: 0,
+    ok: 0,
+    removed: 0,
+    signInRequired: 0,
+    transient: 0,
+  };
   if (deps.config.oidc === null) return summary;
   let issuer: string;
   try {
@@ -121,6 +129,7 @@ export async function runAccessRecheck(deps: AppDeps): Promise<RecheckSummary> {
     }
     summary.checked += 1;
     if (outcome === 'ok' || outcome === 'removed' || outcome === 'transient') summary[outcome] += 1;
+    else if (outcome === 'sign_in_required') summary.signInRequired += 1;
   });
   if (summary.checked > 0) deps.logger.info(summary, 'access re-check');
   return summary;

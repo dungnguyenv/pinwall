@@ -12,12 +12,24 @@ export const RECHECK_LEASE_TTL_MS = 60_000;
 
 /**
  * - `ok`: the IdP still admits the user (or an admin's role override keeps them in);
- * - `removed`: the IdP refused the grant or no longer admits them, so they were disabled;
+ * - `removed`: the IdP's fresh claims no longer earn a role, so they were disabled and every
+ *   credential was revoked;
+ * - `sign_in_required`: the IdP refused the refresh token. That alone does not show the person
+ *   was removed: a lost rotation answer, a token lifetime policy or an IdP logout end refresh
+ *   tokens too. Their browser sessions ended and the refresh token was dropped; API tokens and
+ *   OAuth grants stay, and the gate refuses them once the check is due, until the person signs
+ *   in again;
  * - `transient`: the IdP could not answer, or another process is checking: nothing changed;
  * - `no_refresh_token`: nothing to ask the IdP with;
  * - `skipped`: not a user to re-check (owner, blocked, disabled, missing, another issuer).
  */
-export type RecheckOutcome = 'ok' | 'removed' | 'transient' | 'no_refresh_token' | 'skipped';
+export type RecheckOutcome =
+  | 'ok'
+  | 'removed'
+  | 'sign_in_required'
+  | 'transient'
+  | 'no_refresh_token'
+  | 'skipped';
 
 export interface RecheckResult {
   outcome: RecheckOutcome;
@@ -68,10 +80,11 @@ function transient(deps: AppDeps, user: UserRow, error: unknown): RecheckResult 
 
 /**
  * Asks the IdP whether the user still gets in: a refresh-token grant, then the claims of the new
- * ID token overlaid with userinfo. Only `invalid_grant`, or claims that no longer earn a role
- * (with no admin override), disable the user; every other failure is transient. Concurrent calls
- * for one user share one check, and a DB lease keeps other processes from checking the same user
- * at the same time, so a rotated refresh token is never spent twice.
+ * ID token overlaid with userinfo. Only claims that no longer earn a role (with no admin
+ * override) disable the user; a refused refresh token (`invalid_grant`) asks them to sign in
+ * again; every other failure is transient. Concurrent calls for one user share one check, and a
+ * DB lease keeps other processes from checking the same user at the same time, so a rotated
+ * refresh token is never spent twice.
  */
 export function recheckUser(deps: AppDeps, userId: string): Promise<RecheckResult> {
   if (deps.config.oidc === null) return Promise.resolve({ outcome: 'skipped', user: undefined });
@@ -137,9 +150,7 @@ async function checkWithIdp(
   try {
     tokens = await refreshTokenGrant(configuration, refreshToken);
   } catch (error) {
-    if (classifyOidcError(error) === 'invalid_grant') {
-      return { outcome: 'removed', user: await disableRemovedUser(deps, user.id) };
-    }
+    if (classifyOidcError(error) === 'invalid_grant') return requireSignIn(deps, user.id, error);
     return transient(deps, user, error);
   }
 
@@ -192,6 +203,32 @@ async function currentClaims(
   }
   if (claims === undefined) throw new RecheckClaimsError('NO_CLAIMS');
   return claims;
+}
+
+/**
+ * Asks the user to sign in again after an IdP answer that cannot decide their access: drops the
+ * refresh token and ends their browser sessions, in one transaction. The last good check time
+ * stays, so the gate refuses their API tokens and OAuth grants once the check is due; the next
+ * admitted sign-in brings them back. Logs the failure by its class and fixed code only.
+ */
+async function requireSignIn(
+  deps: AppDeps,
+  userId: string,
+  error: unknown,
+): Promise<RecheckResult> {
+  deps.logger.warn(
+    { user_id: userId, class: classifyOidcError(error), code: oidcErrorCode(error) },
+    'idp re-check: sign-in required',
+  );
+  await deps.db.db.transaction().execute(async (trx) => {
+    await trx
+      .updateTable('users')
+      .set({ idp_refresh_token: null })
+      .where('id', '=', userId)
+      .execute();
+    await trx.deleteFrom('sessions').where('user_id', '=', userId).execute();
+  });
+  return { outcome: 'sign_in_required', user: await loadUser(deps, userId) };
 }
 
 /**
