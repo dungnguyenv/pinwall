@@ -9,12 +9,13 @@ export interface DocPoint {
   y: number;
 }
 
-function finite(value: unknown): number {
+/** `value` when it is a finite number, else 0. */
+export function finite(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 /** A fraction clamped to 0..1 and rounded to 4 decimals; 0 for anything not a number. */
-function fraction(value: number): number {
+export function fraction(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.round(Math.min(1, Math.max(0, value)) * 10_000) / 10_000;
 }

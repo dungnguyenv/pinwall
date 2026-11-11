@@ -18,6 +18,8 @@
  *   (its own Content-Security-Policy may block the script); the viewer places point comments for
  *   it on its own overlay.
  * - The viewer sends anchors, pin numbers and resolved flags to pages, never comment bodies.
+ * - Only the top content frame (whose `window.parent` is `window.top`) posts `scrolled` and obeys
+ *   `scroll-to`; frames inside it do neither.
  *
  * The schemas use only the functional API that `zod` and `zod/mini` share (`z.optional(s)`,
  * `s.check(z.maxLength(n))`, no chained `.max()` or `.optional()`): the annotator bundle builds
@@ -44,6 +46,8 @@ export const MAX_ANCHORS = 1000;
 export const PAGE_MAX_CHARS = 1024;
 /** Widest frame an anchor records, in CSS pixels. */
 const VIEWPORT_MAX_WIDTH = 100_000;
+/** Farthest a pick point may lie from its viewport's top-left corner, in CSS pixels, either way. */
+const CLIENT_MAX = 100_000;
 
 /** A comment or frame id inside a message. */
 const MessageId = z.string().check(z.minLength(1), z.maxLength(64));
@@ -62,8 +66,23 @@ export const Quote = z.object({
 });
 export type Quote = z.infer<typeof Quote>;
 
-/** A fraction of the document's scroll size, 0 at the top or left edge and 1 at the other. */
+/** A fraction of a length on the page, 0 at the top or left edge and 1 at the other. */
 const Fraction = z.number().check(z.gte(0), z.lte(1));
+
+/** A finite coordinate of a pick point, in CSS pixels. */
+const ClientCoordinate = z.number().check(z.gte(-CLIENT_MAX), z.lte(CLIENT_MAX));
+
+/**
+ * Where the pointer was when the reviewer picked a spot: CSS pixels in the viewport of the frame
+ * that posts it (its `clientX`/`clientY`), so the viewer can open the composer next to it.
+ */
+export const ClientPoint = z.object({ x: ClientCoordinate, y: ClientCoordinate });
+export type ClientPoint = z.infer<typeof ClientPoint>;
+
+const scrollFields = { x: Fraction, y: Fraction };
+/** How far a frame is scrolled, as fractions of its scroll range (0 = start, 1 = end). */
+export const ScrollFraction = z.object(scrollFields);
+export type ScrollFraction = z.infer<typeof ScrollFraction>;
 
 /**
  * Where on a page a comment thread sits. A `text` anchor needs `quote`, an `element` anchor needs
@@ -78,6 +97,7 @@ export const Anchor = z
     dom: z.optional(
       z.object({ path: z.string().check(z.minLength(1), z.maxLength(DOM_PATH_MAX_CHARS)) }),
     ),
+    /** Fractions of the document's scroll size. */
     position: z.object({ x: Fraction, y: Fraction }),
     /** The frame's width when the anchor was made. */
     viewport: z.object({
@@ -107,8 +127,14 @@ const envelope = { pinwall: z.literal(PROTOCOL_VERSION) };
 export const PageToViewerMessage = z.discriminatedUnion('type', [
   /** The annotator of this frame is running. */
   z.object({ ...envelope, type: z.literal('ready'), page: PagePath, frameId: MessageId }),
-  /** In comment mode, the reviewer chose a spot for a new thread. */
-  z.object({ ...envelope, type: z.literal('anchor-picked'), anchor: Anchor, frameId: MessageId }),
+  /** In comment mode, the reviewer chose a spot for a new thread, with the pointer at `client`. */
+  z.object({
+    ...envelope,
+    type: z.literal('anchor-picked'),
+    anchor: Anchor,
+    frameId: MessageId,
+    client: z.optional(ClientPoint),
+  }),
   /** The answer to `show-anchors`: which of this page's anchors re-attached. */
   z.object({
     ...envelope,
@@ -122,6 +148,8 @@ export const PageToViewerMessage = z.discriminatedUnion('type', [
   z.object({ ...envelope, type: z.literal('pin-clicked'), id: MessageId }),
   /** The frame now shows another page of the grant without a reload. */
   z.object({ ...envelope, type: z.literal('navigated'), page: PagePath, frameId: MessageId }),
+  /** The top content frame scrolled to fractions `x`, `y` of its scroll range. */
+  z.object({ ...envelope, type: z.literal('scrolled'), frameId: MessageId, ...scrollFields }),
 ]);
 export type PageToViewerMessage = z.infer<typeof PageToViewerMessage>;
 
@@ -146,6 +174,8 @@ export const ViewerToPageMessage = z.discriminatedUnion('type', [
   }),
   /** Scroll to the pin of thread `id` and highlight it. */
   z.object({ ...envelope, type: z.literal('focus-anchor'), id: MessageId }),
+  /** The top content frame scrolls to fractions `x`, `y` of its scroll range; others ignore it. */
+  z.object({ ...envelope, type: z.literal('scroll-to'), ...scrollFields }),
 ]);
 export type ViewerToPageMessage = z.infer<typeof ViewerToPageMessage>;
 

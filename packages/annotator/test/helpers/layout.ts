@@ -13,6 +13,7 @@ export interface LayoutStub {
   scrollWidth?: number;
   scrollHeight?: number;
   clientWidth?: number;
+  clientHeight?: number;
   scrollX?: number;
   scrollY?: number;
   /** The one client rect of each element or range; any other has none. */
@@ -46,7 +47,7 @@ function domRect(rect: StubRect | undefined): DOMRect {
 export function stubLayout(stub: LayoutStub): void {
   const restores: Restore[] = [];
   const root = document.documentElement;
-  for (const key of ['scrollWidth', 'scrollHeight', 'clientWidth'] as const) {
+  for (const key of ['scrollWidth', 'scrollHeight', 'clientWidth', 'clientHeight'] as const) {
     if (stub[key] !== undefined) restores.push(override(root, key, stub[key]));
   }
   for (const key of ['scrollX', 'scrollY'] as const) {

@@ -3,10 +3,12 @@ import {
   ANNOTATOR_GLOBAL,
   ANNOTATOR_PATH,
   Anchor,
+  ClientPoint,
   MAX_ANCHORS,
   PROTOCOL_VERSION,
   parsePageMessage,
   parseViewerMessage,
+  ScrollFraction,
 } from '../src/protocol.ts';
 
 const text = {
@@ -148,4 +150,73 @@ test('every viewer message parses, and pin numbers start at 1', () => {
   ]) {
     expect(parseViewerMessage(bad)).toBeNull();
   }
+});
+
+test('pick points and scroll messages validate', () => {
+  const pointA = {
+    page: '',
+    kind: 'point',
+    position: { x: 0.2, y: 0.3 },
+    viewport: { width: 800 },
+  };
+  expect(
+    parsePageMessage({
+      pinwall: 1,
+      type: 'anchor-picked',
+      anchor: pointA,
+      frameId: 'f1',
+      client: { x: 120, y: 48.5 },
+    })?.type,
+  ).toBe('anchor-picked');
+  expect(
+    parsePageMessage({ pinwall: 1, type: 'anchor-picked', anchor: pointA, frameId: 'f1' }),
+  ).not.toBeNull();
+  expect(parsePageMessage({ pinwall: 1, type: 'scrolled', frameId: 'f1', x: 0, y: 0.5 })).toEqual({
+    pinwall: 1,
+    type: 'scrolled',
+    frameId: 'f1',
+    x: 0,
+    y: 0.5,
+  });
+  for (const bad of [
+    { type: 'scrolled', frameId: 'f1', x: 1.2, y: 0 },
+    { type: 'scrolled', frameId: 'f1', x: 0, y: -0.1 },
+    { type: 'scrolled', x: 0, y: 0 },
+    {
+      type: 'anchor-picked',
+      anchor: pointA,
+      frameId: 'f1',
+      client: { x: Number.POSITIVE_INFINITY, y: 0 },
+    },
+    { type: 'anchor-picked', anchor: pointA, frameId: 'f1', client: { x: 0, y: Number.NaN } },
+    { type: 'anchor-picked', anchor: pointA, frameId: 'f1', client: { x: 100_001, y: 0 } },
+    { type: 'anchor-picked', anchor: pointA, frameId: 'f1', client: { x: 0, y: -100_001 } },
+    { type: 'anchor-picked', anchor: pointA, frameId: 'f1', client: { x: 0 } },
+  ]) {
+    expect(parsePageMessage({ pinwall: 1, ...bad })).toBeNull();
+  }
+  expect(
+    parsePageMessage({
+      pinwall: 1,
+      type: 'anchor-picked',
+      anchor: pointA,
+      frameId: 'f1',
+      client: { x: -100_000, y: 100_000 },
+    }),
+  ).not.toBeNull();
+  expect(parseViewerMessage({ pinwall: 1, type: 'scroll-to', x: 0.25, y: 1 })?.type).toBe(
+    'scroll-to',
+  );
+  expect(parseViewerMessage({ pinwall: 1, type: 'scroll-to', x: 0.25, y: 1.5 })).toBeNull();
+  expect(parsePageMessage({ pinwall: 1, type: 'scroll-to', x: 0, y: 0 })).toBeNull();
+  expect(
+    parseViewerMessage({ pinwall: 1, type: 'scrolled', frameId: 'f1', x: 0, y: 0 }),
+  ).toBeNull();
+});
+
+test('ClientPoint and ScrollFraction name the new shapes', () => {
+  expect(ClientPoint.parse({ x: -5, y: 12.25 })).toEqual({ x: -5, y: 12.25 });
+  expect(ClientPoint.safeParse({ x: Number.NEGATIVE_INFINITY, y: 0 }).success).toBe(false);
+  expect(ScrollFraction.parse({ x: 1, y: 0 })).toEqual({ x: 1, y: 0 });
+  expect(ScrollFraction.safeParse({ x: 0, y: 1.0001 }).success).toBe(false);
 });
