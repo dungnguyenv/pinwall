@@ -15,7 +15,7 @@ import { listVersions } from '../../domain/versions.ts';
 import { publicUrl } from '../../http/public-url.ts';
 import { t } from '../../lib/i18n.ts';
 import { DESCRIPTIONS, FIELDS } from '../descriptions.ts';
-import { formatBytes, oneLine } from '../format.ts';
+import { formatBytes, oneLine, withMore } from '../format.ts';
 import { runTool } from '../results.ts';
 import {
   type ArtifactOut,
@@ -196,13 +196,6 @@ function versionLine(v: VersionOut): string {
 /** What `get_project` and `create_project` return: the project with its instructions. */
 function detailOf(row: ProjectRow): ProjectDetailOut {
   return { project: { ...toProjectOut(row), instructions: row.instructions } };
-}
-
-/** Appends the line that says how to get the next page, when there is one. */
-function withMore(lines: string[], tool: string, nextCursor: string | null): string {
-  return (
-    nextCursor === null ? lines : [...lines, t('mcp.list.more', { tool, cursor: nextCursor })]
-  ).join('\n');
 }
 
 /**
