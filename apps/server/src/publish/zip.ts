@@ -1,15 +1,14 @@
-import { crc32 } from 'node:zlib';
-import { Inflate } from 'fflate';
-import { badRequest, unsupportedMediaType } from '../lib/errors.ts';
+import { crc32, createInflateRaw } from 'node:zlib';
+import { AppError, badRequest, unsupportedMediaType } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { corruptArchive, type EntryType } from './archive.ts';
 import type { IngestBudget } from './limits.ts';
 import { MAX_PATH_LENGTH, quotePath } from './paths.ts';
 
 /**
- * ZIP reading driven by the central directory, after the PKWARE APPNOTE. fflate's unzip does not
- * expose the external attributes that mark symlinks and devices, so Pinwall parses the directory
- * itself and uses fflate only to inflate entry data. ZIP64 and multi-disk archives are refused.
+ * ZIP reading driven by the central directory, after the PKWARE APPNOTE. Pinwall parses the
+ * directory itself, to see the external attributes that mark symlinks and devices, and inflates
+ * entry data with node:zlib. ZIP64 and multi-disk archives are refused.
  */
 
 export interface ZipEntryInfo {
@@ -45,8 +44,13 @@ const S_IFREG = 0o100000;
 const S_IFDIR = 0o040000;
 const S_IFLNK = 0o120000;
 
-/** Compressed bytes handed to the inflater at a time. */
+/** Stored entry data is handed on in slices of this many bytes. */
 const FEED_BYTES = 65_536;
+/**
+ * Inflated bytes come out in chunks of at most this many, and the inflater waits while its reader
+ * is busy, so a small entry that expands enormously never needs more than a few chunks at once.
+ */
+const INFLATE_CHUNK_BYTES = 65_536;
 
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
@@ -113,16 +117,17 @@ export function readZipDirectory(zip: Buffer): ZipEntryInfo[] {
 }
 
 /**
- * The decoded bytes of a file entry, in chunks, each counted with `budget.onExpandedBytes`. Throws
- * when the entry is encrypted or uses a method other than store or deflate, and `corruptArchive()`
- * as soon as the data outgrows its declared size or, at the end, when its size or CRC-32 differs
- * from the central directory. Nothing runs until the first chunk is asked for.
+ * The decoded bytes of a file entry, in chunks of at most 64 KiB, each counted with
+ * `budget.onExpandedBytes`. Throws when the entry is encrypted or uses a method other than store
+ * or deflate, and `corruptArchive()` as soon as the data outgrows its declared size or, at the
+ * end, when its size or CRC-32 differs from the central directory. Nothing runs until the first
+ * chunk is asked for; stopping early stops the inflater.
  */
-export function* zipEntryChunks(
+export async function* zipEntryChunks(
   zip: Buffer,
   entry: ZipEntryInfo,
   budget: IngestBudget,
-): Generator<Buffer, void, undefined> {
+): AsyncGenerator<Buffer, void, undefined> {
   const path = { path: quotePath(entry.name) };
   const details = { path: quotePath(entry.name, MAX_PATH_LENGTH) };
   if (entry.encrypted) {
@@ -150,21 +155,13 @@ export function* zipEntryChunks(
       yield account(data.subarray(at, at + FEED_BYTES));
     }
   } else {
-    const output: Uint8Array[] = [];
-    const inflater = new Inflate((chunk) => {
-      if (chunk.length > 0) output.push(chunk);
-    });
-    for (let at = 0; ; at += FEED_BYTES) {
-      const final = at + FEED_BYTES >= data.length;
-      try {
-        inflater.push(data.subarray(at, at + FEED_BYTES), final);
-      } catch {
-        throw corruptArchive();
-      }
-      for (const chunk of output.splice(0)) {
-        yield account(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength));
-      }
-      if (final) break;
+    const inflater = createInflateRaw({ chunkSize: INFLATE_CHUNK_BYTES });
+    inflater.end(data);
+    try {
+      // Leaving the loop, by a throw or by the reader stopping, destroys the inflater.
+      for await (const chunk of inflater as AsyncIterable<Buffer>) yield account(chunk);
+    } catch (error) {
+      throw error instanceof AppError ? error : corruptArchive();
     }
   }
 

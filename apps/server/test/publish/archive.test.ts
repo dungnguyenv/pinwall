@@ -408,6 +408,32 @@ describe('an expansion bomb stops early', () => {
     expect(read).toBeLessThan(10_000_000);
   });
 
+  test('zip: a deflated entry is inflated in chunks of at most 64 KiB, never whole', async () => {
+    // 40 MB of zeros deflate to about 40 KB, so one 64 KiB feed would inflate all of it at once.
+    const archive = makeZip([{ name: 'z.bin', body: Buffer.alloc(40_000_000) }]);
+    const budget = new IngestBudget({ ...roomy, maxExpansionRatio: 100 });
+    budget.onRequestBytes(archive.length);
+    const baseline = process.memoryUsage().arrayBuffers;
+    let largestChunk = 0;
+    let peakGrowth = 0;
+    const count = budget.onExpandedBytes.bind(budget);
+    budget.onExpandedBytes = (n) => {
+      largestChunk = Math.max(largestChunk, n);
+      peakGrowth = Math.max(peakGrowth, process.memoryUsage().arrayBuffers - baseline);
+      count(n);
+    };
+    await expect(
+      readArchive(Readable.from(archive), 'zip', budget, async (e) => {
+        for await (const _ of e.body) {
+          // discarded as it arrives
+        }
+      }),
+    ).rejects.toMatchObject({ status: 413, details: { limit: 'max_expansion_ratio' } });
+    expect(largestChunk).toBeLessThanOrEqual(65_536);
+    // About 6.5 MB of chunks is inflated before the ratio stops it; nothing near 40 MB is held.
+    expect(peakGrowth).toBeLessThan(16_000_000);
+  });
+
   test.each(['tar.gz', 'zip'] as const)(
     '%s: the rejection waits for the running onEntry',
     async (format) => {
