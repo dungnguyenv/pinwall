@@ -7,6 +7,7 @@ import {
   MARKDOWN_CSS_PATH,
   MARKDOWN_RENDER_MAX_BYTES,
   renderMarkdown,
+  renderMarkdownBlocks,
   renderMarkdownFragment,
   renderMarkdownPage,
   slugify,
@@ -246,6 +247,74 @@ describe('renderMarkdown', () => {
         expect(performance.now() - started).toBeLessThan(5000);
       }
     });
+  });
+});
+
+describe('renderMarkdownBlocks', () => {
+  test('splits a document into its top-level blocks, each with its source and html', () => {
+    const blocks = renderMarkdownBlocks(
+      '# T\n\nA\nb\n\n- x\n- y\n\n```ts\nlet a = 1;\n```\n\n---\n',
+    );
+    expect(blocks.map((b) => b.source)).toEqual([
+      '# T',
+      'A\nb',
+      '- x\n- y',
+      '```ts\nlet a = 1;\n```',
+      '---',
+    ]);
+    expect(blocks[0]?.html).toBe('<h1 id="t">T</h1>\n');
+    expect(blocks[2]?.html).toBe('<ul>\n<li>x</li>\n<li>y</li>\n</ul>\n');
+    expect(blocks[3]?.html).toContain('hljs-keyword');
+    expect(blocks[4]?.html).toBe('<hr>\n');
+  });
+
+  test('a list, a table and a quote are one block each, nested content included', () => {
+    const src = '> a\n>\n> b\n\n| h | i |\n| - | - |\n| 1 | 2 |\n\n1. one\n   - nested\n2. two\n';
+    expect(renderMarkdownBlocks(src).map((b) => b.source)).toEqual([
+      '> a\n>\n> b',
+      '| h | i |\n| - | - |\n| 1 | 2 |',
+      '1. one\n   - nested\n2. two',
+    ]);
+  });
+
+  test('line endings do not move the blocks', () => {
+    const lf = renderMarkdownBlocks('# T\n\nA\n\nB\n');
+    expect(renderMarkdownBlocks('# T\r\n\r\nA\r\n\r\nB\r\n')).toEqual(lf);
+    expect(renderMarkdownBlocks('# T\r\rA\r\rB\r')).toEqual(lf);
+  });
+
+  test('reference links resolve against the whole document', () => {
+    const blocks = renderMarkdownBlocks(
+      'See [the docs][d] and [d].\n\n[d]: https://example.com/docs\n',
+    );
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.html).toBe(
+      '<p>See <a href="https://example.com/docs">the docs</a> and <a href="https://example.com/docs">d</a>.</p>\n',
+    );
+  });
+
+  test('raw HTML blocks pass through as blocks', () => {
+    const blocks = renderMarkdownBlocks('<details>\n<summary>x</summary>\n</details>\n\ntext\n');
+    expect(blocks.map((b) => b.source)).toEqual([
+      '<details>\n<summary>x</summary>\n</details>',
+      'text',
+    ]);
+    expect(blocks[0]?.html).toContain('<details>');
+  });
+
+  test('an empty document has no blocks', () => {
+    expect(renderMarkdownBlocks('')).toEqual([]);
+    expect(renderMarkdownBlocks('\n\n  \n')).toEqual([]);
+    expect(renderMarkdownBlocks('[d]: https://example.com\n')).toEqual([]);
+  });
+
+  test('a source over the cap is one block holding the notice, parsed by nobody', () => {
+    const src = `# T\n\n${'a'.repeat(MARKDOWN_RENDER_MAX_BYTES)}`;
+    const blocks = renderMarkdownBlocks(src);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.source).toBe(src);
+    expect(blocks[0]?.html).toBe(renderMarkdown(src).html);
+    expect(blocks[0]?.html).toContain('pw-md-notice');
   });
 });
 

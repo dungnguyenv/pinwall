@@ -5,6 +5,7 @@ export * from './auth.ts';
 export * from './common.ts';
 export * from './config.ts';
 export * from './content.ts';
+export * from './diff.ts';
 export * from './passkeys.ts';
 export * from './projects.ts';
 export * from './publish.ts';

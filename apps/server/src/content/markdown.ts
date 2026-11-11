@@ -122,6 +122,52 @@ export function renderMarkdownFragment(src: string): string {
   return renderMarkdown(src).html;
 }
 
+/** One top-level block of a document: its source lines and what they render to. */
+export interface MarkdownBlock {
+  source: string;
+  html: string;
+}
+
+/**
+ * The top-level blocks of a document, in order: a paragraph, a heading, a whole list, quote,
+ * table or fence, a rule, an HTML block. `source` is the block's own lines, line endings as `\n`
+ * and trailing blank space dropped. The document is parsed once, so a reference link in one block
+ * resolves against a definition anywhere, and its html is what the same block shows in
+ * `renderMarkdown`. Reference definitions are not blocks. A source over `MARKDOWN_RENDER_MAX_BYTES`
+ * is not parsed: it is one block holding the notice `renderMarkdown` gives.
+ */
+export function renderMarkdownBlocks(src: string): MarkdownBlock[] {
+  if (Buffer.byteLength(src) > MARKDOWN_RENDER_MAX_BYTES) {
+    return [{ source: src, html: renderMarkdown(src).html }];
+  }
+  // markdown-it numbers the lines of the text it normalizes, so split that text.
+  const text = src.replace(/\r\n?/g, '\n');
+  const lines = text.split('\n');
+  const env = {};
+  const tokens = markdown.parse(text, env);
+  const blocks: MarkdownBlock[] = [];
+  let start = 0;
+  while (start < tokens.length) {
+    const first = tokens[start];
+    if (first === undefined) break;
+    // A block is one token (a fence, a rule), or runs from its `_open` to the `_close` that
+    // comes back to level 0.
+    let end = start;
+    if (first.nesting === 1) {
+      while (end < tokens.length && !(tokens[end]?.nesting === -1 && tokens[end]?.level === 0)) {
+        end += 1;
+      }
+    }
+    const [from, to] = first.map ?? [0, 0];
+    blocks.push({
+      source: lines.slice(from, to).join('\n').trimEnd(),
+      html: markdown.renderer.render(tokens.slice(start, end + 1), markdown.options, env),
+    });
+    start = end + 1;
+  }
+  return blocks;
+}
+
 function renderToc(headings: readonly Heading[]): string {
   const entries = headings.filter((heading) => TOC_LEVELS.has(heading.level));
   if (entries.length < TOC_MIN) return '';

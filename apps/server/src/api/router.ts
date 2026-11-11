@@ -9,6 +9,7 @@ import { registerArtifactRoutes } from './artifacts.ts';
 import { registerAuthRoutes } from './auth.ts';
 import { registerConfigRoutes } from './config.ts';
 import { registerContentRoutes } from './content.ts';
+import { registerDiffRoutes } from './diff.ts';
 import { registerMeRoutes } from './me.ts';
 import { registerProjectRoutes } from './projects.ts';
 import { registerPublishRoutes } from './publish.ts';
@@ -72,6 +73,7 @@ export function buildApiRouter(): OpenAPIHono<AppEnv> {
   registerArtifactRoutes(api);
   registerVersionRoutes(api);
   registerContentRoutes(api);
+  registerDiffRoutes(api);
 
   return api;
 }

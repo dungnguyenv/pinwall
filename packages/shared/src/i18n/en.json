@@ -91,6 +91,8 @@
   "version.notFound": "This version does not exist.",
   "version.gone": "This version was deleted.",
   "version.restoredFrom": "Restored from v{{number}}",
+  "diff.noFile": "Neither version has this file.",
+  "diff.notMarkdown": "A rendered diff is available for Markdown files only.",
   "auth.ownerRole": "The owner account is always an admin. Its role cannot be changed or blocked.",
   "oidc.notConfigured.title": "Single sign-on is not set up",
   "oidc.notConfigured.message": "This Pinwall has no identity provider configured. Sign in with the owner account instead.",
