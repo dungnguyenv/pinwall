@@ -9,7 +9,15 @@ import { loggablePath } from './logging.ts';
 import { publicUrl } from './public-url.ts';
 
 /** Paths only programs call: their errors are JSON whatever `Accept` says. */
-const MACHINE_PATHS = ['/api', '/mcp', '/oauth/token', '/oauth/register', '/upload'];
+const MACHINE_PATHS = [
+  '/api',
+  '/mcp',
+  '/oauth/token',
+  '/oauth/register',
+  '/oauth/revoke',
+  '/.well-known',
+  '/upload',
+];
 
 function isUnder(path: string, prefix: string): boolean {
   return path === prefix || path.startsWith(`${prefix}/`);

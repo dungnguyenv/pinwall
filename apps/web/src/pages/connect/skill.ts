@@ -1,7 +1,7 @@
 /*
- * The Claude Code skill, read from the repository at build time. M6 writes
- * `skills/pinwall/SKILL.md`; until then the glob matches nothing and the
- * connect page leaves the skill out.
+ * The Claude Code skill, `skills/pinwall/SKILL.md`, read from the repository
+ * at build time. A build without that file leaves the skill off the connect
+ * page.
  */
 const files = import.meta.glob<string>('../../../../../skills/pinwall/SKILL.md', {
   query: '?raw',

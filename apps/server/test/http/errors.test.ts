@@ -192,6 +192,9 @@ describe('wantsHtml', () => {
       '/mcp/x',
       '/oauth/token',
       '/oauth/register',
+      '/oauth/revoke',
+      '/.well-known',
+      '/.well-known/oauth-authorization-server',
       '/upload/abc',
     ];
     for (const path of paths) expect(await ask(path), path).toBe('false');

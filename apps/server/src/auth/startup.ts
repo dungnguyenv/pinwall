@@ -1,4 +1,5 @@
 import type { AppDeps } from '../deps.ts';
+import { startOAuth } from '../oauth/cleanup.ts';
 import { startOidc } from './oidc/job.ts';
 import { purgeExpiredSessions } from './sessions.ts';
 import { announceSetupLink } from './setup.ts';
@@ -17,5 +18,7 @@ export async function startAuth(deps: AppDeps): Promise<string | null> {
     await purgeExpiredSessions(deps);
   });
   startOidc(deps);
+  // Hourly: expired OAuth tokens and clients idle for 30 days.
+  startOAuth(deps);
   return setupUrl;
 }

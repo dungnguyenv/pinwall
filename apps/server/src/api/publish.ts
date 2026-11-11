@@ -76,7 +76,7 @@ export function toPublishTarget(i: PublishTargetInput): PublishTarget {
 }
 
 /** A version message as stored: an empty or blank one is no message. */
-function messageOf(message: string | undefined): string | null {
+export function messageOf(message: string | undefined): string | null {
   return message === undefined || message.trim() === '' ? null : message;
 }
 
