@@ -21,6 +21,9 @@ const SearchPage = lazy(() =>
 const ReviewPage = lazy(() =>
   import('../review/viewer/review-page.tsx').then((m) => ({ default: m.ReviewPage })),
 );
+const ComparePage = lazy(() =>
+  import('../review/compare/compare-page.tsx').then((m) => ({ default: m.ComparePage })),
+);
 const NotFoundPage = lazy(() =>
   import('../pages/not-found-page.tsx').then((m) => ({ default: m.NotFoundPage })),
 );
@@ -122,8 +125,7 @@ export function buildRoutes(): RouteObject[] {
         { path: 'search', element: <SearchPage /> },
         { path: 'a/:artifactId', element: <ReviewPage /> },
         { path: 'a/:artifactId/v/:n', element: <ReviewPage /> },
-        // Until compare arrives (M8b), its address opens the review of the current version.
-        { path: 'a/:artifactId/compare', element: <ReviewPage /> },
+        { path: 'a/:artifactId/compare', element: <ComparePage /> },
         {
           path: 'settings',
           element: <SettingsLayout />,
