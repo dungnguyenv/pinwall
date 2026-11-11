@@ -367,10 +367,30 @@ export function loadConfig(
     if (clientIdRaw === undefined) {
       r.fail('PINWALL_OIDC_CLIENT_ID', 'required when other PINWALL_OIDC_* credentials are set');
     }
-    const issuer =
+    let issuer =
       issuerRaw === undefined
         ? undefined
         : r.validate('PINWALL_OIDC_ISSUER', custom(parseHttpUrl), issuerRaw);
+    const allowHttpIssuer = r.read('PINWALL_OIDC_ALLOW_HTTP_ISSUER', stringBoolean) ?? false;
+    // openid-client trusts ID tokens and userinfo for being fetched over TLS: it does not check
+    // the signature of an ID token from the token endpoint. Over http: they can be forged.
+    if (issuer !== undefined && new URL(issuer).protocol === 'http:') {
+      if (!allowHttpIssuer) {
+        r.fail(
+          'PINWALL_OIDC_ISSUER',
+          'must use https: anyone on the network path to an http: IdP can forge any identity, ' +
+            'admins included. For tests or an IdP reached only over a trusted network, set ' +
+            'PINWALL_OIDC_ALLOW_HTTP_ISSUER=true',
+        );
+        issuer = undefined;
+      } else {
+        warnings.push(
+          `PINWALL_OIDC_ALLOW_HTTP_ISSUER is set and PINWALL_OIDC_ISSUER (${issuer}) uses http: ` +
+            'anyone on the network path to the IdP can read tokens and forge any identity, ' +
+            'admins included.',
+        );
+      }
+    }
     const scopes = parseList(r.raw('PINWALL_OIDC_SCOPES') ?? 'openid email profile offline_access');
     if (!scopes.includes('openid')) {
       r.fail('PINWALL_OIDC_SCOPES', 'must include the openid scope');

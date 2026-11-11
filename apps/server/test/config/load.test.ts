@@ -491,6 +491,43 @@ describe('proxy, secret key and access', () => {
     ]);
   });
 
+  test('an http: issuer is refused unless PINWALL_OIDC_ALLOW_HTTP_ISSUER is true', () => {
+    const plain = {
+      PINWALL_OIDC_ISSUER: 'http://idp.internal:8081/realms/x',
+      PINWALL_OIDC_CLIENT_ID: 'c',
+    };
+    for (const env of [plain, { ...plain, PINWALL_OIDC_ALLOW_HTTP_ISSUER: 'false' }]) {
+      expect(issuesOf(env)).toEqual([
+        expect.stringMatching(
+          /^PINWALL_OIDC_ISSUER: must use https:.*PINWALL_OIDC_ALLOW_HTTP_ISSUER=true/,
+        ),
+      ]);
+    }
+    // Loopback is no exception: a plain http: IdP is opted into, wherever it runs.
+    expect(
+      issuesOf({ PINWALL_OIDC_ISSUER: 'http://127.0.0.1:9000', PINWALL_OIDC_CLIENT_ID: 'c' }),
+    ).toEqual([expect.stringMatching(/^PINWALL_OIDC_ISSUER: /)]);
+    expect(issuesOf({ ...plain, PINWALL_OIDC_ALLOW_HTTP_ISSUER: 'sure' })).toEqual([
+      expect.stringMatching(/^PINWALL_OIDC_ALLOW_HTTP_ISSUER: must be true or false/),
+      expect.stringMatching(/^PINWALL_OIDC_ISSUER: must use https:/),
+    ]);
+
+    const allowed = loadConfig({ ...plain, PINWALL_OIDC_ALLOW_HTTP_ISSUER: 'true' });
+    expect(allowed.oidc?.issuer).toBe('http://idp.internal:8081/realms/x');
+    expect(allowed.warnings).toEqual([
+      expect.stringMatching(/PINWALL_OIDC_ALLOW_HTTP_ISSUER.*forge/),
+    ]);
+
+    // With an https: issuer the flag changes nothing and warns about nothing.
+    const secure = loadConfig({
+      PINWALL_OIDC_ISSUER: 'https://idp.example',
+      PINWALL_OIDC_CLIENT_ID: 'c',
+      PINWALL_OIDC_ALLOW_HTTP_ISSUER: 'true',
+    });
+    expect(secure.oidc?.issuer).toBe('https://idp.example');
+    expect(secure.warnings).toEqual([]);
+  });
+
   test('access lists are lowercased, deduplicated and validated', () => {
     const c = loadConfig({
       PINWALL_ADMIN_EMAILS: 'Boss@Corp.com, boss@corp.com',
