@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { buildApiRouter } from './api/router.ts';
+import { buildOidcRouter } from './auth/oidc/routes.ts';
 import { resolveAuth } from './auth/resolve.ts';
 import { bearerResolvers } from './auth/resolvers.ts';
 import type { UserRow } from './db/schema.ts';
@@ -98,6 +99,7 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
     resolveAuth({ bearer: bearerResolvers, cookies: true }),
   );
   app.route('/api/v1', buildApiRouter());
+  app.route('/auth/oidc', buildOidcRouter());
 
   mountSpa(app, deps.config.webDir ?? defaultWebDir(), deps.logger);
 

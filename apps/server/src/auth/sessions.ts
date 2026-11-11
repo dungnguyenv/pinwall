@@ -3,7 +3,7 @@ import type { AppDeps } from '../deps.ts';
 import { hashSecret, newSecret } from '../lib/ids.ts';
 
 /** How a browser session was signed in. */
-export type AuthMethod = 'password' | 'passkey'; // M3 adds 'oidc'
+export type AuthMethod = 'password' | 'passkey' | 'oidc';
 
 /** A session is renewed (expiry moved, cookie re-sent) at most this often. */
 export const SESSION_TOUCH_INTERVAL_MS = 300_000;
