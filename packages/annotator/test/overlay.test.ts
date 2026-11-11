@@ -96,8 +96,7 @@ test('pins never touch the page DOM', () => {
   expect(document.querySelectorAll('pinwall-overlay')).toHaveLength(1);
   const expected: [string, string][] = [
     ['position', 'absolute'],
-    ['width', '0px'],
-    ['height', '0px'],
+    ['overflow', 'clip'],
     ['pointer-events', 'none'],
     ['z-index', '2147483647'],
   ];
@@ -265,26 +264,95 @@ test('pins sit 12 px above-left of their anchors, in the overlay host coordinate
     { id: 'point', number: 3, anchor: pointAt(0.5, 0.1) },
     { id: 'corner', number: 4, anchor: pointAt(0, 0) },
   ]);
-  // Pin box = anchor - 12 - 11 (half the 22 px pin) - host origin, kept inside the document.
+  // Pin box = anchor - 12 - 11 (half the 22 px pin) - host origin, kept inside the document
+  // part the host covers (from its origin on).
   expect(['text', 'element', 'point', 'corner'].map((id) => boxOf(pinOf(id)))).toEqual([
     { left: '9px', top: '361px', width: '', height: '' },
     { left: '69px', top: '461px', width: '', height: '' },
     { left: '469px', top: '261px', width: '', height: '' },
-    { left: '-8px', top: '-16px', width: '', height: '' },
+    { left: '0px', top: '0px', width: '', height: '' },
   ]);
   const shadow = shadowOf(host);
+  expect([host.style.getPropertyValue('width'), host.style.getPropertyValue('height')]).toEqual([
+    '992px',
+    '2984px',
+  ]);
   expect(Array.from(shadow.querySelectorAll('.mark'), boxOf)).toEqual([
     { left: '32px', top: '384px', width: '30px', height: '16px' },
-    { left: '-8px', top: '400px', width: '45px', height: '16px' },
+    // The line box starts at document x 0, left of the host: cut at the host's edge.
+    { left: '0px', top: '400px', width: '37px', height: '16px' },
   ]);
   expect(Array.from(shadow.querySelectorAll('.outline'), boxOf)).toEqual([
     { left: '92px', top: '484px', width: '50px', height: '20px' },
   ]);
 });
 
-test('comment mode outlines what a click would pick', () => {
+test('nothing drawn reaches past the measured document, so the page never grows', () => {
   start();
-  stubLayout({ rects: [[el('#l'), { left: 100, top: 200, width: 50, height: 20 }]] });
+  const host = overlayHost();
+  stubLayout({
+    scrollWidth: 900,
+    scrollHeight: 2000,
+    rects: [
+      // Runs past the right and bottom edges of the document.
+      [el('#l'), { left: 850, top: 1990, width: 120, height: 30 }],
+      // Wholly outside it, as a slide of a clipped carousel is.
+      [el('#p1'), { left: 3000, top: 100, width: 200, height: 20 }],
+    ],
+    rangeRects: (range) =>
+      range.toString() === 'beta gamma'
+        ? [
+            { left: 880, top: 10, width: 60, height: 16 },
+            { left: 2000, top: 26, width: 40, height: 16 },
+          ]
+        : [],
+  });
+  showAnchors([
+    { id: 'text', number: 1, anchor: quoteAnchor('beta gamma') },
+    { id: 'element', number: 2, anchor: elementAt('#l') },
+    { id: 'far', number: 3, anchor: elementAt('#p1') },
+  ]);
+
+  // The host is the document's size and clips what it holds.
+  expect(host.style.getPropertyValue('overflow')).toBe('clip');
+  expect(host.style.getPropertyPriority('overflow')).toBe('important');
+  expect([host.style.getPropertyValue('width'), host.style.getPropertyValue('height')]).toEqual([
+    '900px',
+    '2000px',
+  ]);
+  const shadow = shadowOf(host);
+  expect(Array.from(shadow.querySelectorAll('.mark'), boxOf)).toEqual([
+    { left: '880px', top: '10px', width: '20px', height: '16px' },
+  ]);
+  expect(Array.from(shadow.querySelectorAll('.outline'), boxOf)).toEqual([
+    { left: '850px', top: '1990px', width: '50px', height: '10px' },
+  ]);
+  expect(boxOf(pinOf('far'))).toMatchObject({ left: '878px', top: '77px' });
+
+  setMode('comment');
+  el('#l').dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
+  const hover = shadow.querySelector('.hover');
+  expect(hover?.hasAttribute('data-on')).toBe(true);
+  expect(boxOf(hover ?? undefined)).toEqual({
+    left: '850px',
+    top: '1990px',
+    width: '50px',
+    height: '10px',
+  });
+  el('#p1').dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
+  expect(hover?.hasAttribute('data-on')).toBe(false);
+});
+
+test('comment mode outlines what a click would pick', async () => {
+  start();
+  stubLayout({
+    scrollWidth: 1000,
+    scrollHeight: 1000,
+    rects: [[el('#l'), { left: 100, top: 200, width: 50, height: 20 }]],
+  });
+  // The outline is cut to the document as the last layout measured it.
+  window.dispatchEvent(new Event('resize'));
+  await nextFrame();
   const hover = shadowOf(overlayHost()).querySelector('.hover');
   const move = (target: EventTarget) =>
     target.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
