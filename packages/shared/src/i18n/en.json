@@ -58,5 +58,17 @@
   "publish.archive.zip64": "ZIP64 archives are not supported. Send a tar.gz instead: tar -czf - -C <folder> .",
   "publish.archive.zipMethod": "{{path}} uses a ZIP compression method other than store or deflate.",
   "publish.archive.encrypted": "{{path}} is encrypted, and encrypted archives are not supported.",
-  "publish.warning.rootAbsolute": "{{file}} refers to {{url}} from the server root, which does not load in single-domain mode. Use a relative path."
+  "publish.warning.rootAbsolute": "{{file}} refers to {{url}} from the server root, which does not load in single-domain mode. Use a relative path.",
+  "publish.versionConflict": "The artifact has a newer version (v{{number}}) than the one this publish replaces. Fetch the artifact again and publish on top of v{{number}}.",
+  "project.defaultName": "Default",
+  "project.notFound": "This project does not exist.",
+  "project.archived": "This project is archived. Unarchive it or publish to another project.",
+  "project.defaultArchive": "The default project cannot be archived.",
+  "artifact.notFound": "This artifact does not exist.",
+  "artifact.gone": "This artifact was deleted.",
+  "artifact.untitled": "Untitled",
+  "artifact.badTags": "Use at most 20 tags of 1 to 40 characters each.",
+  "version.notFound": "This version does not exist.",
+  "version.gone": "This version was deleted.",
+  "version.restoredFrom": "Restored from v{{number}}"
 }

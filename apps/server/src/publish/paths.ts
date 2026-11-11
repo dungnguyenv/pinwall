@@ -112,7 +112,12 @@ export function chooseEntry(paths: readonly string[]): { entryPath: string; kind
   const entryPath =
     ENTRY_NAMES.find((name) => present.has(name)) ?? (paths.length === 1 ? paths[0] : undefined);
   if (entryPath === undefined) throw badRequest(t('publish.entry.none'), { reason: 'no_entry' });
-  return { entryPath, kind: entryPath.toLowerCase().endsWith('.md') ? 'markdown' : 'html' };
+  return { entryPath, kind: entryKind(entryPath) };
+}
+
+/** The kind of a version that opens on `entryPath`: `markdown` when it ends in `.md`. */
+export function entryKind(entryPath: string): ArtifactKind {
+  return entryPath.toLowerCase().endsWith('.md') ? 'markdown' : 'html';
 }
 
 /** C0 controls (U+0000–U+001F) and DEL. */
