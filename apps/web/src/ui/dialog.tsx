@@ -48,6 +48,8 @@ export function useReturnFocus() {
   const onCloseAutoFocus = useCallback((event: Event) => {
     const target = returnTo.current;
     returnTo.current = null;
+    // Someone already decided where focus goes (a page the dialog navigated to).
+    if (event.defaultPrevented) return;
     if (target?.isConnected) {
       event.preventDefault();
       target.focus({ preventScroll: true });
@@ -64,6 +66,7 @@ export function Dialog({
   size = 'md',
   footer,
   children,
+  onCloseAutoFocus,
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -72,6 +75,12 @@ export function Dialog({
   size?: DialogSize;
   footer?: ReactNode;
   children?: ReactNode;
+  /**
+   * Runs as the dialog closes, before focus goes back to the opener. Calling
+   * `event.preventDefault()` leaves focus alone, e.g. when the dialog opened a
+   * new page that focuses its own heading.
+   */
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   const { t } = useTranslation();
   const returnFocus = useReturnFocus();
@@ -82,7 +91,11 @@ export function Dialog({
         <RadixDialog.Overlay className={OVERLAY_CLASS}>
           <RadixDialog.Content
             className={panelClass(size)}
-            {...returnFocus}
+            onOpenAutoFocus={returnFocus.onOpenAutoFocus}
+            onCloseAutoFocus={(event) => {
+              onCloseAutoFocus?.(event);
+              returnFocus.onCloseAutoFocus(event);
+            }}
             // Without a description Radix expects the attribute to be cleared explicitly.
             {...(description ? {} : { 'aria-describedby': undefined })}
           >

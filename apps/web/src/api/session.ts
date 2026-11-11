@@ -48,9 +48,11 @@ export function useSignOut(): UseMutationResult<void, ApiError, void> {
   const navigate = useNavigate();
   return useMutation<void, ApiError, void>({
     mutationFn: signOut,
-    onSuccess: () => {
+    onSuccess: async () => {
+      // Leave the signed-in pages first, in one synchronous render, so none of
+      // them asks for its data again after the cache is emptied.
+      await navigate('/signin', { flushSync: true });
       queryClient.clear();
-      void navigate('/signin');
     },
   });
 }

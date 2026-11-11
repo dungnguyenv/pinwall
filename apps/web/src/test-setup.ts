@@ -53,6 +53,10 @@ if (typeof window.ResizeObserver !== 'function') {
   });
 }
 
+// jsdom has no layout and reports window.scrollTo as not implemented; the
+// router's scroll restoration calls it on every navigation.
+Object.defineProperty(window, 'scrollTo', { configurable: true, writable: true, value: () => {} });
+
 if (typeof Element.prototype.scrollIntoView !== 'function') {
   Element.prototype.scrollIntoView = () => {};
 }

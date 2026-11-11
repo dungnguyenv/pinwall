@@ -14,6 +14,8 @@ export type IconButtonProps = Omit<ButtonProps, 'children' | 'leadingIcon' | 'as
   shortcut?: string[];
   /** Set to false where a tooltip would only get in the way (a dialog's close button). */
   tooltip?: boolean;
+  /** Where the tooltip sits; 'right' for buttons along the left edge. */
+  tooltipSide?: 'top' | 'right' | 'bottom' | 'left';
 };
 
 const SQUARE: Record<ButtonSize, string> = {
@@ -28,6 +30,7 @@ export function IconButton({
   icon,
   shortcut,
   tooltip = true,
+  tooltipSide,
   variant = 'ghost',
   size = 'md',
   loading,
@@ -51,6 +54,7 @@ export function IconButton({
   if (!tooltip) return button;
   return (
     <Tooltip
+      side={tooltipSide}
       content={
         <>
           <span>{label}</span>
