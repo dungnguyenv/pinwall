@@ -51,6 +51,14 @@ export const CreateProjectRequest = z.object({
 });
 export type CreateProjectRequest = z.infer<typeof CreateProjectRequest>;
 
+/** Only the fields given change. `archived: true` archives, `false` brings the project back. */
+export const UpdateProjectRequest = z.object({
+  name: Label.optional(),
+  instructions: z.string().max(20_000).optional(),
+  archived: z.boolean().optional(),
+});
+export type UpdateProjectRequest = z.infer<typeof UpdateProjectRequest>;
+
 export const PublishWarning = z.object({
   code: z.literal('root_absolute_url'),
   file: z.string(),

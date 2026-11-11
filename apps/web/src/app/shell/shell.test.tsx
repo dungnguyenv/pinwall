@@ -23,11 +23,20 @@ const recentArtifacts = [
 
 afterEach(() => localStorage.clear());
 
-/** Serves the sidebar's lists. Returns the requests each list received. */
+/**
+ * Serves the sidebar's lists, and quietly what the pages behind it ask for: an
+ * empty artifact list and each listed project or recent artifact by id.
+ * Returns the requests each sidebar list received.
+ */
 function serveLibrary(
   o: { projects?: Project[]; archived?: Project[]; recent?: LibraryArtifact[] } = {},
 ) {
   const seen = { projects: 0, archived: 0, recent: 0 };
+  const allProjects = [
+    ...(o.projects ?? [defaultProject, launchSite]),
+    ...(o.archived ?? [oldSite]),
+  ];
+  const recent = o.recent ?? recentArtifacts;
   server.use(
     http.get(`${API}/projects`, ({ request }) => {
       const params = new URL(request.url).searchParams;
@@ -44,7 +53,20 @@ function serveLibrary(
     http.get(`${API}/artifacts/recent`, ({ request }) => {
       seen.recent += 1;
       expect(new URL(request.url).searchParams.get('limit')).toBe('8');
-      return HttpResponse.json(fx.page(o.recent ?? recentArtifacts));
+      return HttpResponse.json(fx.page(recent));
+    }),
+    http.get(`${API}/artifacts/:id`, ({ params }) => {
+      const artifact = recent.find((a) => a.id === params.id);
+      return artifact
+        ? HttpResponse.json(artifact)
+        : apiError(404, 'not_found', 'This artifact does not exist.');
+    }),
+    http.get(`${API}/artifacts`, () => HttpResponse.json(fx.page([]))),
+    http.get(`${API}/projects/:id`, ({ params }) => {
+      const project = allProjects.find((p) => p.id === params.id);
+      return project
+        ? HttpResponse.json(project)
+        : apiError(404, 'not_found', 'This project does not exist.');
     }),
   );
   return seen;
@@ -279,7 +301,10 @@ test('new project dialog creates a project and opens it', async () => {
   await waitFor(() => expect(router.state.location.pathname).toBe('/projects/prj_new'));
   expect(bodies).toEqual([{ name: 'Site', instructions: '' }]);
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-  expect(await screen.findByRole('link', { name: 'Site' })).toHaveAttribute('aria-current', 'page');
+  // The project page's code may still be loading; the link turns current once it shows.
+  await waitFor(() =>
+    expect(screen.getByRole('link', { name: 'Site' })).toHaveAttribute('aria-current', 'page'),
+  );
 
   // A server refusal is shown as the server worded it, and the dialog stays open.
   server.use(
@@ -303,7 +328,8 @@ test('search opens with mod+K, shows live results and goes to all results on Ent
   server.use(
     http.get(`${API}/artifacts`, ({ request }) => {
       const url = new URL(request.url);
-      searches.push(url.search);
+      // All artifacts, behind the dialog, lists without a term.
+      if (url.searchParams.has('q')) searches.push(url.search);
       const hits =
         url.searchParams.get('q') === 'chup'
           ? [fx.artifact({ id: 'art_1', name: 'Chụp ảnh cưới', project_id: 'prj_2' })]

@@ -24,7 +24,7 @@ export function EmptyState({
       >
         {icon}
       </div>
-      <p className="font-semibold text-fg text-md">{title}</p>
+      <p className="font-semibold text-fg text-md [overflow-wrap:anywhere]">{title}</p>
       {description ? <div className="mt-1 text-base text-fg-muted">{description}</div> : null}
       {action ? <div className="mt-5 flex flex-wrap justify-center gap-2">{action}</div> : null}
     </div>

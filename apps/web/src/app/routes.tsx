@@ -9,8 +9,20 @@ import { AppShell } from './shell/app-shell.tsx';
  * only the shell. AppShell shows a quiet skeleton while a page's chunk loads;
  * the sign-in and setup pages, outside the shell, show their own.
  */
-const PlaceholderPage = lazy(() =>
-  import('../pages/placeholder-page.tsx').then((m) => ({ default: m.PlaceholderPage })),
+const AllArtifactsPage = lazy(() =>
+  import('../pages/all-artifacts-page.tsx').then((m) => ({ default: m.AllArtifactsPage })),
+);
+const ProjectPage = lazy(() =>
+  import('../pages/project-page.tsx').then((m) => ({ default: m.ProjectPage })),
+);
+const SearchPage = lazy(() =>
+  import('../pages/search-page.tsx').then((m) => ({ default: m.SearchPage })),
+);
+const ArtifactPage = lazy(() =>
+  import('../pages/artifact/artifact-page.tsx').then((m) => ({ default: m.ArtifactPage })),
+);
+const NotFoundPage = lazy(() =>
+  import('../pages/not-found-page.tsx').then((m) => ({ default: m.NotFoundPage })),
 );
 const SignInPage = lazy(() =>
   import('../pages/auth/sign-in-page.tsx').then((m) => ({ default: m.SignInPage })),
@@ -52,7 +64,18 @@ export function buildRoutes(): RouteObject[] {
           <AppShell />
         </RequireAuth>
       ),
-      children: [{ path: '*', element: <PlaceholderPage /> }],
+      children: [
+        // A plain `/` rather than an index route, which would outrank any `/`
+        // route placed before this tree.
+        { path: '/', element: <AllArtifactsPage /> },
+        { path: 'projects/:projectId', element: <ProjectPage /> },
+        { path: 'search', element: <SearchPage /> },
+        // The review screen (M8) replaces this page on all three.
+        { path: 'a/:artifactId', element: <ArtifactPage /> },
+        { path: 'a/:artifactId/v/:n', element: <ArtifactPage /> },
+        { path: 'a/:artifactId/compare', element: <ArtifactPage /> },
+        { path: '*', element: <NotFoundPage /> },
+      ],
     },
   ];
 }

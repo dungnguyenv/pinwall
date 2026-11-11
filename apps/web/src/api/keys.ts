@@ -15,6 +15,10 @@ export interface ArtifactFilter {
  */
 export const qk = {
   me: ['me'] as const,
+  /** Both project lists, active and archived. */
+  projectLists: ['projects'] as const,
+  /** Every artifact list: filtered lists, Recent and searches. */
+  artifactLists: ['artifacts'] as const,
   publicConfig: ['config', 'public'] as const,
   setupCheck: (token: string) => ['setup', 'check', token] as const,
   projects: (archived: boolean) => ['projects', { archived }] as const,
