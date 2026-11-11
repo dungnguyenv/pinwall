@@ -9,7 +9,13 @@ import { beginRegistration, finishRegistration } from '../../src/auth/webauthn.t
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { hashSecret } from '../../src/lib/ids.ts';
-import { apiInit, createSignedInUser, sessionCookieFrom, setupOwner } from '../helpers/auth.ts';
+import {
+  apiInit,
+  createSignedInUser,
+  createUserToken,
+  sessionCookieFrom,
+  setupOwner,
+} from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 import { SoftAuthenticator } from '../helpers/soft-authenticator.ts';
@@ -28,7 +34,10 @@ describe.each(dialects)('owner sign-in on %s', (dialect) => {
     return ctx;
   }
 
-  const signIn = (pw: unknown, o: { cookie?: string; headers?: Record<string, string> } = {}) =>
+  const signIn = (
+    pw: unknown,
+    o: { cookie?: string; bearer?: string; headers?: Record<string, string> } = {},
+  ) =>
     ctx.request(
       '/api/v1/auth/password/sign-in',
       apiInit(ctx, { body: pw === undefined ? {} : { password: pw }, ...o }),
@@ -124,6 +133,23 @@ describe.each(dialects)('owner sign-in on %s', (dialect) => {
     expect(hashes).not.toContain(hashSecret(a.split('=')[1] ?? ''));
     expect(hashes).toEqual([hashSecret(b?.split('=')[1] ?? '')]);
     expect((await ctx.request('/api/v1/me', apiInit(ctx, { cookie: a }))).status).toBe(401);
+  });
+
+  test('a bearer request never has its session cookie read or ended', async () => {
+    await start();
+    const { me: owner, cookie: a } = await setupOwner(ctx, { password: PASSWORD });
+    const bearer = await createUserToken(ctx, owner.id);
+    const r = await signIn(PASSWORD, { bearer, cookie: a });
+    expect(r.status).toBe(200);
+    const b = sessionCookieFrom(r);
+    expect(b).not.toBeNull();
+
+    // The session the request carried is untouched; the sign-in made a second one.
+    const hashes = (await sessions()).map((s) => s.id_hash);
+    expect(hashes).toHaveLength(2);
+    expect(hashes).toContain(hashSecret(a.split('=')[1] ?? ''));
+    expect(hashes).toContain(hashSecret(b?.split('=')[1] ?? ''));
+    expect((await ctx.request('/api/v1/me', apiInit(ctx, { cookie: a }))).status).toBe(200);
   });
 
   test('passkey sign-in', async () => {
