@@ -46,6 +46,13 @@ test('tokens in paths never reach the log', () => {
     '/api/v1/share/:token/comments/cmt_1',
   );
   expect(loggablePath('/api/v1/share/share-secret/events')).toBe('/api/v1/share/:token/events');
+  // So does the consent page's API, with the id of a pending OAuth authorization.
+  expect(loggablePath('/api/v1/oauth/requests/consent-secret')).toBe(
+    '/api/v1/oauth/requests/:token',
+  );
+  expect(loggablePath('/api/v1/oauth/requests/consent-secret/decision')).toBe(
+    '/api/v1/oauth/requests/:token/decision',
+  );
   // Member routes hold ids, not secrets.
   expect(loggablePath('/api/v1/share-links/shr_1')).toBe('/api/v1/share-links/shr_1');
   expect(loggablePath('/api/v1/artifacts/art_1/share-links')).toBe(
