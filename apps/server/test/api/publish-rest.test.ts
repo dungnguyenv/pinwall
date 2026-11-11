@@ -524,6 +524,27 @@ describe.each(dialects)('publishing over REST on %s', (dialect) => {
     expect(await (await upload(behind)).json()).toMatchObject({ file_count: 2 });
   });
 
+  test('junk and parts not named file are drained, and field values are capped', async () => {
+    await start();
+    const form = new FormData();
+    form.append('target', '{}');
+    form.append('attachment', file('ignored', 'notes.txt'));
+    form.append('file', file('junk', '.DS_Store'));
+    form.append('file', file('<p>kept</p>', 'index.html'));
+    const r = await upload(form);
+    expect(r.status).toBe(201);
+    const result = PublishResult.parse(await r.json());
+    expect(await pathsOf(result.version_id)).toEqual(['index.html']);
+
+    const huge = new FormData();
+    huge.append('target', '{}');
+    huge.append('message', 'x'.repeat(65_537));
+    huge.append('file', file('<p>x</p>', 'index.html'));
+    const r2 = await upload(huge);
+    expect(r2.status).toBe(400);
+    expect(await errorOf(r2)).toEqual({ code: 'bad_request', message: t('publish.upload.form') });
+  });
+
   test('file names keep their Unicode', async () => {
     await start();
     const form = new FormData();
