@@ -13,7 +13,13 @@ import type { AppDeps } from '../../deps.ts';
 import { safeEqual } from '../../lib/crypto.ts';
 import { hashSecret } from '../../lib/ids.ts';
 import { hasAccess } from '../roles.ts';
-import { buildAuthParams, callbackUrl, classifyOidcError, oidcRuntime } from './client.ts';
+import {
+  buildAuthParams,
+  callbackUrl,
+  classifyOidcError,
+  oidcErrorCode,
+  oidcRuntime,
+} from './client.ts';
 import { identityFromClaims, type OidcIdentity } from './identity.ts';
 import { upsertOidcUser } from './users.ts';
 
@@ -64,8 +70,9 @@ export type CallbackOutcome =
 const pendingKey = (state: string) => `oidc:login:${hashSecret(state)}`;
 
 /**
- * The error for `failure`, logged as a warning with the failure class only: the cause may hold
- * the state, the nonce, a code or claims, none of which belong in a log.
+ * The error for `failure`, logged as a warning with the failure class and the cause's fixed
+ * error code only: the cause itself may hold the state, the nonce, a code or claims, none of
+ * which belong in a log.
  */
 function flowError(
   deps: AppDeps,
@@ -73,7 +80,8 @@ function flowError(
   returnTo: string,
   cause?: unknown,
 ): OidcFlowError {
-  deps.logger.warn({ failure }, 'oidc sign-in failed');
+  const code = cause === undefined ? {} : { code: oidcErrorCode(cause) };
+  deps.logger.warn({ failure, ...code }, 'oidc sign-in failed');
   return new OidcFlowError(failure, returnTo, cause === undefined ? undefined : { cause });
 }
 

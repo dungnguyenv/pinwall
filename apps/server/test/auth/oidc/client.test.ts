@@ -4,6 +4,7 @@ import {
   AuthorizationResponseError,
   authorizationCodeGrant,
   buildAuthorizationUrl,
+  ClientError,
   calculatePKCECodeChallenge,
   fetchUserInfo,
   ResponseBodyError,
@@ -18,6 +19,7 @@ import {
   callbackUrl,
   classifyOidcError,
   OIDC_HTTP_TIMEOUT_SECONDS,
+  oidcErrorCode,
   oidcRuntime,
 } from '../../../src/auth/oidc/client.ts';
 import { loadConfig } from '../../../src/config/load.ts';
@@ -360,6 +362,26 @@ test('transport and protocol failures are classified without an IdP', () => {
   expect(classifyOidcError(new DOMException('aborted', 'AbortError'))).toBe('unavailable');
   expect(classifyOidcError(new Error('boom'))).toBe('failed');
   expect(classifyOidcError('boom')).toBe('failed');
+});
+
+test('error codes for logs are fixed constants, never text from the IdP', () => {
+  const bodyError = (status: number, error: string) =>
+    new ResponseBodyError('error', { cause: { error }, response: new Response(null, { status }) });
+  const redirectError = (error: string) =>
+    new AuthorizationResponseError('error', { cause: new URLSearchParams({ error }) });
+  const refused = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:1'), {
+    code: 'ECONNREFUSED',
+  });
+
+  expect(oidcErrorCode(bodyError(401, 'invalid_client'))).toBe('invalid_client');
+  expect(oidcErrorCode(bodyError(400, 'not a <code> at all'))).toBe('OAUTH_RESPONSE_BODY_ERROR');
+  expect(oidcErrorCode(redirectError('access_denied'))).toBe('access_denied');
+  const nonConform = Object.assign(new ClientError('x'), { code: 'OAUTH_RESPONSE_IS_NOT_CONFORM' });
+  expect(oidcErrorCode(nonConform)).toBe('OAUTH_RESPONSE_IS_NOT_CONFORM');
+  expect(oidcErrorCode(new TypeError('fetch failed', { cause: refused }))).toBe('ECONNREFUSED');
+  expect(oidcErrorCode(new TypeError('fetch failed'))).toBe('TypeError');
+  expect(oidcErrorCode(new Error('rt-secret in the message'))).toBe('Error');
+  expect(oidcErrorCode('boom')).toBe('unknown');
 });
 
 test('a Google-like IdP has no groups claim', async () => {

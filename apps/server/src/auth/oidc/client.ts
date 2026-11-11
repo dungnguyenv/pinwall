@@ -15,7 +15,8 @@ import { newSecret } from '../../lib/ids.ts';
 
 /** Timeout of every request to the IdP: discovery, token, userinfo. */
 export const OIDC_HTTP_TIMEOUT_SECONDS = 10;
-const INLINE_RECHECK_TIMEOUT_MS = 5_000;
+/** How long a request waits for an inline re-check, unless a test shortens it. */
+export const INLINE_RECHECK_TIMEOUT_MS = 5_000;
 
 type OidcConfig = NonNullable<Config['oidc']>;
 
@@ -169,4 +170,27 @@ export function classifyOidcError(e: unknown): OidcErrorClass {
       : 'cancelled';
   }
   return isUnavailable(e) ? 'unavailable' : 'failed';
+}
+
+/** What a logged error code may look like: a constant, never free text. */
+const ERROR_CODE = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+const safeCode = (value: unknown): string | undefined =>
+  typeof value === 'string' && ERROR_CODE.test(value) ? value : undefined;
+
+/**
+ * A fixed code that names an OIDC failure in a log line: the OAuth `error` value the IdP sent
+ * (`invalid_client`), openid-client's code constant (`OAUTH_RESPONSE_IS_NOT_CONFORM`), the
+ * network error code (`ECONNREFUSED`), or else the error's class name. Never a message, an
+ * `error_description` or anything else that may carry a token, a code or a claim.
+ */
+export function oidcErrorCode(e: unknown): string {
+  if (e instanceof OidcDiscoveryError) return oidcErrorCode(e.cause);
+  if (e instanceof ResponseBodyError || e instanceof AuthorizationResponseError) {
+    return safeCode(e.error) ?? e.code;
+  }
+  // fetch rejects with a TypeError whose cause holds the network error code.
+  if (e instanceof TypeError) return safeCode((e.cause as { code?: unknown })?.code) ?? e.name;
+  if (e instanceof Error) return safeCode((e as { code?: unknown }).code) ?? e.name;
+  return 'unknown';
 }

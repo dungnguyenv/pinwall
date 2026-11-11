@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Me } from '@pinwall/shared';
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 import { publicUrl } from '../../../src/http/public-url.ts';
 import { FixedClock } from '../../../src/lib/clock.ts';
 import { t } from '../../../src/lib/i18n.ts';
@@ -330,6 +330,7 @@ describe.each(dialects)('OIDC sign-in on %s', (dialect) => {
 
   test('a refused token request is a failed page, an IdP 5xx an unavailable one', async () => {
     await start();
+    const warn = vi.spyOn(ctx.deps.logger, 'warn');
     const a = account();
     idp.failTokenRequests({ status: 400, error: 'invalid_grant' });
     const failed = await signInWithIdp(ctx, idp, { as: a.sub });
@@ -339,6 +340,12 @@ describe.each(dialects)('OIDC sign-in on %s', (dialect) => {
     const down = await signInWithIdp(ctx, idp, { as: a.sub });
     await expectPage(down, 502, t('oidc.unavailable.title', IDP));
     expect(await sessions()).toHaveLength(0);
+    // The log names each failure with a fixed error code, for the admin to look up. A 5xx has
+    // no OAuth error body that openid-client reads, so it is named by openid-client's code.
+    expect(warn.mock.calls.filter(([, message]) => message === 'oidc sign-in failed')).toEqual([
+      [{ failure: 'failed', code: 'invalid_grant' }, 'oidc sign-in failed'],
+      [{ failure: 'unavailable', code: 'OAUTH_RESPONSE_IS_NOT_CONFORM' }, 'oidc sign-in failed'],
+    ]);
   });
 
   test('an unreachable IdP is an HTML 502 page', async () => {

@@ -23,6 +23,12 @@ export interface TestIdpOptions {
   refreshTokens?: boolean;
 }
 
+export interface TokenFailure {
+  status: number;
+  error: string;
+  sub?: string;
+}
+
 export interface TestIdp {
   /** `http://127.0.0.1:<port>` */
   readonly issuer: string;
@@ -42,8 +48,11 @@ export interface TestIdp {
   setReachable(reachable: boolean): void;
   /** A delay before handling every request. */
   setLatency(ms: number): void;
-  /** The token endpoint answers this JSON error instead, until reset with null. */
-  failTokenRequests(failure: { status: number; error: string } | null): void;
+  /**
+   * The token endpoint answers this JSON error instead, until reset with null. With `sub`, only
+   * refresh grants of that account's refresh tokens fail.
+   */
+  failTokenRequests(failure: TokenFailure | null): void;
   /** The query of every request to the authorization endpoint, in order. */
   readonly authorizationRequests: URLSearchParams[];
   /** Token requests of this grant type, counted on arrival, also when dropped or failed. */
@@ -163,7 +172,7 @@ export async function startTestIdp(opts: TestIdpOptions = {}): Promise<TestIdp> 
   let cancelNext = false;
   let reachable = true;
   let latencyMs = 0;
-  let tokenFailure: { status: number; error: string } | null = null;
+  let tokenFailure: TokenFailure | null = null;
 
   const server = createServer();
   await new Promise<void>((resolve, reject) => {
@@ -275,22 +284,34 @@ export async function startTestIdp(opts: TestIdpOptions = {}): Promise<TestIdp> 
     });
   }
 
+  /** Whether `tokenFailure` applies to this token request body. */
+  function failsTokenRequest(form: URLSearchParams | undefined): boolean {
+    if (tokenFailure === null || form === undefined) return false;
+    if (tokenFailure.sub === undefined) return true;
+    // Opaque refresh tokens are stored under their own value, with the account they belong to.
+    const token = form.get('refresh_token');
+    if (form.get('grant_type') !== 'refresh_token' || token === null) return false;
+    return rows.get(`RefreshToken:${token}`)?.accountId === tokenFailure.sub;
+  }
+
   async function dispatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const { pathname, searchParams } = new URL(req.url ?? '/', issuer);
     const body = req.method === 'POST' ? await readBody(req) : undefined;
     if (pathname === '/auth') authorizationRequests.push(searchParams);
-    if (pathname === '/token' && body !== undefined) {
-      const grantType = new URLSearchParams(body.toString()).get('grant_type');
-      if (grantType === 'authorization_code' || grantType === 'refresh_token') {
-        tokenCounts[grantType] += 1;
-      }
+    const tokenForm =
+      pathname === '/token' && body !== undefined
+        ? new URLSearchParams(body.toString())
+        : undefined;
+    const grantType = tokenForm?.get('grant_type');
+    if (grantType === 'authorization_code' || grantType === 'refresh_token') {
+      tokenCounts[grantType] += 1;
     }
     if (!reachable) {
       req.socket.destroy();
       return;
     }
     if (latencyMs > 0) await sleep(latencyMs);
-    if (pathname === '/token' && tokenFailure !== null) {
+    if (tokenFailure !== null && failsTokenRequest(tokenForm)) {
       sendJson(res, tokenFailure.status, { error: tokenFailure.error });
     } else if (pathname.startsWith('/interaction/')) {
       await finishInteraction(req, res);
