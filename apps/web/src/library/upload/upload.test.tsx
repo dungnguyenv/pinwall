@@ -4,6 +4,8 @@ import { delay, HttpResponse, http } from 'msw';
 import { expect, onTestFinished, test, vi } from 'vitest';
 import type { ArtifactSummary, Project, PublishResult, PublishWarning } from '../../api/dto.ts';
 import i18n from '../../i18n.ts';
+import { formatBytes } from '../../lib/format.ts';
+import { sendUpload, type UploadProgress } from '../../lib/upload/send.ts';
 import { dir, fakeDrop, file, folderFile } from '../../test/fake-entries.ts';
 import { fx } from '../../test/fixtures.ts';
 import { artifactLink, serveArtifacts, serveSidebar } from '../../test/library.ts';
@@ -11,6 +13,12 @@ import { formParts } from '../../test/multipart.ts';
 import { renderRoute } from '../../test/render.tsx';
 import { API, apiError, server } from '../../test/server.ts';
 import { createUploadStore, UploadToast } from './upload-toast.tsx';
+
+// Calls through to the real thing; one test replaces it to hold an upload between phases.
+vi.mock('../../lib/upload/send.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/upload/send.ts')>();
+  return { ...actual, sendUpload: vi.fn(actual.sendUpload) };
+});
 
 const t = i18n.t.bind(i18n);
 const me = fx.me({ id: 'usr_1' });
@@ -298,9 +306,9 @@ test('a selection over the limit is refused without a request', async () => {
 
   dragAndDrop(fakeDrop([file('index.html', 1_500)]));
   const big = await findToast(t('web.upload.tooLarge', { size: '1.5 kB', max: '1 kB' }));
-  expect(within(big).getByRole('alert')).toHaveTextContent(
-    "This upload is 1.5 kB, over this Pinwall's limit of 1 kB per upload.",
-  );
+  expect(
+    within(big).getByText("This upload is 1.5 kB, over this Pinwall's limit of 1 kB per upload."),
+  ).toBeInTheDocument();
 
   dragAndDrop(fakeDrop([file('a.html'), file('b.css'), file('c.js')]));
   await findToast(t('web.upload.tooManyFiles', { max: '2' }));
@@ -326,8 +334,9 @@ test('a failed upload keeps its message until dismissed', async () => {
 
   dragAndDrop(fakeDrop([site()]));
   const toast = await findToast(message);
-  expect(within(toast).getByRole('alert')).toHaveTextContent(message);
   expect(within(toast).getByText(t('web.upload.failed', { name: 'site' }))).toBeInTheDocument();
+  // The toast sits in sonner's live region, which already announces it; an alert inside would read it twice.
+  expect(within(toast).queryByRole('alert')).not.toBeInTheDocument();
 
   act(() => {
     vi.advanceTimersByTime(10_000);
@@ -413,6 +422,104 @@ test('the upload toast shows bytes sent and cancels', async () => {
   act(() => store.set({ phase: 'processing', loaded: 1_000, total: 1_000 }));
   expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
   expect(screen.queryByRole('button', { name: t('web.common.cancel') })).not.toBeInTheDocument();
+});
+
+/**
+ * What a screen reader can read in `root`: its text, minus whatever is hidden
+ * from assistive technology.
+ */
+function announcedText(root: HTMLElement): string {
+  const read = (node: Node): string => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
+    if (!(node instanceof HTMLElement) || node.getAttribute('aria-hidden') === 'true') return '';
+    return Array.from(node.childNodes).map(read).join(' ');
+  };
+  return read(root).replace(/\s+/g, ' ').trim();
+}
+
+test('byte progress stays visible but is not read out; only phase changes are', () => {
+  const store = createUploadStore({ phase: 'preparing' });
+  const { container } = render(
+    <UploadToast
+      label="site"
+      store={store}
+      onCancel={() => {}}
+      onOpen={() => {}}
+      onClose={() => {}}
+    />,
+  );
+  const heard = () => announcedText(container);
+  expect(heard()).toContain(t('web.upload.phasePreparing', { name: 'site' }));
+  expect(screen.getByText(t('web.upload.preparing'))).toBeInTheDocument();
+
+  act(() => store.set({ phase: 'uploading', loaded: 0, total: 1_000_000 }));
+  const uploading = heard();
+  expect(uploading).toContain(t('web.upload.phaseUploading', { name: 'site' }));
+  expect(uploading).not.toContain(t('web.upload.phasePreparing', { name: 'site' }));
+  expect(uploading).not.toMatch(/bytes|kB|MB/);
+
+  // Every step of the progress is on screen, and none of it changes what is heard.
+  for (const loaded of [1_000, 50_000, 400_000, 999_000]) {
+    act(() => store.set({ phase: 'uploading', loaded, total: 1_000_000 }));
+    const visible = screen.getByText(
+      t('web.upload.uploading', { loaded: formatBytes(loaded), total: '1 MB' }),
+    );
+    expect(visible).toBeVisible();
+    expect(visible.closest('[aria-hidden="true"]')).not.toBeNull();
+    expect(heard()).toBe(uploading);
+  }
+
+  act(() => store.set({ phase: 'processing', loaded: 1_000_000, total: 1_000_000 }));
+  expect(heard()).toContain(t('web.upload.phasePublishing', { name: 'site' }));
+  expect(heard()).not.toContain(t('web.upload.phaseUploading', { name: 'site' }));
+  expect(screen.getByText(t('web.upload.processing'))).toBeInTheDocument();
+
+  act(() =>
+    store.set({
+      phase: 'published',
+      name: 'E2E Site',
+      number: 3,
+      href: '/a/art_9',
+      warnings: [],
+    }),
+  );
+  expect(heard()).toContain('Published “E2E Site” v3');
+
+  act(() => store.set({ phase: 'failed', message: 'The server said no.' }));
+  expect(heard()).toContain(t('web.upload.failed', { name: 'site' }));
+  expect(heard()).toContain('The server said no.');
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+
+test('an upload is preparing until the first byte goes, then uploading, then publishing', async () => {
+  const state = serveLibrary({ project: launchSite });
+  // The request is held back so the toast can be read between its phases.
+  let report: (p: UploadProgress) => void = () => {};
+  let finish: (result: PublishResult) => void = () => {};
+  vi.mocked(sendUpload).mockImplementationOnce((_form, o) => {
+    report = (p) => o.onProgress?.(p);
+    return new Promise<PublishResult>((resolve) => {
+      finish = resolve;
+    });
+  });
+  renderRoute('/projects/prj_2', { me });
+  await screen.findByRole('heading', { level: 1, name: 'Launch site' });
+
+  dragAndDrop(fakeDrop([site()]));
+  const toast = await findToast('site');
+  expect(announcedText(toast)).toContain(t('web.upload.phasePreparing', { name: 'site' }));
+  expect(within(toast).getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
+
+  act(() => report({ phase: 'uploading', loaded: 10, total: 100 }));
+  expect(announcedText(toast)).toContain(t('web.upload.phaseUploading', { name: 'site' }));
+  expect(announcedText(toast)).not.toContain(t('web.upload.phasePreparing', { name: 'site' }));
+
+  act(() => report({ phase: 'processing', loaded: 100, total: 100 }));
+  expect(announcedText(toast)).toContain(t('web.upload.phasePublishing', { name: 'site' }));
+
+  await act(async () => finish(published()));
+  expect(await findToast('Published “E2E Site” v1')).toBeInTheDocument();
+  expect(state.uploads).toEqual([]);
 });
 
 test('upload is disabled in an archived project', async () => {

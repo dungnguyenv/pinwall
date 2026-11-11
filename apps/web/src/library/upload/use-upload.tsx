@@ -45,10 +45,10 @@ function runUpload(
   note: string | undefined,
   { t, queryClient, navigate }: UploadContext,
 ): void {
-  const { label, bytes } = selectionStats(s);
+  const { label } = selectionStats(s);
   const id = nextUploadToastId();
   const controller = new AbortController();
-  const store = createUploadStore({ phase: 'uploading', loaded: 0, total: bytes });
+  const store = createUploadStore({ phase: 'preparing' });
 
   // Called again whenever the toast's size or lifetime changes, so sonner measures and times it anew.
   const show = (timing: { duration: number }, dismissible: boolean) =>

@@ -6,8 +6,12 @@ import { formatBytes } from '../../lib/format.ts';
 import type { UploadProgress } from '../../lib/upload/send.ts';
 import { Button, cn, IconButton, Spinner, toast } from '../../ui/index.ts';
 
-/** Where one upload is, from the first byte sent to the version it made or why it failed. */
+/**
+ * Where one upload is, from the request being made to the version it made or
+ * why it failed. `preparing` lasts until the first byte is on its way.
+ */
 export type UploadState =
+  | { phase: 'preparing' }
   | UploadProgress
   | { phase: 'published'; name: string; number: number; href: string; warnings: PublishWarning[] }
   | { phase: 'failed'; message: string };
@@ -67,6 +71,7 @@ function ProgressBar({ label, percent }: { label: string; percent: number | null
 
 function StatusIcon({ phase }: { phase: UploadState['phase'] }) {
   const icon = {
+    preparing: <Spinner className="text-fg-muted" />,
     uploading: <Upload className="text-accent-text" />,
     processing: <Spinner className="text-fg-muted" />,
     published: <CircleCheck className="text-success" />,
@@ -158,34 +163,60 @@ export function UploadToast({
     />
   );
 
+  /*
+   * Sonner's region reads out every text that appears or changes in a toast,
+   * so the bytes, which change many times a second, are hidden from assistive
+   * technology, and each busy phase gets one sentence that names the upload
+   * and stays the same until the phase does.
+   */
+  const phase = (sentence: string, visible: string, className?: string) => (
+    <p className={cn('text-fg-muted text-sm', className)}>
+      <span className="sr-only">{sentence}</span>
+      <span aria-hidden="true">{visible}</span>
+    </p>
+  );
+  const cancel = (
+    <Button variant="ghost" size="sm" onClick={onCancel} className="-my-1 -mr-2 h-7 px-2.5">
+      {t('web.common.cancel')}
+    </Button>
+  );
+
   switch (state.phase) {
+    case 'preparing':
+      title = label;
+      body = (
+        <>
+          {phase(t('web.upload.phasePreparing', { name: label }), t('web.upload.preparing'))}
+          <ProgressBar label={t('web.upload.progressLabel', { name: label })} percent={null} />
+        </>
+      );
+      actions = cancel;
+      break;
     case 'uploading': {
       const percent =
         state.total > 0 ? Math.min(100, Math.round((state.loaded / state.total) * 100)) : 0;
       title = label;
       body = (
         <>
-          <p className="text-fg-muted text-sm tabular-nums">
-            {t('web.upload.uploading', {
+          {phase(
+            t('web.upload.phaseUploading', { name: label }),
+            t('web.upload.uploading', {
               loaded: formatBytes(state.loaded),
               total: formatBytes(state.total),
-            })}
-          </p>
+            }),
+            'tabular-nums',
+          )}
           <ProgressBar label={t('web.upload.progressLabel', { name: label })} percent={percent} />
         </>
       );
-      actions = (
-        <Button variant="ghost" size="sm" onClick={onCancel} className="-my-1 -mr-2 h-7 px-2.5">
-          {t('web.common.cancel')}
-        </Button>
-      );
+      actions = cancel;
       break;
     }
     case 'processing':
       title = label;
       body = (
         <>
-          <p className="text-fg-muted text-sm">{t('web.upload.processing')}</p>
+          {phase(t('web.upload.phasePublishing', { name: label }), t('web.upload.processing'))}
           <ProgressBar label={t('web.upload.progressLabel', { name: label })} percent={null} />
         </>
       );
@@ -202,11 +233,8 @@ export function UploadToast({
       break;
     case 'failed':
       title = label ? t('web.upload.failed', { name: label }) : t('web.upload.nothingPublished');
-      body = (
-        <p role="alert" className="text-fg text-sm [overflow-wrap:anywhere]">
-          {state.message}
-        </p>
-      );
+      // Not role="alert": the toast is inside sonner's live region, which reads it out already.
+      body = <p className="text-fg text-sm [overflow-wrap:anywhere]">{state.message}</p>;
       actions = close;
       break;
   }
@@ -220,7 +248,9 @@ export function UploadToast({
           <p
             className={cn(
               'min-w-0 flex-1 font-medium text-fg',
-              state.phase === 'uploading' || state.phase === 'processing'
+              state.phase === 'preparing' ||
+                state.phase === 'uploading' ||
+                state.phase === 'processing'
                 ? 'truncate'
                 : '[overflow-wrap:anywhere]',
             )}
