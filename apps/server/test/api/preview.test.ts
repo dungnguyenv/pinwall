@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { ContentGrant } from '@pinwall/shared';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { annotatorTag } from '../../src/content/annotator-inject.ts';
 import { THUMBNAIL_CSP } from '../../src/content/raw-links.ts';
 import type { UserRow } from '../../src/db/schema.ts';
 import { listRecent } from '../../src/domain/artifacts.ts';
@@ -68,16 +69,21 @@ describe.each(cases)('previews and thumbnails on %s in %s mode', (dialect, mode,
       expect(grant.url).toMatch(/^https:\/\/[0-9a-hjkmnp-tv-z]{32}\.pw-content\.test\/$/);
     }
 
+    // A review grant adds the annotator tag (after the doctype here); a raw one serves the bytes.
     const served = await ctx.request(grant.url);
     expect(served.status).toBe(200);
-    expect(await served.text()).toBe(html);
+    expect(await served.text()).toBe(
+      html.replace('<!doctype html>', `<!doctype html>${annotatorTag(grant.url)}`),
+    );
 
     const raw = await preview(artifact.id, 1, '?mode=raw');
     expect(raw.status).toBe(200);
     const rawGrant = ContentGrant.parse(raw.body);
     expect(rawGrant.mode).toBe('raw');
     expect(rawGrant.url).not.toBe(grant.url);
-    expect((await ctx.request(rawGrant.url)).status).toBe(200);
+    const rawServed = await ctx.request(rawGrant.url);
+    expect(rawServed.status).toBe(200);
+    expect(await rawServed.text()).toBe(html);
 
     expect((await preview(artifact.id, 1, '?mode=other')).status).toBe(400);
     const anonymous = await ctx.request(`/api/v1/artifacts/${artifact.id}/versions/1/preview`);

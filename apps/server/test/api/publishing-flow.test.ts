@@ -7,6 +7,7 @@ import {
   VersionDiff,
 } from '@pinwall/shared';
 import { afterEach, describe, expect, test } from 'vitest';
+import { annotatorTag } from '../../src/content/annotator-inject.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { makeTar } from '../helpers/archives.ts';
 import { setupOwner } from '../helpers/auth.ts';
@@ -90,7 +91,8 @@ describe.each(dialects)('the M4 publishing flow on %s', (dialect) => {
     });
     const id = v1.artifact_id;
 
-    // 3. A review preview on the content host serves the page, and the folder redirects.
+    // 3. A review preview on the content host serves the page with the annotator tag after the
+    //    doctype, and the folder redirects.
     const previewed = await api.get(`/artifacts/${id}/versions/1/preview?mode=review`);
     expect(previewed.status).toBe(200);
     const grant = ContentGrant.parse(previewed.body);
@@ -99,13 +101,17 @@ describe.each(dialects)('the M4 publishing flow on %s', (dialect) => {
     const page = await ctx.request(grant.url);
     expect(page.status).toBe(200);
     expect(page.headers.get('content-type')).toBe('text/html; charset=utf-8');
-    expect(await page.text()).toBe(INDEX_V1);
+    const annotated = (html: string) =>
+      html.replace('<!doctype html>', `<!doctype html>${annotatorTag(grant.url)}`);
+    expect(await page.text()).toBe(annotated(INDEX_V1));
     const folder = await ctx.request(new URL('docs', grant.url).href);
     expect(folder.status).toBe(308);
     expect(new URL(folder.headers.get('location') ?? '', grant.url).href).toBe(
       new URL('docs/', grant.url).href,
     );
-    expect(await (await ctx.request(new URL('docs/', grant.url).href)).text()).toBe(DOCS);
+    expect(await (await ctx.request(new URL('docs/', grant.url).href)).text()).toBe(
+      annotated(DOCS),
+    );
     const video = await ctx.request(new URL('media/clip.mp4', grant.url).href);
     expect(video.headers.get('content-type')).toBe('video/mp4');
     expect(Buffer.from(await video.arrayBuffer()).equals(VIDEO)).toBe(true);

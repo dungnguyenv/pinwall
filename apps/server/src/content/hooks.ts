@@ -1,4 +1,6 @@
 import type { ContentGrantRow, VersionRow } from '../db/schema.ts';
+import { annotatorAsset } from './annotator-asset.ts';
+import { injectAnnotator } from './annotator-inject.ts';
 import { markdownCss } from './markdown-css.ts';
 
 const markdownCssBytes = Buffer.from(markdownCss);
@@ -27,11 +29,13 @@ export interface ContentHooks {
 }
 
 /**
- * The hooks `buildApp` mounts: the stylesheet of rendered Markdown pages under `__pinwall/`.
- * Review grants are served unmodified until a `transformReviewHtml` is set.
+ * The hooks `buildApp` mounts: the stylesheet of rendered Markdown pages and the annotator script
+ * under `__pinwall/`, and the annotator tag spliced into review grants' HTML pages.
  */
 export const contentHooks: ContentHooks = {
+  transformReviewHtml: injectAnnotator,
   reservedAssets: {
     'markdown.css': { contentType: 'text/css; charset=utf-8', body: () => markdownCssBytes },
+    'annotator.js': annotatorAsset,
   },
 };
