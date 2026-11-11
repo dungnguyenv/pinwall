@@ -39,7 +39,7 @@ export function AuthLayout({
 }) {
   return (
     <Frame wide={wide}>
-      <h1 className="text-balance text-center font-semibold text-2xl text-fg tracking-tight">
+      <h1 className="text-balance text-center font-semibold text-2xl text-fg tracking-tight wrap-anywhere">
         {title}
       </h1>
       {description ? (

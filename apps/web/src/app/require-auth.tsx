@@ -36,8 +36,16 @@ function SessionSkeleton() {
  * Renders `children` for a signed-in person. Without a session it sends them
  * to sign in with this page as `return_to`; that includes a session that ends
  * mid-use, because any 401 `unauthorized` sets the cached `me` to null.
+ * `skeleton` stands in while the session is checked. The default is the
+ * shell's outline; a page shown without the shell passes its own.
  */
-export function RequireAuth({ children }: { children: ReactNode }): ReactElement {
+export function RequireAuth({
+  children,
+  skeleton,
+}: {
+  children: ReactNode;
+  skeleton?: ReactElement;
+}): ReactElement {
   const { t } = useTranslation();
   const location = useLocation();
   const me = useMe();
@@ -54,7 +62,7 @@ export function RequireAuth({ children }: { children: ReactNode }): ReactElement
       </main>
     );
   }
-  return <SessionSkeleton />;
+  return skeleton ?? <SessionSkeleton />;
 }
 
 /** Renders `children` for admins; members are told the page is for admins. Use inside `RequireAuth`. */

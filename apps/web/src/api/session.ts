@@ -8,6 +8,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
+import { signInPath } from '../lib/return-to.ts';
 import { type ApiError, api, isApiError } from './client.ts';
 import { Me, PublicConfig } from './dto.ts';
 import { qk } from './keys.ts';
@@ -59,10 +60,14 @@ export function usePublicConfig(): UseQueryResult<PublicConfig, ApiError> {
   });
 }
 
-/** Signs out, forgets everything cached for this user, and opens the sign-in page. */
-export function useSignOut(): UseMutationResult<void, ApiError, void> {
+/**
+ * Signs out, forgets everything cached for this user, and opens the sign-in
+ * page. With `returnTo`, signing in again goes back there.
+ */
+export function useSignOut(o: { returnTo?: string } = {}): UseMutationResult<void, ApiError, void> {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { returnTo } = o;
   return useMutation<void, ApiError, void>({
     mutationFn: signOut,
     onSuccess: async () => {
@@ -70,7 +75,9 @@ export function useSignOut(): UseMutationResult<void, ApiError, void> {
       queryClient.setQueryData(qk.me, null);
       // Then leave the signed-in pages, in one synchronous render, so none of
       // them asks for its data again after the cache is emptied.
-      await navigate('/signin', { flushSync: true });
+      await navigate(returnTo === undefined ? '/signin' : signInPath(returnTo), {
+        flushSync: true,
+      });
       replaceSession(queryClient, null);
     },
   });

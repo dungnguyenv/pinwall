@@ -42,6 +42,12 @@ const SignInPage = lazy(() =>
 const SetupPage = lazy(() =>
   import('../pages/auth/setup-page.tsx').then((m) => ({ default: m.SetupPage })),
 );
+const ConnectPage = lazy(() =>
+  import('../pages/connect/connect-page.tsx').then((m) => ({ default: m.ConnectPage })),
+);
+const ConsentPage = lazy(() =>
+  import('../pages/oauth/consent-page.tsx').then((m) => ({ default: m.ConsentPage })),
+);
 
 function AuthRoute({ wide, children }: { wide?: boolean; children: ReactNode }) {
   return <Suspense fallback={<AuthPageFallback wide={wide} />}>{children}</Suspense>;
@@ -50,7 +56,8 @@ function AuthRoute({ wide, children }: { wide?: boolean; children: ReactNode }) 
 /**
  * The app's route tree. Pages open to everyone sit at the top level; every
  * other page is a child of the `RequireAuth` shell layout, so a signed-out
- * visit to any of them, known or not, goes to sign in and comes back.
+ * visit to any of them, known or not, goes to sign in and comes back. The
+ * OAuth consent page also needs a session, but stands alone without the shell.
  */
 export function buildRoutes(): RouteObject[] {
   return [
@@ -68,6 +75,16 @@ export function buildRoutes(): RouteObject[] {
         <AuthRoute wide>
           <SetupPage />
         </AuthRoute>
+      ),
+    },
+    {
+      path: '/oauth/consent',
+      element: (
+        <RequireAuth skeleton={<AuthPageFallback wide />}>
+          <AuthRoute wide>
+            <ConsentPage />
+          </AuthRoute>
+        </RequireAuth>
       ),
     },
     {
@@ -104,6 +121,7 @@ export function buildRoutes(): RouteObject[] {
             { path: 'tokens', element: <TokensPage /> },
           ],
         },
+        { path: 'connect', element: <ConnectPage /> },
         { path: '*', element: <NotFoundPage /> },
       ],
     },
