@@ -35,6 +35,29 @@ test('picks the occurrence whose context matches', () => {
   ).toBe(true);
 });
 
+test('a repeated phrase goes to the occurrence whose context matches once normalized', () => {
+  // v1 read "Price list. Total: 10 USD per year."; v2 states "10 USD" earlier too, and a formatter
+  // reflowed the occurrence the comment quotes.
+  const v2 = 'Pricing\n  Fee: 10 USD per month.\n  Total:\n      10 USD\n      per year.\n';
+  const quote = { exact: '10 USD', prefix: 'Price list. Total: ', suffix: ' per year.' };
+  expect(findQuote(v2, quote)?.start).toBe(v2.lastIndexOf('10 USD'));
+
+  // The quoted occurrence now has a no-break space; another one still has a plain space.
+  const nbsp = 'Fee: 10 USD per month. Total: 10\u00a0USD per year.';
+  const total = { exact: '10 USD', prefix: 'Total: ', suffix: ' per year.' };
+  expect(findQuote(nbsp, total)).toEqual({
+    start: nbsp.indexOf('10\u00a0USD'),
+    end: nbsp.indexOf('10\u00a0USD') + 6,
+  });
+
+  // The quoted occurrence's context is now in NFD; an unaccented one comes first.
+  document.body.innerHTML = `<p>Tong: 10 USD/nam.</p><p>${'Tổng: 10 USD/năm.'.normalize('NFD')}</p>`;
+  const nfd = place(anchorOf({ quote: { exact: '10 USD', prefix: 'Tổng: ', suffix: '/năm' } }));
+  expect(nfd.via === 'quote' && nfd.range.startContainer.parentElement).toBe(
+    document.querySelectorAll('p')[1],
+  );
+});
+
 test('falls back to whitespace-normalized matching', () => {
   document.body.innerHTML = '<p>Alpha beta\n      gamma delta</p>';
   const anchor = anchorOf({ quote: { exact: 'beta gamma', prefix: 'Alpha ', suffix: ' delta' } });

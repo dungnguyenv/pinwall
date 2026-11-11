@@ -1,6 +1,7 @@
 /**
- * Finding an anchor again, possibly on a later version of the page: by its quote (exact, then
- * with whitespace and Unicode normalized), then by its DOM path, else at its stored position.
+ * Finding an anchor again, possibly on a later version of the page: by its quote (its context
+ * weighed with whitespace and Unicode normalized), then by its DOM path, else at its stored
+ * position.
  */
 import type { Anchor, Quote } from '@pinwall/shared/protocol';
 import { isCssPath } from './css-path.ts';
@@ -33,16 +34,24 @@ function sharedAfter(text: string, start: number, suffix: string): number {
   return n;
 }
 
+/** Where a quote occurs in a text, and whether its context there matched in full. */
+interface Occurrence {
+  at: number;
+  perfect: boolean;
+}
+
 /**
- * The offset of the occurrence of `exact` in `text` whose surroundings best match `prefix` and
- * `suffix`; the first one on a tie. Null when there is none.
+ * The occurrence of `exact` in `text` whose surroundings best match `prefix` and `suffix`; the
+ * first one on a tie. With `gaps` (folded text, whose quote and context were trimmed), one space
+ * between the occurrence and each side of its context is skipped. Null when there is none.
  */
 function bestOccurrence(
   text: string,
   exact: string,
   prefix: string,
   suffix: string,
-): number | null {
+  gaps = false,
+): Occurrence | null {
   const perfect = prefix.length + suffix.length;
   let best: number | null = null;
   let bestScore = -1;
@@ -53,14 +62,18 @@ function bestOccurrence(
     at = text.indexOf(exact, at + 1)
   ) {
     seen++;
-    const score = sharedBefore(text, at, prefix) + sharedAfter(text, at + exact.length, suffix);
+    let before = at;
+    let after = at + exact.length;
+    if (gaps && text[before - 1] === ' ') before--;
+    if (gaps && text[after] === ' ') after++;
+    const score = sharedBefore(text, before, prefix) + sharedAfter(text, after, suffix);
     if (score > bestScore) {
       best = at;
       bestScore = score;
       if (score === perfect) break;
     }
   }
-  return best;
+  return best === null ? null : { at: best, perfect: bestScore === perfect };
 }
 
 /**
@@ -113,20 +126,26 @@ function foldPage(text: string): Folded {
 }
 
 /**
- * Where `q` sits in `text`: the occurrence of `q.exact` whose context best matches `q.prefix`
- * and `q.suffix`; failing that, the same search with whitespace runs collapsed and letters in
- * NFC on both sides, mapped back to offsets in `text`. Null when neither finds it.
+ * Where `q` sits in `text`. An exact occurrence of `q.exact` whose context matches `q.prefix` and
+ * `q.suffix` in full is taken at once. Otherwise every occurrence is weighed with whitespace runs
+ * collapsed and letters in NFC on both sides, quote and context alike, so a repeated phrase whose
+ * context a formatter reflowed (or gave a no-break space, or another Unicode form) still goes to
+ * the right occurrence; the match is mapped back to offsets in `text`. Null when there is none.
  */
 export function findQuote(text: string, q: Quote): { start: number; end: number } | null {
   if (q.exact === '') return null;
   const exact = bestOccurrence(text, q.exact, q.prefix, q.suffix);
-  if (exact !== null) return { start: exact, end: exact + q.exact.length };
+  const raw = exact === null ? null : { start: exact.at, end: exact.at + q.exact.length };
+  if (exact?.perfect) return raw;
 
   const needle = fold(q.exact).text.trim();
-  if (needle === '') return null;
+  if (needle === '') return raw;
   const page = foldPage(text);
-  const at = bestOccurrence(page.text, needle, fold(q.prefix).text, fold(q.suffix).text);
-  if (at === null) return null;
+  const prefix = fold(q.prefix).text.trimEnd();
+  const suffix = fold(q.suffix).text.trimStart();
+  const hit = bestOccurrence(page.text, needle, prefix, suffix, true);
+  if (hit === null) return raw;
+  const { at } = hit;
   const { origins } = page;
   const last = origins[at + needle.length - 1];
   let next = at + needle.length;
