@@ -11,7 +11,11 @@ import { RESERVED_DIR } from '../publish/paths.ts';
 import { type ContentErrorKind, renderContentErrorPage } from './error-page.ts';
 import { contentBaseUrl, type ResolvedGrant, resolveGrant } from './grants.ts';
 import type { ContentHooks } from './hooks.ts';
-import { renderMarkdownPage } from './markdown.ts';
+import {
+  MARKDOWN_RENDER_MAX_BYTES,
+  renderMarkdownPage,
+  renderMarkdownTooLargePage,
+} from './markdown.ts';
 import { isHtmlType, isMarkdownType } from './mime.ts';
 
 /** Single-domain mode: content runs in an opaque origin, never the app's (no allow-same-origin). */
@@ -33,11 +37,23 @@ const ERROR_STATUS: Record<ContentErrorKind, number> = {
 /** Directory requests try these, in order. */
 const INDEX_NAMES = ['index.html', 'index.md'] as const;
 
+/** What a content URL answers to; `OPTIONS` only as a CORS preflight. */
+const ALLOW = 'GET, HEAD, OPTIONS';
+
+/** A comma-separated list of header names, as `Access-Control-Request-Headers` carries it. */
+const HEADER_NAMES = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:[ \t]*,[ \t]*[!#$%&'*+.^_`|~0-9A-Za-z-]+)*$/;
+
 /**
  * The headers of every content response, errors and redirects included: nothing of the app's
  * (no `frame-ancestors`, no `X-Frame-Options`, no cookie). The sandbox policy is added in
  * single-domain mode, where content shares the app's origin. An error response (`status` 400 or
  * more) is never cached: the file, the grant or the blob it lacks may be back a moment later.
+ *
+ * Every response allows any origin to read it (CORS). A document sandboxed without
+ * `allow-same-origin` has an opaque origin, so its requests for its own files (module scripts,
+ * fonts, `fetch`) are cross-origin with `Origin: null`, and the browser would block them. The URL
+ * is the capability and content never reads cookies, so `*` lets nobody read more than what the
+ * URL already gives; credentials are never allowed.
  */
 export function contentHeaders(config: Config, status = 200): Record<string, string> {
   return {
@@ -45,6 +61,8 @@ export function contentHeaders(config: Config, status = 200): Record<string, str
       status >= 400 ? 'no-store, no-transform' : 'private, max-age=300, no-transform',
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Range, ETag',
     ...(config.isolation.mode === 'single-domain'
       ? { 'Content-Security-Policy': CONTENT_SANDBOX_CSP }
       : {}),
@@ -98,10 +116,39 @@ export function contentErrorResponse(c: Context<AppEnv>, kind: ContentErrorKind)
   return reply(c, ERROR_STATUS[kind], { 'Content-Type': HTML }, renderContentErrorPage(kind));
 }
 
-/** Allows GET and HEAD only, and turns anything `serve` throws into the content 500 page. */
+/** What an app page may open content as in single-domain mode: a page or a frame. */
+const APP_DESTINATIONS = new Set(['document', 'iframe', 'frame']);
+
+/**
+ * Whether an app page is loading content as a subresource of its own, in single-domain mode.
+ *
+ * There, content shares the app's origin, so the app's `script-src 'self'` would also let
+ * `<script src="/c/<token>/x.js">`, injected into any app page, run an artifact's JavaScript with
+ * the app's session; any member can host such a file. App pages must never load artifact code as
+ * a script, a stylesheet, a worker or through `fetch`. Fetch metadata tells these apart: the
+ * content's own loads come from its sandboxed, opaque origin and are `cross-site`; the review
+ * frame and a raw link opened from the app are `same-origin` with destination `iframe` or
+ * `document`; a typed URL is `none`. Any other `same-origin` request can only be an app page
+ * using artifact files as its own, and is refused. A request without these headers (an older
+ * browser, curl) is served: this is defense in depth behind the app's CSP.
+ */
+function isAppSubresource(c: Context<AppEnv>): boolean {
+  if (c.var.deps.config.isolation.mode !== 'single-domain') return false;
+  if (c.req.header('sec-fetch-site') !== 'same-origin') return false;
+  const destination = c.req.header('sec-fetch-dest');
+  return destination === undefined || !APP_DESTINATIONS.has(destination);
+}
+
+/**
+ * Refuses an app page's subresource load (403), serves GET and HEAD, answers a CORS preflight
+ * (`OPTIONS`), refuses other methods, and turns anything `serve` throws into the content 500
+ * page.
+ */
 async function guarded(c: Context<AppEnv>, serve: () => Promise<Response>): Promise<Response> {
+  if (isAppSubresource(c)) return reply(c, 403, {}, null);
+  if (c.req.method === 'OPTIONS') return preflight(c);
   if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
-    return reply(c, 405, { Allow: 'GET, HEAD' }, null);
+    return reply(c, 405, { Allow: ALLOW }, null);
   }
   try {
     return await serve();
@@ -117,6 +164,24 @@ async function guarded(c: Context<AppEnv>, serve: () => Promise<Response>): Prom
     );
     return contentErrorResponse(c, 'error');
   }
+}
+
+/**
+ * The answer to a CORS preflight: reading is allowed, with whatever request headers the page
+ * asks for (content ignores all but `Range` and the conditional ones, so allowing more grants
+ * nothing). It never looks the grant up: the request that follows does, and answers for it.
+ */
+function preflight(c: Context<AppEnv>): Response {
+  const headers: Record<string, string> = {
+    Allow: ALLOW,
+    'Access-Control-Allow-Methods': 'GET, HEAD',
+    Vary: 'Access-Control-Request-Headers',
+  };
+  const requested = c.req.header('access-control-request-headers')?.trim();
+  if (requested !== undefined && HEADER_NAMES.test(requested)) {
+    headers['Access-Control-Allow-Headers'] = requested;
+  }
+  return reply(c, 204, headers, null);
 }
 
 /** The grant, or the page that says why there is none (404, 410 gone, 410 expired). */
@@ -219,13 +284,17 @@ async function serveFile(
   const asPage =
     isMarkdownType(file.content_type) && !new URL(c.req.url).searchParams.has('source');
   if (asPage || (transform !== undefined && isHtmlType(file.content_type))) {
-    const stored = Buffer.concat(await (await deps.blobs.get(file.sha256)).toArray());
-    let body: Buffer = stored;
-    if (asPage) {
-      // The page's stylesheet link is relative to the URL it is requested at: the root of the
-      // grant for an entry in a folder, the file's own path otherwise.
-      const pagePath = requestPath === '' ? (file.path.split('/').at(-1) ?? file.path) : file.path;
-      body = Buffer.from(renderMarkdownPage(utf8.decode(stored), pagePath));
+    // The page's stylesheet link is relative to the URL it is requested at: the root of the
+    // grant for an entry in a folder, the file's own path otherwise.
+    const pagePath = requestPath === '' ? (file.path.split('/').at(-1) ?? file.path) : file.path;
+    let body: Buffer;
+    if (asPage && file.size > MARKDOWN_RENDER_MAX_BYTES) {
+      // Never read: a file of up to `PINWALL_MAX_FILE_BYTES`, escaped into a page, would cost
+      // several times its size in memory and block the event loop for every request.
+      body = Buffer.from(renderMarkdownTooLargePage(pagePath));
+    } else {
+      const stored = Buffer.concat(await (await deps.blobs.get(file.sha256)).toArray());
+      body = asPage ? Buffer.from(renderMarkdownPage(utf8.decode(stored), pagePath)) : stored;
     }
     if (transform !== undefined) {
       body = await transform(body, {

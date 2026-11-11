@@ -1,28 +1,27 @@
-import { request as httpRequest, type IncomingHttpHeaders, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { randomBytes } from 'node:crypto';
+import { request as httpRequest } from 'node:http';
 import { Readable } from 'node:stream';
-import { serve } from '@hono/node-server';
 import { PublishResult, PublishSession } from '@pinwall/shared';
 import { Hono } from 'hono';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { AppEnv } from '../../src/app.ts';
-import type { Config } from '../../src/config/types.ts';
+import { revokeAllCredentials } from '../../src/auth/revoke.ts';
+import { sessionCookieName } from '../../src/auth/session-cookie.ts';
+import { createSession } from '../../src/auth/sessions.ts';
 import type { UserRow } from '../../src/db/schema.ts';
 import { errorHandler } from '../../src/http/errors.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
+import { AppError } from '../../src/lib/errors.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { hashSecret } from '../../src/lib/ids.ts';
 import { type UploadReceipt, uploadCommands } from '../../src/publish/sessions.ts';
-import {
-  configureServerForUploads,
-  mountUploadRoute,
-  withIdleTimeout,
-} from '../../src/publish/upload-route.ts';
+import { mountUploadRoute, withIdleTimeout } from '../../src/publish/upload-route.ts';
 import { makeTar } from '../helpers/archives.ts';
 import { apiInit, createSignedInUser, createUserToken } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 import { publishFiles } from '../helpers/publish.ts';
+import { listen, socketPost, split } from '../helpers/socket.ts';
 
 const T = Date.UTC(2026, 10, 11);
 const URL_PATTERN = /^http:\/\/localhost:8080\/upload\/[A-Za-z0-9_-]{43}$/;
@@ -44,96 +43,6 @@ const site = (title = 'Hi') =>
 
 /** The path of an upload URL, for requests over a socket. */
 const pathOf = (url: string) => new URL(url).pathname;
-
-/**
- * Serves `app` on an ephemeral port of the loopback interface, with the server set up for
- * uploads as `pinwall serve` sets it up.
- */
-async function listen(
-  app: Hono<AppEnv>,
-  config: Config,
-): Promise<{ port: number; server: Server; close(): Promise<void> }> {
-  const server = await new Promise<Server>((resolve) => {
-    const s = serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' }, () =>
-      resolve(s as Server),
-    ) as Server;
-    configureServerForUploads(s, config);
-  });
-  const { port } = server.address() as AddressInfo;
-  return {
-    port,
-    server,
-    close: () =>
-      new Promise((resolve) => {
-        server.closeAllConnections();
-        server.close(() => resolve());
-      }),
-  };
-}
-
-interface SocketReply {
-  status: number;
-  headers: IncomingHttpHeaders;
-  json: unknown;
-  /** Whether the server sent `100 Continue`. */
-  continued: boolean;
-}
-
-/**
- * POSTs to `path` with `node:http`, as curl does: the body goes out in `chunks` (chunked unless a
- * Content-Length is given), after `100 Continue` when `Expect` asks for it. `stall` sends the
- * chunks and then neither ends nor closes the request. Resolves once the whole response body
- * has arrived; a reset after that does not matter, one before it fails the call.
- */
-function socketPost(
-  port: number,
-  path: string,
-  o: { headers: Record<string, string>; chunks: Buffer[]; gapMs?: number; stall?: boolean },
-): Promise<SocketReply> {
-  return new Promise((resolve, reject) => {
-    const req = httpRequest({ host: '127.0.0.1', port, path, method: 'POST', headers: o.headers });
-    let answered = false;
-    let continued = false;
-    req.on('continue', () => {
-      continued = true;
-    });
-    req.on('response', (res) => {
-      const parts: Buffer[] = [];
-      res.on('data', (part: Buffer) => parts.push(part));
-      res.on('end', () => {
-        answered = true;
-        const text = Buffer.concat(parts).toString('utf8');
-        const json: unknown = JSON.parse(text);
-        resolve({ status: res.statusCode ?? 0, headers: res.headers, json, continued });
-        req.destroy();
-      });
-      res.on('error', reject);
-    });
-    req.on('error', (error) => {
-      if (!answered) reject(error);
-    });
-    const send = async () => {
-      for (const chunk of o.chunks) {
-        if (req.destroyed) return;
-        req.write(chunk);
-        if (o.gapMs) await new Promise((r) => setTimeout(r, o.gapMs));
-      }
-      if (!o.stall && !req.destroyed) req.end();
-    };
-    if (o.headers.expect === '100-continue') req.on('continue', () => void send());
-    else void send();
-  });
-}
-
-/** `buf` cut into `n` chunks of about the same size. */
-function split(buf: Buffer, n: number): Buffer[] {
-  const size = Math.ceil(buf.length / n);
-  const chunks: Buffer[] = [];
-  for (let start = 0; start < buf.length; start += size) {
-    chunks.push(buf.subarray(start, start + size));
-  }
-  return chunks;
-}
 
 /** curl's headers for `--data-binary @-`. */
 const CURL_HEADERS = {
@@ -164,7 +73,14 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
     );
 
   async function newSession(body: unknown = { target: {} }): Promise<PublishSession> {
-    const r = await create(body);
+    return newSessionFor(member.cookie, body);
+  }
+
+  async function newSessionFor(
+    cookie: string,
+    body: unknown = { target: {} },
+  ): Promise<PublishSession> {
+    const r = await create(body, { cookie });
     expect(r.status, await r.clone().text()).toBe(201);
     return PublishSession.parse(await r.json());
   }
@@ -668,6 +584,66 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
     expect(await versions()).toHaveLength(1);
   });
 
+  test('Revoke now ends the upload URLs a user has not used yet', async () => {
+    await start();
+    const first = await newSession();
+    const second = await newSession({ target: { name: 'Other' } });
+    const other = await createSignedInUser(ctx, { kind: 'oidc', name: 'Minh' });
+    const kept = await newSessionFor(other.cookie);
+
+    await revokeAllCredentials(ctx.deps, member.user.id);
+    for (const s of [first, second]) {
+      const r = await put(s.upload_url, await site());
+      expect(r.status).toBe(404);
+      expect(await errorOf(r)).toEqual({
+        code: 'not_found',
+        message: t('publish.session.unknown'),
+      });
+    }
+    expect(await versions()).toEqual([]);
+    // Another user's URL is untouched, and once signed in again the user can get a new one.
+    expect((await put(kept.upload_url, await site())).status).toBe(201);
+    const { secret } = await createSession(ctx.deps, member.user.id, 'password', {
+      ip: '127.0.0.1',
+      userAgent: 'vitest',
+    });
+    const fresh = await newSessionFor(`${sessionCookieName(ctx.deps.config)}=${secret}`);
+    expect((await put(fresh.upload_url, await site())).status).toBe(201);
+  });
+
+  test('an upload that fails after its user was revoked does not give its URL back', async () => {
+    await start();
+    const s = await newSession();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const bad = await makeTar([{ name: '../x', body: 'x' }]);
+    const slow = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(bad.subarray(0, 100));
+        await gate;
+        controller.enqueue(bad.subarray(100));
+        controller.close();
+      },
+    });
+    const running = put(s.upload_url, slow);
+    const token = s.upload_url.slice(s.upload_url.lastIndexOf('/') + 1);
+    await vi.waitFor(async () => {
+      const receipt = await ctx.deps.oneTime.peek<UploadReceipt>(
+        `upload-receipt:${hashSecret(token)}`,
+      );
+      expect(receipt?.state).toBe('running');
+    });
+
+    await revokeAllCredentials(ctx.deps, member.user.id);
+    release();
+    expect((await running).status).toBe(400);
+    const r = await put(s.upload_url, await site());
+    expect(r.status).toBe(404);
+    expect(await versions()).toEqual([]);
+  });
+
   describe('a client that stops sending', () => {
     /** The app's upload route alone, with an idle timeout of `idleMs`. */
     function uploadApp(idleMs: number): Hono<AppEnv> {
@@ -715,6 +691,105 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
       expect((await put(s.upload_url, await site())).status).toBe(201);
     });
 
+    test('a stall after sniffing is 408 for a tar.gz being read and for a single file', async () => {
+      await start();
+      // Random bytes do not compress, so half of the gzip is half of the archive.
+      const tgz = await makeTar(
+        [
+          { name: 'a.css', body: 'p{}' },
+          { name: 'b.bin', body: randomBytes(65_536) },
+        ],
+        { gzip: true },
+      );
+      const cases: { headers: Record<string, string>; query: string; body: Buffer }[] = [
+        { headers: { 'content-type': 'application/gzip' }, query: '', body: tgz },
+        { headers: {}, query: '?filename=big.bin', body: randomBytes(65_536) },
+      ];
+      for (const { headers, query, body } of cases) {
+        const s = await newSession();
+        const server = await listen(uploadApp(300), ctx.deps.config);
+        try {
+          const reply = await socketPost(server.port, `${pathOf(s.upload_url)}${query}`, {
+            headers: { ...headers, 'transfer-encoding': 'chunked' },
+            chunks: [body.subarray(0, body.length / 2)],
+            stall: true,
+          });
+          expect(reply.status, query).toBe(408);
+          expect(reply.json).toMatchObject({
+            error: { code: 'request_timeout', message: t('publish.upload.idle', { seconds: 1 }) },
+          });
+        } finally {
+          await server.close();
+        }
+        expect(await storedBlobs()).toEqual([]);
+        expect(await versions()).toEqual([]);
+      }
+    });
+
+    test('a client that goes away mid-body gets a 400, never a 500, and leaves no blobs', async () => {
+      await start();
+      const tgz = await makeTar(
+        [
+          { name: 'a.css', body: 'p{}' },
+          { name: 'b.bin', body: randomBytes(65_536) },
+        ],
+        { gzip: true },
+      );
+      const cases: { headers: Record<string, string>; query: string; body: Buffer }[] = [
+        { headers: { 'content-type': 'application/gzip' }, query: '', body: tgz },
+        { headers: {}, query: '?filename=big.bin', body: randomBytes(65_536) },
+      ];
+      const blobRows = () => ctx.deps.db.db.selectFrom('blobs').select('sha256').execute();
+      for (const { headers, query, body } of cases) {
+        const s = await newSession();
+        // What earlier cases published: the retry at the end of each one.
+        const before = { objects: await storedBlobs(), rows: await blobRows() };
+        const server = await listen(ctx.app, ctx.deps.config);
+        const errors = vi.spyOn(ctx.deps.logger, 'error');
+        const info = vi.spyOn(ctx.deps.logger, 'info');
+        const stored = vi.spyOn(ctx.deps.blobs, 'put');
+        const receipt = () =>
+          ctx.deps.oneTime.peek<UploadReceipt>(
+            `upload-receipt:${hashSecret(s.upload_url.slice(s.upload_url.lastIndexOf('/') + 1))}`,
+          );
+        try {
+          const req = httpRequest({
+            host: '127.0.0.1',
+            port: server.port,
+            path: `${pathOf(s.upload_url)}${query}`,
+            method: 'POST',
+            headers: { ...headers, 'transfer-encoding': 'chunked' },
+          });
+          req.on('error', () => {});
+          req.write(body.subarray(0, body.length / 2));
+          await vi.waitFor(async () => expect((await receipt())?.state).toBe('running'));
+          // The client vanishes once the server is past sniffing: mid-archive with a.css
+          // stored, or holding part of the single file.
+          if (query === '') await vi.waitFor(() => expect(stored).toHaveBeenCalled());
+          else await new Promise((r) => setTimeout(r, 50));
+          req.destroy();
+          // The failed upload hands its URL back.
+          await vi.waitFor(async () => expect((await receipt())?.state).toBe('open'));
+          await vi.waitFor(() =>
+            expect(info).toHaveBeenCalledWith(
+              expect.objectContaining({ path: '/upload/:token', status: 400 }),
+              'request',
+            ),
+          );
+          expect(errors).not.toHaveBeenCalled();
+        } finally {
+          errors.mockRestore();
+          info.mockRestore();
+          stored.mockRestore();
+          await server.close();
+        }
+        expect({ objects: await storedBlobs(), rows: await blobRows() }).toEqual(before);
+        const published = (await versions()).length;
+        expect((await put(s.upload_url, await site())).status).toBe(201);
+        expect(await versions()).toHaveLength(published + 1);
+      }
+    });
+
     test('a slow but steady upload is not cut off', async () => {
       await start();
       const s = await newSession();
@@ -734,31 +809,59 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
 });
 
 describe('withIdleTimeout', () => {
-  const idle = () => new Error('idle');
+  /** What reading `stream` to its end fails with. */
+  async function failureOf(stream: Readable): Promise<unknown> {
+    try {
+      for await (const _ of stream) {
+        // keep reading
+      }
+    } catch (error) {
+      return error;
+    }
+    throw new Error('expected the stream to fail');
+  }
 
   test('passes every byte through and ends', async () => {
-    const guarded = withIdleTimeout(Readable.from([Buffer.from('ab'), Buffer.from('c')]), 50, idle);
+    const guarded = withIdleTimeout(Readable.from([Buffer.from('ab'), Buffer.from('c')]), 50);
     const parts: Buffer[] = [];
     for await (const part of guarded) parts.push(part as Buffer);
     expect(Buffer.concat(parts).toString()).toBe('abc');
   });
 
-  test('fails when nothing arrives while the reader waits', async () => {
+  test('fails with the 408 when nothing arrives while the reader waits', async () => {
     const source = new Readable({ read() {} });
     source.push(Buffer.from('a'));
-    const guarded = withIdleTimeout(source, 50, idle);
-    const read = (async () => {
-      for await (const _ of guarded) {
-        // keep waiting
-      }
-    })();
-    await expect(read).rejects.toThrow('idle');
+    const error = await failureOf(withIdleTimeout(source, 1_500));
+    expect(error).toBeInstanceOf(AppError);
+    expect(error).toMatchObject({
+      code: 'request_timeout',
+      status: 408,
+      message: t('publish.upload.idle', { seconds: 2 }),
+      details: { idle_timeout_seconds: 2 },
+    });
     expect(source.destroyed).toBe(true);
+  });
+
+  test('a body that fails or closes before its end is an interrupted upload (400)', async () => {
+    const interrupted = {
+      code: 'bad_request',
+      status: 400,
+      message: t('publish.upload.interrupted'),
+    };
+    const failing = new Readable({ read() {} });
+    const guarded = withIdleTimeout(failing, 1_000);
+    setTimeout(() => failing.destroy(new Error('aborted')), 10);
+    expect(await failureOf(guarded)).toMatchObject(interrupted);
+
+    const closing = new Readable({ read() {} });
+    closing.push(Buffer.from('a'));
+    setTimeout(() => closing.destroy(), 10);
+    expect(await failureOf(withIdleTimeout(closing, 1_000))).toMatchObject(interrupted);
   });
 
   test('time the reader spends on what it has does not count', async () => {
     const chunks = Array.from({ length: 64 }, () => Buffer.alloc(16_384, 1));
-    const guarded = withIdleTimeout(Readable.from(chunks), 50, idle);
+    const guarded = withIdleTimeout(Readable.from(chunks), 50);
     let total = 0;
     for await (const part of guarded) {
       total += (part as Buffer).length;
@@ -770,7 +873,7 @@ describe('withIdleTimeout', () => {
 
   test('destroying it destroys the source', () => {
     const source = new Readable({ read() {} });
-    withIdleTimeout(source, 50, idle).destroy();
+    withIdleTimeout(source, 50).destroy();
     expect(source.destroyed).toBe(true);
   });
 });

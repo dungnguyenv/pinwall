@@ -187,6 +187,29 @@ function renderToc(headings: readonly Heading[]): string {
  */
 export function renderMarkdownPage(src: string, pagePath: string): string {
   const { html, headings, title } = renderMarkdown(src);
+  return pageDocument(
+    pagePath,
+    title,
+    `${renderToc(headings)}<article class="pw-md-body">${html}</article>`,
+  );
+}
+
+/**
+ * The page served for a Markdown file over `MARKDOWN_RENDER_MAX_BYTES`, made without reading the
+ * file: a notice and a link to the stored file. The link is `?source`, relative to the page's own
+ * URL, so it names the same file at the grant's root, at a directory and at the file's path.
+ * `pagePath` is as for `renderMarkdownPage`; its last segment is the title.
+ */
+export function renderMarkdownTooLargePage(pagePath: string): string {
+  const notice = t('content.markdownTooLargePage', { limit: MARKDOWN_RENDER_MAX_BYTES / 1000 });
+  const body =
+    `<article class="pw-md-body"><p class="pw-md-notice" role="note">${escapeHtml(notice)} ` +
+    `<a href="?source">${escapeHtml(t('content.markdownSource'))}</a></p></article>`;
+  return pageDocument(pagePath, null, body);
+}
+
+/** The document around a page's body: its title (else the last segment of `pagePath`) and stylesheet. */
+function pageDocument(pagePath: string, title: string | null, body: string): string {
   const segments = pagePath.split('/');
   const stylesheet = `${'../'.repeat(segments.length - 1)}${MARKDOWN_CSS_PATH}`;
   const pageTitle = title ?? segments.at(-1) ?? '';
@@ -196,6 +219,6 @@ export function renderMarkdownPage(src: string, pagePath: string): string {
     '<meta name="color-scheme" content="light dark">' +
     `<title>${escapeHtml(pageTitle)}</title>` +
     `<link rel="stylesheet" href="${escapeHtml(stylesheet)}"></head>` +
-    `<body><div class="pw-md">${renderToc(headings)}<article class="pw-md-body">${html}</article></div></body></html>`
+    `<body><div class="pw-md">${body}</div></body></html>`
   );
 }

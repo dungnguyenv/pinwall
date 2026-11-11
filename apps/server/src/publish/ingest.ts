@@ -119,6 +119,62 @@ export async function ingestFiles(
   });
 }
 
+/** Where a publish whose files arrive one after another puts each of them. */
+export interface FileSink {
+  /**
+   * Stores `body` under `path`, normalized as an archive member's path; macOS junk and folders
+   * are drained instead.
+   */
+  file(path: string, body: Readable): Promise<void>;
+  /** Unpacks `body`, a tar, tar.gz or zip told by its bytes (415 for anything else). */
+  archive(body: Readable): Promise<void>;
+}
+
+/**
+ * Publishes files that arrive one after another as streams, such as the parts of a web upload:
+ * `readFiles` hands each to the sink as it comes, and the version is committed once it resolves.
+ * Only the file being stored is held in memory. `budget` must be the one that counts the
+ * request's bytes (`countRequestBytes`), so every limit holds while the files stream. The target
+ * is checked before the first file is read. On failure `destroyInput` runs and the blobs this
+ * publish added that nothing else uses are removed. One folder wrapping every file is removed.
+ */
+export async function ingestStreamed(
+  deps: AppDeps,
+  target: PublishTarget,
+  opts: PublishOptions,
+  budget: IngestBudget,
+  destroyInput: () => void,
+  readFiles: (sink: FileSink) => Promise<void>,
+): Promise<PublishOutcome> {
+  try {
+    await checkTarget(deps, target);
+  } catch (error) {
+    destroyInput();
+    throw error;
+  }
+  return ingest(deps, target, opts, budget, destroyInput, async (stager) => {
+    const paths = new Set<string>();
+    await readFiles({
+      file: async (path, body) => {
+        const normalized = normalizeEntryPath(path);
+        if ('skip' in normalized) {
+          body.resume();
+          return;
+        }
+        claimPath(paths, normalized.path);
+        await stager.stage(normalized.path, body, null);
+      },
+      archive: async (body) => {
+        const { head, whole } = await peek(body, SNIFF_BYTES);
+        const format = sniffArchive(head);
+        if (format === null) throw unsupportedMediaType(t('publish.unsupported'));
+        await readArchive(whole, format, budget, (entry) => stageEntry(stager, paths, entry));
+      },
+    });
+    return { unwrap: true };
+  });
+}
+
 /**
  * Publishes text files given as strings (HTML, Markdown, CSS, JavaScript, SVG, JSON and other
  * text types), up to `maxInlineBytes` of UTF-8 in all, then as `ingestFiles` does.
@@ -270,7 +326,7 @@ async function readHead(blobs: BlobStore, sha256: string, length: number): Promi
  * `body` passed through a counter of request bytes, which fails with the 413 as soon as the
  * upload limit is crossed. An error on either side destroys both.
  */
-function countRequestBytes(body: Readable, budget: IngestBudget): Readable {
+export function countRequestBytes(body: Readable, budget: IngestBudget): Readable {
   const counter = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
       try {

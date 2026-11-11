@@ -5,8 +5,10 @@ import type { MigrationDb } from './index.ts';
 
 /**
  * Publishing (M4): the `tombstones` table, which lets deleted artifacts, content grants and share
- * links answer 410 instead of 404, and an index on `version_files(sha256)` so blob garbage
- * collection can ask cheaply whether any version still references a blob.
+ * links answer 410 instead of 404; an index on `version_files(sha256)` so blob garbage
+ * collection can ask cheaply whether any version still references a blob; and
+ * `content_grants.user_id`, the person a grant was made for, so revoking their credentials ends
+ * their grants too (null for a share link's guest).
  */
 export async function up(db: MigrationDb, dialect: DbDialect): Promise<void> {
   const big = bigintCol({ dialect });
@@ -33,5 +35,16 @@ export async function up(db: MigrationDb, dialect: DbDialect): Promise<void> {
     .createIndex('version_files_sha256_idx')
     .on('version_files')
     .column('sha256')
+    .execute();
+
+  // SQLite adds a column with a foreign key only when it may be null, as this one is.
+  await db.schema
+    .alterTable('content_grants')
+    .addColumn('user_id', 'text', (c) => c.references('users.id').onDelete('cascade'))
+    .execute();
+  await db.schema
+    .createIndex('content_grants_user_id_idx')
+    .on('content_grants')
+    .column('user_id')
     .execute();
 }

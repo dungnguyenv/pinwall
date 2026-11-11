@@ -7,11 +7,27 @@ import { makeTar, makeZip } from '../helpers/archives.ts';
 import { apiInit, createSignedInUser, createUserToken } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
+import { listen, socketPost, split } from '../helpers/socket.ts';
 
 const T = Date.UTC(2026, 10, 11);
 
 interface ErrorJson {
   error: { code: string; message: string; details?: Record<string, unknown> };
+}
+
+const BOUNDARY = 'pinwall-test-form';
+
+/** One multipart part as a browser writes it, followed by the line end before the next. */
+function part(
+  p: { name: string; value: string } | { name: string; filename: string; body: string | Buffer },
+): Buffer {
+  const head =
+    'filename' in p
+      ? `--${BOUNDARY}\r\nContent-Disposition: form-data; name="${p.name}"; filename="${p.filename}"\r\n` +
+        'Content-Type: application/octet-stream\r\n\r\n'
+      : `--${BOUNDARY}\r\nContent-Disposition: form-data; name="${p.name}"\r\n\r\n`;
+  const body = 'filename' in p ? p.body : p.value;
+  return Buffer.concat([Buffer.from(head), Buffer.from(body), Buffer.from('\r\n')]);
 }
 
 describe.each(dialects)('publishing over REST on %s', (dialect) => {
@@ -33,18 +49,41 @@ describe.each(dialects)('publishing over REST on %s', (dialect) => {
       ),
     );
 
-  /** Posts `form` to the web upload route with the member's cookie from the app's own origin. */
-  const upload = (form: FormData, o: { origin?: string; cookie?: string } = {}) =>
-    ctx.request('/api/v1/publish/upload', {
+  /**
+   * Posts `form` to the web upload route with the member's cookie from the app's own origin, as
+   * the bytes a browser sends. (undici's own stream of a FormData body throws when the server
+   * stops reading it early, which the upload route does on purpose.)
+   */
+  const upload = async (form: FormData, o: { origin?: string; cookie?: string } = {}) => {
+    const encoded = new Response(form);
+    return ctx.request('/api/v1/publish/upload', {
       method: 'POST',
-      body: form,
+      body: Buffer.from(await encoded.arrayBuffer()),
       headers: {
         cookie: o.cookie ?? member.cookie,
         origin: o.origin ?? ctx.deps.config.publicOrigin,
+        'content-type': encoded.headers.get('content-type') ?? '',
       },
     });
+  };
 
   const errorOf = async (r: Response) => ((await r.json()) as ErrorJson).error;
+
+  /** The headers a browser sends with a form from the app's own origin, chunked. */
+  const formHeaders = () => ({
+    cookie: member.cookie,
+    origin: ctx.deps.config.publicOrigin,
+    'content-type': `multipart/form-data; boundary=${BOUNDARY}`,
+    'transfer-encoding': 'chunked',
+  });
+
+  const versions = () => ctx.deps.db.db.selectFrom('versions').selectAll().execute();
+
+  async function storedBlobs(): Promise<{ rows: unknown[]; objects: string[] }> {
+    const objects: string[] = [];
+    for await (const key of ctx.deps.blobs.list()) objects.push(key);
+    return { rows: await ctx.deps.db.db.selectFrom('blobs').selectAll().execute(), objects };
+  }
 
   const versionRow = (id: string) =>
     ctx.deps.db.db
@@ -324,6 +363,197 @@ describe.each(dialects)('publishing over REST on %s', (dialect) => {
       code: 'payload_too_large',
       details: { limit: 'max_upload_bytes', max: 10000 },
     });
+  });
+
+  test('a web upload is refused at its first extra file, before the body ends', async () => {
+    await start({ PINWALL_MAX_FILES: '3' });
+    const server = await listen(ctx.app, ctx.deps.config);
+    try {
+      // The fourth file part arrives, then the browser keeps the request open.
+      const reply = await socketPost(server.port, '/api/v1/publish/upload', {
+        headers: formHeaders(),
+        chunks: [
+          part({ name: 'target', value: '{}' }),
+          ...['index.html', 'a.css', 'b.js', 'c.txt'].map((filename) =>
+            part({ name: 'file', filename, body: `/* ${filename} */` }),
+          ),
+        ],
+        stall: true,
+      });
+      expect(reply.status).toBe(413);
+      expect(reply.json).toMatchObject({
+        error: { code: 'payload_too_large', details: { limit: 'max_files', max: 3 } },
+      });
+    } finally {
+      await server.close();
+    }
+    expect(await versions()).toEqual([]);
+    expect(await storedBlobs()).toEqual({ rows: [], objects: [] });
+  });
+
+  test('a file over the per-file limit is refused while it streams, leaving no blobs', async () => {
+    await start({ PINWALL_MAX_FILE_BYTES: '10000' });
+    const server = await listen(ctx.app, ctx.deps.config);
+    try {
+      // index.html is stored whole; big.bin goes past the limit and never ends.
+      const reply = await socketPost(server.port, '/api/v1/publish/upload', {
+        headers: formHeaders(),
+        chunks: [
+          part({ name: 'target', value: '{}' }),
+          part({ name: 'file', filename: 'index.html', body: '<p>x</p>' }),
+          part({ name: 'file', filename: 'big.bin', body: Buffer.alloc(20_000, 1) }).subarray(
+            0,
+            -100,
+          ),
+        ],
+        stall: true,
+      });
+      expect(reply.status).toBe(413);
+      expect(reply.json).toMatchObject({
+        error: { details: { limit: 'max_file_bytes', max: 10000, path: 'big.bin' } },
+      });
+    } finally {
+      await server.close();
+    }
+    expect(await versions()).toEqual([]);
+    expect(await storedBlobs()).toEqual({ rows: [], objects: [] });
+  });
+
+  test('a declared length over the upload limit is refused before the body is read', async () => {
+    await start({ PINWALL_MAX_UPLOAD_BYTES: '10000' });
+    const server = await listen(ctx.app, ctx.deps.config);
+    try {
+      const { 'transfer-encoding': _, ...headers } = formHeaders();
+      const reply = await socketPost(server.port, '/api/v1/publish/upload', {
+        headers: { ...headers, 'content-length': '10001' },
+        chunks: [part({ name: 'target', value: '{}' })],
+        stall: true,
+      });
+      expect(reply.status).toBe(413);
+      expect(reply.json).toMatchObject({
+        error: { details: { limit: 'max_upload_bytes', max: 10000 } },
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('a web upload streams over a real socket', async () => {
+    await start();
+    const server = await listen(ctx.app, ctx.deps.config);
+    try {
+      const body = Buffer.concat([
+        part({ name: 'target', value: '{"name":"Streamed"}' }),
+        part({ name: 'message', value: 'Gửi từ trình duyệt' }),
+        part({ name: 'path', value: 'site/index.html' }),
+        part({ name: 'file', filename: 'index.html', body: '<title>Báo cáo</title>' }),
+        part({ name: 'path', value: 'site/img/logo.png' }),
+        part({ name: 'file', filename: 'logo.png', body: Buffer.alloc(50_000, 7) }),
+        Buffer.from(`--${BOUNDARY}--\r\n`),
+      ]);
+      const reply = await socketPost(server.port, '/api/v1/publish/upload', {
+        headers: formHeaders(),
+        chunks: split(body, 13),
+      });
+      expect(reply.status).toBe(201);
+      const result = PublishResult.parse(reply.json);
+      expect(result).toMatchObject({ entry_path: 'index.html', file_count: 2 });
+      expect(await pathsOf(result.version_id)).toEqual(['img/logo.png', 'index.html']);
+      expect(await versionRow(result.version_id)).toMatchObject({
+        message: 'Gửi từ trình duyệt',
+        title: 'Báo cáo',
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('the target and message come before the files, and paths go with every file or none', async () => {
+    await start();
+    const late = new FormData();
+    late.append('file', file('<p>a</p>', 'index.html'));
+    late.append('target', '{}');
+    expect(await errorOf(await upload(late))).toEqual({
+      code: 'bad_request',
+      message: t('publish.upload.form'),
+    });
+
+    const lateMessage = new FormData();
+    lateMessage.append('target', '{}');
+    lateMessage.append('file', file('<p>a</p>', 'index.html'));
+    lateMessage.append('message', 'too late');
+    expect((await upload(lateMessage)).status).toBe(400);
+
+    const mixed = new FormData();
+    mixed.append('target', '{}');
+    mixed.append('path', 'index.html');
+    mixed.append('file', file('<p>a</p>', 'index.html'));
+    mixed.append('file', file('p{}', 'a.css'));
+    expect(await errorOf(await upload(mixed))).toMatchObject({ message: t('publish.upload.form') });
+
+    const trailingPath = new FormData();
+    trailingPath.append('target', '{}');
+    trailingPath.append('path', 'index.html');
+    trailingPath.append('file', file('<p>a</p>', 'index.html'));
+    trailingPath.append('path', 'a.css');
+    expect((await upload(trailingPath)).status).toBe(400);
+    expect(await versions()).toEqual([]);
+  });
+
+  test('an archive part is unpacked only as the one file of the form', async () => {
+    await start();
+    const zip = makeZip([{ name: 'index.html', body: '<p>z</p>' }]);
+    const two = new FormData();
+    two.append('target', '{}');
+    two.append('file', file(zip, 'site.zip'));
+    two.append('file', file('<p>b</p>', 'b.html'));
+    const r = await upload(two);
+    expect(r.status).toBe(400);
+    expect(await errorOf(r)).toEqual({
+      code: 'bad_request',
+      message: t('publish.upload.archiveAlone'),
+    });
+    expect(await versions()).toEqual([]);
+    expect(await storedBlobs()).toEqual({ rows: [], objects: [] });
+
+    // Behind another file, or with paths, archives are plain files.
+    const behind = new FormData();
+    behind.append('target', '{}');
+    behind.append('file', file('<p>a</p>', 'index.html'));
+    behind.append('file', file(zip, 'site.zip'));
+    expect(await (await upload(behind)).json()).toMatchObject({ file_count: 2 });
+  });
+
+  test('junk and parts not named file are drained, and field values are capped', async () => {
+    await start();
+    const form = new FormData();
+    form.append('target', '{}');
+    form.append('attachment', file('ignored', 'notes.txt'));
+    form.append('file', file('junk', '.DS_Store'));
+    form.append('file', file('<p>kept</p>', 'index.html'));
+    const r = await upload(form);
+    expect(r.status).toBe(201);
+    const result = PublishResult.parse(await r.json());
+    expect(await pathsOf(result.version_id)).toEqual(['index.html']);
+
+    const huge = new FormData();
+    huge.append('target', '{}');
+    huge.append('message', 'x'.repeat(65_537));
+    huge.append('file', file('<p>x</p>', 'index.html'));
+    const r2 = await upload(huge);
+    expect(r2.status).toBe(400);
+    expect(await errorOf(r2)).toEqual({ code: 'bad_request', message: t('publish.upload.form') });
+  });
+
+  test('file names keep their Unicode', async () => {
+    await start();
+    const form = new FormData();
+    form.append('target', '{}');
+    form.append('file', file('<p>x</p>', 'Báo cáo điện thoại.html'));
+    const r = await upload(form);
+    expect(r.status).toBe(201);
+    const result = PublishResult.parse(await r.json());
+    expect(await pathsOf(result.version_id)).toEqual(['Báo cáo điện thoại.html']);
   });
 
   test('the routes are in the OpenAPI document', async () => {

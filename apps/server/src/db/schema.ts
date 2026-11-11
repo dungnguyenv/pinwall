@@ -219,6 +219,12 @@ export interface ContentGrantsTable {
   version_id: string;
   mode: ContentGrantMode;
   share_link_id: string | null;
+  /**
+   * The signed-in person the grant was made for (migration `0002_publishing`): revoking their
+   * credentials deletes it, and it stops serving while they have no access. Null for a share
+   * link's guest.
+   */
+  user_id: string | null;
   created_at: Fixed<number>;
   expires_at: number;
 }
