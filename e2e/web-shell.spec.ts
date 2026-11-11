@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import AxeBuilder from '@axe-core/playwright';
@@ -304,4 +304,49 @@ test('the app loads under its own content security policy without a violation', 
 
   expect(violations).toEqual([]);
   expect(problems).toEqual([]);
+});
+
+test('a picked folder is asked about its hidden files, and never sends .git', async ({ page }) => {
+  expect(made.projectId, 'the walk above creates the project').toBeTruthy();
+  const folder = await mkdtemp(join(tmpdir(), 'pinwall-e2e-hidden-'));
+  try {
+    await mkdir(join(folder, '.git'));
+    await writeFile(
+      join(folder, 'index.html'),
+      '<!doctype html><html lang="en"><title>Hidden Files Site</title><h1>Hello</h1></html>',
+    );
+    await writeFile(join(folder, '.env'), 'TOKEN=not-for-publishing\n');
+    await writeFile(join(folder, '.git', 'config'), '[remote "origin"]\n');
+    await writeFile(join(folder, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+
+    await signInWithPassword(page);
+    await page.goto(`/projects/${made.projectId}`);
+    await page.getByRole('button', { name: 'Upload', exact: true }).click();
+    const [chooser] = await Promise.all([
+      page.waitForEvent('filechooser'),
+      page
+        .getByRole('dialog', { name: `Upload to ${PROJECT_NAME}` })
+        .getByRole('button', { name: 'Choose a folder' })
+        .click(),
+    ]);
+    await chooser.setFiles(folder);
+
+    // Nothing is sent yet: the question lists .env and not the .git files, with Skip focused.
+    const question = page.getByRole('dialog', { name: 'Include hidden files?' });
+    await expect(question).toBeVisible();
+    await expect(question.getByRole('listitem')).toHaveText([/\.env$/]);
+    // The upload dialog has finished closing, and its closing did not take the focus back.
+    await expect(
+      page.getByRole('dialog', { name: `Upload to ${PROJECT_NAME}`, includeHidden: true }),
+    ).toHaveCount(0);
+    await expect(question.getByRole('button', { name: 'Skip hidden files' })).toBeFocused();
+    expect((await axe(page)).violations).toEqual([]);
+
+    await question.getByRole('button', { name: 'Skip hidden files' }).click();
+    await expect(page.getByText('Published “Hidden Files Site” v1')).toBeVisible();
+    await expect(page.getByText('2 files in version-control folders')).toBeVisible();
+    await expect(page.getByText('1 hidden file was left out.')).toBeVisible();
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
 });
