@@ -302,7 +302,7 @@ function parseRange(
 }
 
 /** Whether `If-None-Match` names `etag`, compared weakly (RFC 9110 §13.1.2), or is `*`. */
-function noneMatch(header: string | undefined, etag: string): boolean {
+export function noneMatch(header: string | undefined, etag: string): boolean {
   if (header === undefined) return false;
   if (header.trim() === '*') return true;
   return header.split(',').some((tag) => tag.trim().replace(/^W\//, '') === etag);

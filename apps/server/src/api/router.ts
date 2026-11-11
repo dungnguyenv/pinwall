@@ -8,6 +8,7 @@ import { registerAdminUserRoutes } from './admin-users.ts';
 import { registerArtifactRoutes } from './artifacts.ts';
 import { registerAuthRoutes } from './auth.ts';
 import { registerConfigRoutes } from './config.ts';
+import { registerContentRoutes } from './content.ts';
 import { registerMeRoutes } from './me.ts';
 import { registerProjectRoutes } from './projects.ts';
 import { registerPublishRoutes } from './publish.ts';
@@ -70,6 +71,7 @@ export function buildApiRouter(): OpenAPIHono<AppEnv> {
   registerProjectRoutes(api);
   registerArtifactRoutes(api);
   registerVersionRoutes(api);
+  registerContentRoutes(api);
 
   return api;
 }

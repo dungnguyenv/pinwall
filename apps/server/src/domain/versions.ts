@@ -232,6 +232,20 @@ export async function getVersionByNumber(
   throw issued ? gone(t('version.gone')) : notFound(t('version.notFound'));
 }
 
+/**
+ * The current version of `artifact`. Every artifact has one; a read that raced the artifact's
+ * deletion finds none and answers 410, as the artifact would a moment later.
+ */
+export async function getCurrentVersion(db: Db, artifact: ArtifactRow): Promise<VersionRow> {
+  const id = artifact.current_version_id;
+  const version =
+    id === null
+      ? undefined
+      : await db.selectFrom('versions').selectAll().where('id', '=', id).executeTakeFirst();
+  if (version === undefined) throw gone(t('artifact.gone'));
+  return version;
+}
+
 /** The new artifact's name: the given one, else the title, else the entry's file name. */
 function artifactName(given: string | null, meta: VersionMetadata, entryPath: string): string {
   const basename = entryPath.slice(entryPath.lastIndexOf('/') + 1);

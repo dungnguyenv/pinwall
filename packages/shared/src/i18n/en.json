@@ -87,6 +87,7 @@
   "artifact.gone": "This artifact was deleted.",
   "artifact.untitled": "Untitled",
   "artifact.badTags": "Use at most 20 tags of 1 to 40 characters each.",
+  "artifact.noThumbnail": "This artifact has no thumbnail image.",
   "version.notFound": "This version does not exist.",
   "version.gone": "This version was deleted.",
   "version.restoredFrom": "Restored from v{{number}}",

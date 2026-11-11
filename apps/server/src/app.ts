@@ -4,6 +4,7 @@ import { buildOidcRouter } from './auth/oidc/routes.ts';
 import { resolveAuth } from './auth/resolve.ts';
 import { bearerResolvers } from './auth/resolvers.ts';
 import { type ContentHooks, contentHooks } from './content/hooks.ts';
+import { mountRawLinks } from './content/raw-links.ts';
 import { mountContent } from './content/routes.ts';
 import type { UserRow } from './db/schema.ts';
 import type { AppDeps } from './deps.ts';
@@ -108,6 +109,8 @@ export function buildApp(deps: AppDeps, opts: { contentHooks?: ContentHooks } = 
   // The upload token is its only credential: no origin check, no cookie or bearer auth.
   mountUploadRoute(app);
   app.route('/auth/oidc', buildOidcRouter());
+  // `/a/:id/raw` and `/a/:id/v/:n/raw` take a cookie or a bearer token; the SPA owns `/a/:id`.
+  mountRawLinks(app);
 
   mountSpa(app, deps.config.webDir ?? defaultWebDir(), deps.logger);
 

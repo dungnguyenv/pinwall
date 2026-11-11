@@ -78,6 +78,51 @@ export function isRasterImage(contentType: string): boolean {
   return RASTER_TYPES.has(mediaType(contentType));
 }
 
+/** How many leading bytes of a file `hasRasterSignature` looks at. */
+export const RASTER_SIGNATURE_BYTES = 64;
+
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const JPEG_SIGNATURE = Buffer.from([0xff, 0xd8, 0xff]);
+
+/**
+ * Whether `head`, the first bytes of a file (`RASTER_SIGNATURE_BYTES` are enough), starts the way
+ * the raster image type `contentType` says it does. A file named `.png` that holds HTML, SVG or
+ * any other kind of image is false, and so is every type `isRasterImage` refuses.
+ */
+export function hasRasterSignature(contentType: string, head: Buffer): boolean {
+  const ascii = (start: number, end: number) => head.subarray(start, end).toString('latin1');
+  switch (mediaType(contentType)) {
+    case 'image/png':
+      return head.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE);
+    case 'image/jpeg':
+      return head.subarray(0, JPEG_SIGNATURE.length).equals(JPEG_SIGNATURE);
+    case 'image/gif':
+      return ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a';
+    case 'image/webp':
+      return ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP';
+    case 'image/avif':
+      return isAvif(head);
+    default:
+      return false;
+  }
+}
+
+/**
+ * An ISO media file whose leading `ftyp` box names `avif` (image) or `avis` (sequence) as its
+ * major brand or one of its compatible brands. The box is size, `ftyp`, major brand, minor
+ * version, then the compatible brands, four bytes each.
+ */
+function isAvif(head: Buffer): boolean {
+  if (head.length < 16 || head.subarray(4, 8).toString('latin1') !== 'ftyp') return false;
+  const boxSize = head.readUInt32BE(0);
+  if (boxSize < 16) return false;
+  const brands = [head.subarray(8, 12).toString('latin1')];
+  for (let at = 16; at + 4 <= Math.min(boxSize, head.length); at += 4) {
+    brands.push(head.subarray(at, at + 4).toString('latin1'));
+  }
+  return brands.some((brand) => brand === 'avif' || brand === 'avis');
+}
+
 /** `type/subtype` without parameters, lower-cased. */
 function mediaType(contentType: string): string {
   return (contentType.split(';', 1)[0] ?? '').trim().toLowerCase();
