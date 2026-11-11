@@ -18,3 +18,6 @@ export function formatBytes(n: number): string {
   }
   return `${oneDecimal(value)} ${UNITS[unit]}`;
 }
+
+/** `text` on one line: every run of whitespace, line breaks included, becomes one space. */
+export const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim();

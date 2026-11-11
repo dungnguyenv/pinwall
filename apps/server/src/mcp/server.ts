@@ -4,6 +4,7 @@ import packageJson from '../../package.json' with { type: 'json' };
 import type { AppEnv, AuthContext } from '../app.ts';
 import type { AppDeps } from '../deps.ts';
 import { registerIdentityTools } from './tools/identity.ts';
+import { libraryTools } from './tools/library.ts';
 
 /** What every tool of one `/mcp` request acts with: the caller, resolved before the server exists. */
 export interface ToolContext {
@@ -44,7 +45,7 @@ export const SERVER_INSTRUCTIONS = [
 /** Registers one group of tools on a request's server, closing over that request's caller. */
 export type ToolModule = (server: McpServer, ctx: ToolContext) => void;
 
-const TOOL_MODULES: readonly ToolModule[] = [registerIdentityTools];
+const TOOL_MODULES: readonly ToolModule[] = [registerIdentityTools, libraryTools];
 
 /**
  * A fresh MCP server for one `/mcp` request (the endpoint is stateless), with every tool bound
