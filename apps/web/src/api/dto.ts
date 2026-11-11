@@ -67,6 +67,36 @@ export const PublishWarning = z.object({
 });
 export type PublishWarning = z.infer<typeof PublishWarning>;
 
+/**
+ * Where a publish goes: a new version on top of the one the publisher saw, or
+ * a new artifact (by default in the default project, named after its entry
+ * page's title). M4's schema also refuses lone surrogates in the names.
+ */
+export const PublishTargetInput = z.union([
+  z.strictObject({ artifact_id: z.string(), expected_version_id: z.string() }),
+  z.strictObject({
+    project_id: z.string().nullable().optional(),
+    name: z.string().trim().min(1).max(200).optional(),
+    tags: z.array(z.string()).max(20).optional(),
+  }),
+]);
+export type PublishTargetInput = z.infer<typeof PublishTargetInput>;
+
+/** The version a publish made, with the links to hand to people. */
+export const PublishResult = z.object({
+  artifact_id: z.string(),
+  version_id: z.string(),
+  version_number: z.number().int(),
+  kind: z.enum(['html', 'markdown']),
+  entry_path: z.string(),
+  file_count: z.number().int(),
+  total_bytes: z.number().int(),
+  review_url: z.string(),
+  raw_url: z.string(),
+  warnings: z.array(PublishWarning),
+});
+export type PublishResult = z.infer<typeof PublishResult>;
+
 export const VersionSummary = z.object({
   id: z.string(),
   number: z.number().int(),

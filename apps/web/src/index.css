@@ -61,6 +61,8 @@
   --animate-drawer-in: pw-drawer-in var(--duration-base) var(--ease-out) both;
   --animate-drawer-out: pw-drawer-out var(--duration-fast) ease-in both;
   --animate-shimmer: pw-shimmer 2.2s ease-in-out infinite;
+  --animate-indeterminate: pw-indeterminate 1.4s var(--ease-out) infinite;
+  --animate-pin-drop: pw-pin-drop calc(var(--duration-base) * 1.75) var(--ease-out) both;
 
   @keyframes pw-fade-in {
     from {
@@ -118,6 +120,29 @@
   @keyframes pw-drawer-out {
     to {
       transform: translateX(-100%);
+    }
+  }
+  /* Work of unknown length: a short bar crosses its track and starts again. */
+  @keyframes pw-indeterminate {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(250%);
+    }
+  }
+  /* The pin comes down and presses in, as files are about to be pinned up. */
+  @keyframes pw-pin-drop {
+    from {
+      opacity: 0;
+      transform: translateY(-18px) rotate(-10deg);
+    }
+    65% {
+      opacity: 1;
+      transform: translateY(3px) rotate(2deg);
+    }
+    to {
+      transform: none;
     }
   }
   /* One slow sweep, then a rest: calmer than a constant shimmer. */

@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
+import { toast } from 'sonner';
 import { afterAll, afterEach, beforeAll } from 'vitest';
 import i18n from './i18n.ts';
 import { server } from './test/server.ts';
@@ -66,8 +67,14 @@ if (typeof Element.prototype.hasPointerCapture !== 'function') {
 if (typeof Element.prototype.releasePointerCapture !== 'function') {
   Element.prototype.releasePointerCapture = () => {};
 }
+if (typeof Element.prototype.setPointerCapture !== 'function') {
+  Element.prototype.setPointerCapture = () => {};
+}
 
+// sonner keeps its toasts in a module-level store and replays the open ones to
+// the next Toaster, so a toast would otherwise carry over into the next test.
 afterEach(() => {
   cleanup();
+  toast.dismiss();
   resetViewport();
 });

@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Ellipsis, LayoutGrid, Pencil, Plug, Upload } from 'lucide-react';
+import { Archive, ArchiveRestore, Ellipsis, LayoutGrid, Pencil, Plug } from 'lucide-react';
 import { type FormEvent, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router';
@@ -10,6 +10,9 @@ import { formatRelativeTime } from '../lib/format.ts';
 import { usePageTitle } from '../lib/page-title.ts';
 import { ArtifactCollection, isEmptyCollection } from '../library/artifact-collection.tsx';
 import { InstructionsEditor } from '../library/instructions-editor.tsx';
+import { DropOverlay } from '../library/upload/drop-overlay.tsx';
+import { UploadButton, UploadDialog } from '../library/upload/upload-dialog.tsx';
+import { useUpload } from '../library/upload/use-upload.tsx';
 import { useLibraryView, ViewToggle } from '../library/view-toggle.tsx';
 import {
   Button,
@@ -194,6 +197,13 @@ function ProjectView({ projectId }: { projectId: string }) {
   const artifacts = useArtifacts({ projectId });
   const [view, setView] = useLibraryView();
   const [renaming, setRenaming] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const archived = project.data?.archived_at != null;
+  const upload = useUpload({
+    projectId,
+    projectName: project.data?.name ?? '',
+    disabled: archived,
+  });
   usePageTitle(project.data?.name ?? null);
 
   if (!project.data) {
@@ -210,16 +220,14 @@ function ProjectView({ projectId }: { projectId: string }) {
   }
 
   const p = project.data;
-  const archived = p.archived_at !== null;
   const newest = Math.max(p.updated_at, artifacts.data?.pages[0]?.items[0]?.updated_at ?? 0);
-  const upload = (label: string, primary: boolean) => (
-    <Button
-      variant={primary ? 'primary' : 'secondary'}
-      leadingIcon={<Upload />}
-      disabled={archived}
-    >
-      {label}
-    </Button>
+  const uploadButton = (label: string, variant: 'primary' | 'secondary') => (
+    <UploadButton
+      label={label}
+      variant={variant}
+      disabledReason={archived ? t('web.upload.archived') : null}
+      onClick={() => setUploadOpen(true)}
+    />
   );
 
   return (
@@ -232,7 +240,7 @@ function ProjectView({ projectId }: { projectId: string }) {
         })}
         actions={
           <>
-            {upload(t('web.project.upload'), true)}
+            {uploadButton(t('web.upload.action'), 'primary')}
             <ProjectMenu project={p} onRename={() => setRenaming(true)} />
           </>
         }
@@ -258,7 +266,7 @@ function ProjectView({ projectId }: { projectId: string }) {
             description={t('web.project.emptyBody')}
             action={
               <>
-                {upload(t('web.project.uploadFiles'), false)}
+                {uploadButton(t('web.upload.actionFiles'), 'secondary')}
                 <Button asChild variant="secondary" leadingIcon={<Plug />}>
                   <Link to="/connect">{t('web.project.connectAgent')}</Link>
                 </Button>
@@ -268,6 +276,9 @@ function ProjectView({ projectId }: { projectId: string }) {
         }
       />
       <RenameDialog project={p} open={renaming} onOpenChange={setRenaming} />
+      <UploadDialog open={uploadOpen} onOpenChange={setUploadOpen} upload={upload} />
+      <DropOverlay label={p.name} disabled={archived} onSelection={upload.start} />
+      {upload.inputs}
     </>
   );
 }
