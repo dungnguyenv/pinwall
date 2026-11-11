@@ -11,7 +11,8 @@ export { PointOverlay } from './point-overlay.tsx';
 /**
  * The artifact in its sandboxed frame, sized and scaled by `box`. The wrapper
  * carries `data-annotator`; a thin bar runs along the top while a page loads;
- * when the page runs no annotator, the point overlay covers it.
+ * when the page runs no annotator, the point overlay covers it, with its
+ * comment-mode note shown unless `overlayNote` is false.
  */
 export function ContentFrame({
   bridge,
@@ -21,6 +22,7 @@ export function ContentFrame({
   mode,
   onPicked,
   onPinClicked,
+  overlayNote = true,
   className,
 }: {
   bridge: FrameBridge;
@@ -30,6 +32,7 @@ export function ContentFrame({
   mode: 'browse' | 'comment';
   onPicked(p: PickedAnchor): void;
   onPinClicked(id: string): void;
+  overlayNote?: boolean;
   className?: string;
 }) {
   const { t } = useTranslation();
@@ -71,6 +74,7 @@ export function ContentFrame({
           mode={mode}
           onPicked={onPicked}
           onPinClicked={onPinClicked}
+          note={overlayNote}
         />
       ) : null}
       {bridge.loading ? (

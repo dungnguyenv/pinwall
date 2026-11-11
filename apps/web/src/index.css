@@ -60,6 +60,7 @@
   --animate-sheet-out: pw-sheet-out var(--duration-fast) ease-in both;
   --animate-drawer-in: pw-drawer-in var(--duration-base) var(--ease-out) both;
   --animate-drawer-out: pw-drawer-out var(--duration-fast) ease-in both;
+  --animate-panel-in: pw-panel-in var(--duration-base) var(--ease-out) both;
   --animate-shimmer: pw-shimmer 2.2s ease-in-out infinite;
   --animate-indeterminate: pw-indeterminate 1.4s var(--ease-out) infinite;
   --animate-pin-drop: pw-pin-drop calc(var(--duration-base) * 1.75) var(--ease-out) both;
@@ -120,6 +121,13 @@
   @keyframes pw-drawer-out {
     to {
       transform: translateX(-100%);
+    }
+  }
+  /* The review screen's comment panel slides a little in from the right as it docks. */
+  @keyframes pw-panel-in {
+    from {
+      opacity: 0;
+      transform: translateX(12px);
     }
   }
   /* Work of unknown length: a short bar crosses its track and starts again. */

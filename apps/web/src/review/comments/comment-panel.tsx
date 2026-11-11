@@ -1,4 +1,4 @@
-import { Info, MessageSquare, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, Info, MessageSquare, Plus, X } from 'lucide-react';
 import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { errorMessage } from '../../api/client.ts';
@@ -31,6 +31,8 @@ const GUEST_NAME_MAX = 60;
  * picked has no point to float beside, and the threads of the version shown.
  * `dock` is the column at the right of the desktop layout, with its own title
  * and close button; `sheet` goes inside `CommentSheet`, which has them.
+ * With `onStep`, the docked title row also steps to the previous and next
+ * thread (the K and J keys).
  */
 export function CommentPanel({
   c,
@@ -40,6 +42,7 @@ export function CommentPanel({
   liveStatus,
   onAddComment,
   onClose,
+  onStep,
   guestName,
 }: {
   c: ReviewComments;
@@ -49,6 +52,7 @@ export function CommentPanel({
   liveStatus: StreamStatus;
   onAddComment(): void;
   onClose(): void;
+  onStep?(step: 1 | -1): void;
   guestName?: { value: string; onChange(v: string): void };
 }) {
   const { t } = useTranslation();
@@ -88,6 +92,28 @@ export function CommentPanel({
             <h2 id={headingId} className="mr-auto font-semibold text-fg text-md">
               {t('web.comments.title')}
             </h2>
+            {onStep ? (
+              <div className="flex items-center">
+                <IconButton
+                  label={t('web.comments.previous')}
+                  icon={<ChevronUp />}
+                  size="sm"
+                  shortcut={['k']}
+                  disabled={c.visible.length === 0}
+                  onClick={() => onStep(-1)}
+                  className="text-fg-muted hover:text-fg"
+                />
+                <IconButton
+                  label={t('web.comments.next')}
+                  icon={<ChevronDown />}
+                  size="sm"
+                  shortcut={['j']}
+                  disabled={c.visible.length === 0}
+                  onClick={() => onStep(1)}
+                  className="text-fg-muted hover:text-fg"
+                />
+              </div>
+            ) : null}
             {c.permissions.canComment ? (
               <Button
                 variant="ghost"

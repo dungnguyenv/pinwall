@@ -18,8 +18,8 @@ const ProjectPage = lazy(() =>
 const SearchPage = lazy(() =>
   import('../pages/search-page.tsx').then((m) => ({ default: m.SearchPage })),
 );
-const ArtifactPage = lazy(() =>
-  import('../pages/artifact/artifact-page.tsx').then((m) => ({ default: m.ArtifactPage })),
+const ReviewPage = lazy(() =>
+  import('../review/viewer/review-page.tsx').then((m) => ({ default: m.ReviewPage })),
 );
 const NotFoundPage = lazy(() =>
   import('../pages/not-found-page.tsx').then((m) => ({ default: m.NotFoundPage })),
@@ -108,10 +108,10 @@ export function buildRoutes(): RouteObject[] {
         { path: '/', element: <AllArtifactsPage /> },
         { path: 'projects/:projectId', element: <ProjectPage /> },
         { path: 'search', element: <SearchPage /> },
-        // The review screen (M8) replaces this page on all three.
-        { path: 'a/:artifactId', element: <ArtifactPage /> },
-        { path: 'a/:artifactId/v/:n', element: <ArtifactPage /> },
-        { path: 'a/:artifactId/compare', element: <ArtifactPage /> },
+        { path: 'a/:artifactId', element: <ReviewPage /> },
+        { path: 'a/:artifactId/v/:n', element: <ReviewPage /> },
+        // Until compare arrives (M8b), its address opens the review of the current version.
+        { path: 'a/:artifactId/compare', element: <ReviewPage /> },
         {
           path: 'settings',
           element: <SettingsLayout />,

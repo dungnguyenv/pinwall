@@ -62,6 +62,10 @@ function serveLibrary(
         : apiError(404, 'not_found', 'This artifact does not exist.');
     }),
     http.get(`${API}/artifacts`, () => HttpResponse.json(fx.page([]))),
+    // The review screen behind an artifact's link.
+    http.get(`${API}/artifacts/:id/versions`, () => HttpResponse.json(fx.page([]))),
+    http.get(`${API}/artifacts/:id/versions/:n/preview`, () => HttpResponse.json(fx.grant())),
+    http.get(`${API}/artifacts/:id/comments`, () => HttpResponse.json(fx.page([]))),
     http.get(`${API}/projects/:id`, ({ params }) => {
       const project = allProjects.find((p) => p.id === params.id);
       return project

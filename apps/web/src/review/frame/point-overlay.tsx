@@ -19,7 +19,9 @@ function fraction(n: number, size: number): number {
  * it). Pins sit where they were made, as fractions of the frame's visible box:
  * the page's scroll is unknown here, so they do not follow it. In comment mode
  * a click pins a comment to that spot; from the keyboard, to the middle.
- * Otherwise the page keeps its clicks and only the pins take theirs.
+ * Otherwise the page keeps its clicks and only the pins take theirs. `note`
+ * false keeps the comment-mode note for screen readers only, where the same
+ * words already show nearby (the comment panel says them).
  */
 export function PointOverlay({
   box,
@@ -28,6 +30,7 @@ export function PointOverlay({
   mode,
   onPicked,
   onPinClicked,
+  note = true,
 }: {
   box: FrameBox;
   page: string;
@@ -35,6 +38,7 @@ export function PointOverlay({
   mode: 'browse' | 'comment';
   onPicked(p: PickedAnchor): void;
   onPinClicked(id: string): void;
+  note?: boolean;
 }) {
   const { t } = useTranslation();
   const noteId = useId();
@@ -83,7 +87,11 @@ export function PointOverlay({
           />
           <p
             id={noteId}
-            className="pointer-events-none absolute right-3 bottom-3 left-3 max-w-88 rounded-lg border border-border bg-surface px-3 py-2 text-fg-muted text-xs shadow-popover sm:right-auto"
+            className={
+              note
+                ? 'pointer-events-none absolute right-3 bottom-3 left-3 max-w-88 rounded-lg border border-border bg-surface px-3 py-2 text-fg-muted text-xs shadow-popover sm:right-auto'
+                : 'sr-only'
+            }
           >
             {t('web.comments.noAnnotator')}
           </p>
