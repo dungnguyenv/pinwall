@@ -53,5 +53,9 @@
   "publish.limit.max_version_bytes": "The files add up to more than {{max}} bytes (PINWALL_MAX_VERSION_BYTES).",
   "publish.limit.max_files": "The upload has more than {{max}} files (PINWALL_MAX_FILES).",
   "publish.limit.max_expansion_ratio": "The archive expands to more than {{max}} times its compressed size (PINWALL_MAX_EXPANSION_RATIO), so it looks like an archive bomb.",
-  "publish.limit.max_inline_bytes": "The inline files add up to more than {{max}} bytes (PINWALL_MAX_INLINE_BYTES). Use an upload URL instead."
+  "publish.limit.max_inline_bytes": "The inline files add up to more than {{max}} bytes (PINWALL_MAX_INLINE_BYTES). Use an upload URL instead.",
+  "publish.archive.corrupt": "The archive is damaged or truncated and could not be read.",
+  "publish.archive.zip64": "ZIP64 archives are not supported. Send a tar.gz instead: tar -czf - -C <folder> .",
+  "publish.archive.zipMethod": "{{path}} uses a ZIP compression method other than store or deflate.",
+  "publish.archive.encrypted": "{{path}} is encrypted, and encrypted archives are not supported."
 }
