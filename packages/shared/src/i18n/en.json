@@ -57,5 +57,6 @@
   "publish.archive.corrupt": "The archive is damaged or truncated and could not be read.",
   "publish.archive.zip64": "ZIP64 archives are not supported. Send a tar.gz instead: tar -czf - -C <folder> .",
   "publish.archive.zipMethod": "{{path}} uses a ZIP compression method other than store or deflate.",
-  "publish.archive.encrypted": "{{path}} is encrypted, and encrypted archives are not supported."
+  "publish.archive.encrypted": "{{path}} is encrypted, and encrypted archives are not supported.",
+  "publish.warning.rootAbsolute": "{{file}} refers to {{url}} from the server root, which does not load in single-domain mode. Use a relative path."
 }
