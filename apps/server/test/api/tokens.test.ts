@@ -1,5 +1,7 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { ApiTokenList, CreatedApiToken, Me } from '@pinwall/shared';
 import { afterEach, describe, expect, test } from 'vitest';
+import { lockUser } from '../../src/auth/account.ts';
 import { createApiToken, MAX_ACTIVE_TOKENS } from '../../src/auth/api-tokens.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
@@ -323,6 +325,70 @@ describe.each(dialects)('API tokens on %s', (dialect) => {
     const id = CreatedApiToken.parse(await last.json()).token.id;
     expect((await revoke(id, { cookie })).status).toBe(204);
     expect((await create({ cookie }, { name: 'again' })).status).toBe(201);
+  });
+
+  test('concurrent creates at the limit let exactly one through', async () => {
+    await start();
+    const { user, cookie } = await createSignedInUser(ctx);
+    for (let i = 0; i < MAX_ACTIVE_TOKENS - 1; i++) {
+      await createApiToken(ctx.deps, user.id, { name: `t${i}`, expiresInDays: null });
+    }
+    const results = await Promise.all(
+      Array.from({ length: 6 }, (_, i) => create({ cookie }, { name: `race${i}` })),
+    );
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409, 409, 409, 409, 409]);
+    expect(await tokenRows()).toHaveLength(MAX_ACTIVE_TOKENS);
+  });
+
+  test('a create counts only after another one holding the user lock has committed', async () => {
+    // Under READ COMMITTED a bare count lets two creates both see 99, so the count has to run
+    // behind the user's row lock. The holder is the other create: it has locked the user and
+    // inserted the 100th token, and commits after the create below has had time to count.
+    // SQLite takes turns anyway.
+    await start();
+    const { user } = await createSignedInUser(ctx);
+    for (let i = 0; i < MAX_ACTIVE_TOKENS - 1; i++) {
+      await createApiToken(ctx.deps, user.id, { name: `t${i}`, expiresInDays: null });
+    }
+    const { db, dialect: kind } = ctx.deps.db;
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let signalInserted = () => {};
+    const inserted = new Promise<void>((resolve) => {
+      signalInserted = resolve;
+    });
+    const holder = db.transaction().execute(async (trx) => {
+      await lockUser(trx, kind, user.id);
+      await trx
+        .insertInto('api_tokens')
+        .values({
+          id: 'tok_holder',
+          user_id: user.id,
+          name: 'holder',
+          token_hash: 'hash_holder',
+          prefix: 'pw_holder',
+          created_at: T,
+        })
+        .execute();
+      signalInserted();
+      await held;
+    });
+    await inserted;
+
+    const second = createApiToken(ctx.deps, user.id, { name: 'second', expiresInDays: null }).then(
+      () => 'created',
+      (error: unknown) => (error as { code?: string }).code,
+    );
+    try {
+      await sleep(150); // time enough for the create to count if nothing held it back
+    } finally {
+      release(); // also when something above threw, so the transaction does not hang
+    }
+    await holder;
+    expect(await second).toBe('conflict');
+    expect(await tokenRows()).toHaveLength(MAX_ACTIVE_TOKENS);
   });
 
   test('revoked and expired tokens do not count toward the limit', async () => {
