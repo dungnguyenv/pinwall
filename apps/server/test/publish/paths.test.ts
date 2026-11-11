@@ -26,6 +26,8 @@ test.each([
   ['a\u0000b', 'control'],
   ['a\nb', 'control'],
   ['a\u007fb', 'control'],
+  ['a\ud800.html', 'encoding'],
+  ['a\udfff.html', 'encoding'],
   ['a//b', 'empty_segment'],
   ['x'.repeat(513), 'too_long'],
   ['__pinwall/x.js', 'reserved'],
@@ -37,6 +39,13 @@ test.each([
       code: 'bad_request',
       details: expect.objectContaining({ reason }),
     }),
+  );
+});
+
+test('a lone surrogate is refused, a pair is a character like any other', () => {
+  expect(normalizeEntryPath('\ud83d\ude00.html')).toEqual({ path: '😀.html' });
+  expect(() => normalizeEntryPath('x/\ud800.html')).toThrow(
+    expect.objectContaining({ details: { reason: 'encoding', path: 'x/\ufffd.html' } }),
   );
 });
 

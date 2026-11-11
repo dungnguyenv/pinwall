@@ -11,6 +11,7 @@ import { requestId } from './http/request-id.ts';
 import { appSecurityHeaders } from './http/security-headers.ts';
 import { defaultWebDir, mountSpa } from './http/spa.ts';
 import { PAGES_CSS, PAGES_CSS_PATH } from './pages/pages.css.ts';
+import { mountUploadRoute } from './publish/upload-route.ts';
 
 /** Who is making the request, once `resolveAuth` has run. */
 export interface AuthContext {
@@ -98,6 +99,8 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
     resolveAuth({ bearer: bearerResolvers, cookies: true }),
   );
   app.route('/api/v1', buildApiRouter());
+  // The upload token is its only credential: no origin check, no cookie or bearer auth.
+  mountUploadRoute(app);
 
   mountSpa(app, deps.config.webDir ?? defaultWebDir(), deps.logger);
 

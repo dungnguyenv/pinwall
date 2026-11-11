@@ -6,6 +6,7 @@ export type ErrorCode =
   | 'conflict'
   | 'version_conflict'
   | 'gone'
+  | 'request_timeout'
   | 'payload_too_large'
   | 'unsupported_media_type'
   | 'rate_limited'

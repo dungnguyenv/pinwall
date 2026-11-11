@@ -13,6 +13,7 @@ export type PathRejection =
   | 'dot_segment'
   | 'backslash'
   | 'control'
+  | 'encoding'
   | 'empty_segment'
   | 'too_long'
   | 'duplicate'
@@ -24,6 +25,10 @@ export type PathRejection =
 const QUOTE_LENGTH = 100;
 
 const DRIVE_LETTER = /^[A-Za-z]:/;
+
+/** Half of a UTF-16 surrogate pair standing alone: a JSON name can carry one, a file name not. */
+const LONE_SURROGATE = /\p{Cs}/u;
+const LONE_SURROGATES = /\p{Cs}/gu;
 
 /** Checked in this order; the first one present wins. */
 const ENTRY_NAMES = ['index.html', 'index.md', 'README.md'] as const;
@@ -47,9 +52,10 @@ export function rejectPath(path: string, reason: PathRejection): AppError {
 
 /**
  * Turns an archive entry name into the path Pinwall stores: leading `./` removed, NFC, relative,
- * no `.`/`..`/empty segments, no backslash or control character, not under `__pinwall/`, at most
- * `MAX_PATH_LENGTH` code points. Directories and macOS junk (`__MACOSX/`, `._*`, `.DS_Store`) are
- * skipped rather than refused. Throws `rejectPath` for anything else that breaks a rule.
+ * no `.`/`..`/empty segments, no backslash, control character or lone surrogate, not under
+ * `__pinwall/`, at most `MAX_PATH_LENGTH` code points. Directories and macOS junk (`__MACOSX/`,
+ * `._*`, `.DS_Store`) are skipped rather than refused. Throws `rejectPath` for anything else that
+ * breaks a rule.
  */
 export function normalizeEntryPath(raw: string): { path: string } | { skip: 'junk' | 'directory' } {
   let path = raw;
@@ -57,6 +63,10 @@ export function normalizeEntryPath(raw: string): { path: string } | { skip: 'jun
   path = path.normalize('NFC');
   if (path === '' || path === '.' || path.endsWith('/')) return { skip: 'directory' };
 
+  // No database stores a lone surrogate faithfully: two such names could become one.
+  if (LONE_SURROGATE.test(path)) {
+    throw rejectPath(path.replace(LONE_SURROGATES, '\uFFFD'), 'encoding');
+  }
   if (hasControlCharacter(path)) throw rejectPath(path, 'control');
   if (path.includes('\\')) throw rejectPath(path, 'backslash');
   if (path.startsWith('/') || DRIVE_LETTER.test(path)) throw rejectPath(path, 'absolute');
