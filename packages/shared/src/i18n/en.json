@@ -77,6 +77,8 @@
   "content.expired.message": "This preview link has expired. Open the artifact in Pinwall again.",
   "content.error.title": "Something went wrong",
   "content.error.message": "Pinwall could not serve this file. Try again.",
+  "content.markdownContents": "Contents",
+  "content.markdownTooLarge": "This Markdown file is larger than {{limit}} KB, so its source is shown as plain text instead of formatted.",
   "project.defaultName": "Default",
   "project.notFound": "This project does not exist.",
   "project.archived": "This project is archived. Unarchive it or publish to another project.",

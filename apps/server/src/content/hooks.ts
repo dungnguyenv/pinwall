@@ -1,4 +1,7 @@
 import type { ContentGrantRow, VersionRow } from '../db/schema.ts';
+import { markdownCss } from './markdown-css.ts';
+
+const markdownCssBytes = Buffer.from(markdownCss);
 
 /**
  * Rewrites an HTML file of a review grant before it is served. `path` is the stored path of the
@@ -24,7 +27,11 @@ export interface ContentHooks {
 }
 
 /**
- * The hooks `buildApp` mounts. Empty in M4: review grants are served unmodified and nothing
- * answers under `__pinwall/` yet.
+ * The hooks `buildApp` mounts: the stylesheet of rendered Markdown pages under `__pinwall/`.
+ * Review grants are served unmodified until a `transformReviewHtml` is set.
  */
-export const contentHooks: ContentHooks = {};
+export const contentHooks: ContentHooks = {
+  reservedAssets: {
+    'markdown.css': { contentType: 'text/css; charset=utf-8', body: () => markdownCssBytes },
+  },
+};

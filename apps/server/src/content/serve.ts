@@ -11,13 +11,17 @@ import { RESERVED_DIR } from '../publish/paths.ts';
 import { type ContentErrorKind, renderContentErrorPage } from './error-page.ts';
 import { contentBaseUrl, type ResolvedGrant, resolveGrant } from './grants.ts';
 import type { ContentHooks } from './hooks.ts';
-import { isHtmlType } from './mime.ts';
+import { renderMarkdownPage } from './markdown.ts';
+import { isHtmlType, isMarkdownType } from './mime.ts';
 
 /** Single-domain mode: content runs in an opaque origin, never the app's (no allow-same-origin). */
 export const CONTENT_SANDBOX_CSP =
   'sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-pointer-lock allow-presentation';
 
 const HTML = 'text/html; charset=utf-8';
+
+/** Invalid UTF-8 becomes U+FFFD and a BOM is dropped, so a stored Markdown file always renders. */
+const utf8 = new TextDecoder('utf-8');
 
 const ERROR_STATUS: Record<ContentErrorKind, number> = {
   not_found: 404,
@@ -76,7 +80,7 @@ export function serveContent(
       const location = `${encodeURIComponent(segments.at(-1) ?? '')}/${new URL(c.req.url).search}`;
       return reply(c, 308, { Location: location }, null);
     }
-    return serveFile(c, resolved, found, hooks);
+    return serveFile(c, resolved, found, path, hooks);
   });
 }
 
@@ -197,29 +201,46 @@ async function findFile(
   return isDirectory ? index : 'directory';
 }
 
+/**
+ * Serves one stored file. Two kinds of response are not the stored bytes, so they take no range
+ * and carry an ETag of their own (SHA-256 of the body): a Markdown file as a rendered page (the
+ * stored file itself is `?source`), and, in a review grant, an HTML page after
+ * `transformReviewHtml`. `requestPath` is the path the request named; `''` is the grant's root.
+ */
 async function serveFile(
   c: Context<AppEnv>,
   { grant, version }: ResolvedGrant,
   file: VersionFileRow,
+  requestPath: string,
   hooks: ContentHooks,
 ): Promise<Response> {
   const { deps } = c.var;
-  const transform = hooks.transformReviewHtml;
-  if (grant.mode === 'review' && transform !== undefined && isHtmlType(file.content_type)) {
-    // Its bytes are no longer the stored ones: no ranges, and an ETag of its own.
+  const transform = grant.mode === 'review' ? hooks.transformReviewHtml : undefined;
+  const asPage =
+    isMarkdownType(file.content_type) && !new URL(c.req.url).searchParams.has('source');
+  if (asPage || (transform !== undefined && isHtmlType(file.content_type))) {
     const stored = Buffer.concat(await (await deps.blobs.get(file.sha256)).toArray());
-    const body = await transform(stored, {
-      grant,
-      version,
-      path: file.path,
-      baseUrl: contentBaseUrl(deps.config, grant.token),
-    });
+    let body: Buffer = stored;
+    if (asPage) {
+      // The page's stylesheet link is relative to the URL it is requested at: the root of the
+      // grant for an entry in a folder, the file's own path otherwise.
+      const pagePath = requestPath === '' ? (file.path.split('/').at(-1) ?? file.path) : file.path;
+      body = Buffer.from(renderMarkdownPage(utf8.decode(stored), pagePath));
+    }
+    if (transform !== undefined) {
+      body = await transform(body, {
+        grant,
+        version,
+        path: file.path,
+        baseUrl: contentBaseUrl(deps.config, grant.token),
+      });
+    }
     const etag = `"${createHash('sha256').update(body).digest('hex')}"`;
     if (noneMatch(c.req.header('if-none-match'), etag)) {
       return reply(c, 304, { ETag: etag }, null);
     }
     const headers = {
-      'Content-Type': file.content_type,
+      'Content-Type': asPage ? HTML : file.content_type,
       'Content-Length': String(body.length),
       ETag: etag,
     };

@@ -211,8 +211,9 @@ describe.each([
     expect(await (await get(token, '')).text()).toBe('root');
     expect(await (await get(token, 'docs/')).text()).toBe('docs');
     const md = await get(token, 'md/');
-    expect(md.headers.get('content-type')).toBe('text/markdown; charset=utf-8');
-    expect(await md.text()).toBe('# md');
+    expect(md.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(await md.text()).toContain('<h1 id="md">md</h1>');
+    expect(await (await get(token, 'md/?source')).text()).toBe('# md');
 
     const redirect = await get(token, 'docs');
     expect(redirect.status).toBe(308);

@@ -68,6 +68,11 @@ export function isHtmlType(contentType: string): boolean {
   return mediaType(contentType) === 'text/html';
 }
 
+/** `text/markdown`, whatever its parameters. */
+export function isMarkdownType(contentType: string): boolean {
+  return mediaType(contentType) === 'text/markdown';
+}
+
 /** PNG, JPEG, WebP, GIF and AVIF: the images a browser decodes to pixels. */
 export function isRasterImage(contentType: string): boolean {
   return RASTER_TYPES.has(mediaType(contentType));
