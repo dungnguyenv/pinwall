@@ -12,6 +12,7 @@ import {
 import { createShareLink, revokeShareLink } from '../../src/domain/shares.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
+import { hashSecret } from '../../src/lib/ids.ts';
 import { apiInit, createSignedInUser } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
@@ -293,6 +294,31 @@ describe.each(dialects)('the share viewer API on %s', (dialect) => {
       expires_at: expiresAt,
       content: { mode: 'raw', expires_at: expiresAt },
     });
+  });
+
+  test('opening share info is rate limited per link and address', async () => {
+    await ctx.close();
+    await start({ PINWALL_TRUST_PROXY: 'true' });
+    const { linkId, token } = await share({ password: null });
+    const other = await share({ password: null });
+    const infoFrom = (tok: string, ip: string) =>
+      ctx.request(`/api/v1/share/${tok}`, { headers: { 'x-forwarded-for': ip } });
+    const { name, limit, windowMs } = SHARE_RATES.info;
+    for (let i = 0; i < limit; i++) expect((await infoFrom(token, '203.0.113.1')).status).toBe(200);
+    const limited = await infoFrom(token, '203.0.113.1');
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get('retry-after')).toBe(String(windowMs / 1000));
+    // Each open makes a grant; a refused one makes none.
+    expect(await grantsOf(linkId)).toHaveLength(limit);
+    // The count is kept under the token's hash, never the token.
+    const key = `${name}:${hashSecret(token)}:203.0.113.1`;
+    expect((await ctx.deps.rateLimiter.consume(key, limit, windowMs)).allowed).toBe(false);
+
+    // Another address, or another link from the same address, still opens.
+    expect((await infoFrom(token, '203.0.113.2')).status).toBe(200);
+    expect((await infoFrom(other.token, '203.0.113.1')).status).toBe(200);
+    clock.advance(windowMs);
+    expect((await infoFrom(token, '203.0.113.1')).status).toBe(200);
   });
 
   test('cross-origin unlock is refused', async () => {

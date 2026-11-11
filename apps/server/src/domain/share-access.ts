@@ -24,6 +24,7 @@ export const SHARE_TOUCH_INTERVAL_MS = 60_000;
 
 export const SHARE_RATES: {
   open: RateRule;
+  info: RateRule;
   unlock: RateRule;
   unlockLink: RateRule;
   guestComment: RateRule;
@@ -32,6 +33,8 @@ export const SHARE_RATES: {
 } = {
   /** Opening `/s/<token>`, per client address. */
   open: { name: 'share-open', limit: 120, windowMs: 600_000 },
+  /** Share info, which makes a grant each time, per link and address (`<token hash>:<address>`). */
+  info: { name: 'share-info', limit: 60, windowMs: 60_000 },
   /** Password attempts on one link from one address (`<link id>:<address>`). */
   unlock: { name: 'share-unlock', limit: 10, windowMs: 900_000 },
   /** Password attempts on one link from every address together (link id). */

@@ -43,11 +43,15 @@ export async function enforceRateLimit(
 
 /**
  * `enforceRateLimit` as route middleware, so the attempt counts before the body is read or
- * validated: malformed requests use up the limit too.
+ * validated: malformed requests use up the limit too. `key` is fixed, or read from each request
+ * (a route parameter with the client address, say); by default it is the client address.
  */
-export function rateLimit(rule: RateRule, key?: string): MiddlewareHandler<AppEnv> {
+export function rateLimit(
+  rule: RateRule,
+  key?: string | ((c: Context<AppEnv>) => string),
+): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
-    await enforceRateLimit(c, rule, key);
+    await enforceRateLimit(c, rule, typeof key === 'function' ? key(c) : key);
     await next();
   };
 }

@@ -14,7 +14,7 @@ import {
 import type { Context, MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import type { AppEnv } from '../app.ts';
-import { enforceRateLimit } from '../auth/rate-limits.ts';
+import { enforceRateLimit, rateLimit } from '../auth/rate-limits.ts';
 import {
   addReply,
   type CommentActor,
@@ -37,6 +37,7 @@ import {
   unlockShare,
 } from '../domain/share-access.ts';
 import { clientIp } from '../http/client-ip.ts';
+import { hashSecret } from '../lib/ids.ts';
 import { jsonBodyLimit } from './body-limit.ts';
 
 const error = (description: string) => ({
@@ -75,13 +76,23 @@ const commentLinkErrors = {
 const guestNote =
   'Needs no account: the share token and, for a link with a password, the unlock cookie authorize it. The link must allow comments.';
 
+/**
+ * Share info makes a content grant each time, so opening it counts per link and address: under
+ * the token's hash, so the limiter never holds a token.
+ */
+function shareInfoRateKey(c: Context<AppEnv>): string {
+  const token = c.req.param('token') ?? '';
+  return `${hashSecret(token)}:${clientIp(c, c.var.deps.config.trustProxy)}`;
+}
+
 const infoRoute = createRoute({
   method: 'get',
   path: '/share/{token}',
   tags: ['share viewer'],
   summary: 'Open a share link',
   description:
-    'What the share viewer shows: the artifact name, the version and a new content URL to it, `review` when the link allows comments and `raw` otherwise. Needs no account; a link with a password needs the unlock cookie set by `POST /share/{token}/unlock`.',
+    'What the share viewer shows: the artifact name, the version and a new content URL to it, `review` when the link allows comments and `raw` otherwise. Needs no account; a link with a password needs the unlock cookie set by `POST /share/{token}/unlock`. Opens are limited per link from each address.',
+  middleware: [rateLimit(SHARE_RATES.info, shareInfoRateKey)] as MiddlewareHandler<AppEnv>[],
   request: { params: TokenParam },
   responses: {
     200: {
@@ -90,6 +101,7 @@ const infoRoute = createRoute({
     },
     ...lockedError,
     ...linkErrors,
+    429: error('Too many opens of this link from this address (`rate_limited`)'),
   },
 });
 
