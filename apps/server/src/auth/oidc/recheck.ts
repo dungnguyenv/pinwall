@@ -5,7 +5,7 @@ import type { AppDeps } from '../../deps.ts';
 import { revokeAllCredentials } from '../revoke.ts';
 import { effectiveRole } from '../roles.ts';
 import { classifyOidcError, type OidcRuntime, oidcErrorCode, oidcRuntime } from './client.ts';
-import { identityFromClaims, readClaim } from './identity.ts';
+import { identityFromClaims, profileClaimsIn, readClaim } from './identity.ts';
 import { accessPolicy, mapIdpRole } from './policy.ts';
 import { applyIdentity, openRefreshToken, sealRefreshToken } from './users.ts';
 
@@ -186,7 +186,7 @@ async function checkWithIdp(
   ) {
     return requireSignIn(deps, user.id, new RecheckClaimsError('ROLE_CLAIMS_ABSENT'));
   }
-  const updated = await applyIdentity(deps, user.id, identity);
+  const updated = await applyIdentity(deps, user.id, identity, profileClaimsIn(claims));
   const role = effectiveRole(updated);
   if (role === null) return { outcome: 'removed', user: await disableRemovedUser(deps, user.id) };
   // Blocked by an admin while the IdP answered: the admin's decision, not an IdP removal.

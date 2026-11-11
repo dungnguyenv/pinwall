@@ -289,6 +289,30 @@ describe.each(dialects)('access re-check on %s', (dialect) => {
     expect(plainRefreshToken(after)).toBeTruthy();
   });
 
+  test('an answer that leaves out profile claims keeps the stored profile', async () => {
+    await start();
+    const picture = 'https://img.example/ada.png';
+    const { sub, user } = await signIn({ picture });
+    const profile = { email: 'ada@example.com', email_verified: 1, name: 'Ada Example' };
+    expect(user).toMatchObject({ ...profile, avatar_url: picture });
+    idp.addAccount({ sub, groups: ['pinwall-users'] });
+    clock.advance(12 * H);
+
+    expect(await outcome(user.id)).toBe('ok');
+    expect(await row(user.id)).toMatchObject({
+      ...profile,
+      avatar_url: picture,
+      idp_role: 'member',
+      idp_checked_at: clock.now(),
+    });
+
+    // A claim that is there is written, beside the ones that are still missing.
+    idp.addAccount({ sub, name: 'Ada L.', groups: ['pinwall-users'] });
+    clock.advance(12 * H);
+    expect(await outcome(user.id)).toBe('ok');
+    expect(await row(user.id)).toMatchObject({ ...profile, name: 'Ada L.', avatar_url: picture });
+  });
+
   test('an unreachable IdP is transient and changes nothing', async () => {
     await start();
     const { user } = await signIn();

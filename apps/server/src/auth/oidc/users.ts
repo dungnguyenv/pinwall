@@ -3,7 +3,7 @@ import type { AppDeps } from '../../deps.ts';
 import { decryptString, deriveKey, encryptString } from '../../lib/crypto.ts';
 import { newId } from '../../lib/ids.ts';
 import { effectiveRole } from '../roles.ts';
-import type { OidcIdentity } from './identity.ts';
+import type { OidcIdentity, ProfileClaims } from './identity.ts';
 import { accessPolicy, mapIdpRole } from './policy.ts';
 
 /** The HKDF purpose of the key that seals IdP refresh tokens at rest. */
@@ -122,15 +122,28 @@ export async function upsertOidcUser(
   };
 }
 
-/** Writes what the IdP now says about the user and the check time; returns the updated row. */
+const ALL_PROFILE_CLAIMS: ProfileClaims = { email: true, name: true, picture: true };
+
+/**
+ * Writes what the IdP now says about the user and the check time; returns the updated row. The
+ * role is always the one `identity` earns, but a profile field whose claims the answer left out
+ * (see `present`) keeps its stored value rather than being blanked.
+ */
 export async function applyIdentity(
   deps: AppDeps,
   userId: string,
   identity: OidcIdentity,
+  present: ProfileClaims = ALL_PROFILE_CLAIMS,
 ): Promise<UserRow> {
+  const { email, email_verified, name, avatar_url, ...check } = identityColumns(deps, identity);
   await deps.db.db
     .updateTable('users')
-    .set(identityColumns(deps, identity))
+    .set({
+      ...check,
+      ...(present.email ? { email, email_verified } : {}),
+      ...(present.name ? { name } : {}),
+      ...(present.picture ? { avatar_url } : {}),
+    })
     .where('id', '=', userId)
     .execute();
   return deps.db.db

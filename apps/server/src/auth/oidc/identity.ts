@@ -82,6 +82,25 @@ function cut(text: string, maxChars: number): string {
   return chars.length <= maxChars ? text : chars.slice(0, maxChars).join('');
 }
 
+/** Which profile claims an IdP answer carries at all. */
+export interface ProfileClaims {
+  email: boolean;
+  /** Any of name, preferred_username, given_name, family_name, not blank. */
+  name: boolean;
+  picture: boolean;
+}
+
+const NAME_CLAIMS = ['name', 'preferred_username', 'given_name', 'family_name'] as const;
+
+/** The profile claims `claims` carry; a claim set to null counts as left out. */
+export function profileClaimsIn(claims: Record<string, unknown>): ProfileClaims {
+  return {
+    email: claims.email !== undefined && claims.email !== null,
+    name: NAME_CLAIMS.some((key) => nonBlank(claims[key]) !== undefined),
+    picture: claims.picture !== undefined && claims.picture !== null,
+  };
+}
+
 /**
  * Normalizes claims into an identity. `rolesClaim` names the claim holding groups; without it
  * the identity has none. Throws when `sub` is not a non-empty string: without a subject there is
