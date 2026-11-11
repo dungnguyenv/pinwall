@@ -15,6 +15,8 @@ import { createPostgresDatabase, dialects, withDb } from '../helpers/db.ts';
 const T = 1_762_000_000_000;
 const SHA_A = 'a'.repeat(64);
 const SHA_B = 'b'.repeat(64);
+/** Every migration, in the order they apply. */
+const ALL_MIGRATIONS = ['0001_initial', '0002_publishing'];
 
 type Rows = { [K in keyof Database]: Required<Insertable<Database[K]>>[] };
 
@@ -229,6 +231,10 @@ function graph(): Rows {
       }),
     ],
     leases: [{ name: 'job:gc', holder: 'host-1', expires_at: T + 60_000 }],
+    tombstones: [
+      { kind: 'artifact', key: 'art_0', deleted_at: T, expires_at: null },
+      { kind: 'content_grant', key: 'grant-0', deleted_at: T, expires_at: T + 1000 },
+    ],
   };
 }
 
@@ -295,7 +301,7 @@ describe.each(dialects)('%s schema', (dialect) => {
 
   test('migrates an empty database and is idempotent', async () => {
     const h = await open();
-    expect(await migrateToLatest(h)).toEqual(['0001_initial']);
+    expect(await migrateToLatest(h)).toEqual(ALL_MIGRATIONS);
     expect(await migrateToLatest(h)).toEqual([]);
     const tables: (keyof Database)[] = [
       'users',
@@ -317,6 +323,7 @@ describe.each(dialects)('%s schema', (dialect) => {
       'share_links',
       'comments',
       'leases',
+      'tombstones',
     ];
     for (const t of tables)
       await expect(h.db.selectFrom(t).selectAll().execute()).resolves.toEqual([]);
@@ -334,7 +341,7 @@ describe.each(dialects)('%s schema', (dialect) => {
       'Migration 0001_broken failed: boom',
     );
     await expect(sql`select * from half_done`.execute(h.db)).rejects.toThrow();
-    expect(await migrateToLatest(h)).toEqual(['0001_initial']);
+    expect(await migrateToLatest(h)).toEqual(ALL_MIGRATIONS);
   });
 
   test('a run that fails applies and records none of its migrations', async () => {
@@ -463,6 +470,39 @@ describe.each(dialects)('%s schema', (dialect) => {
     expect(row.created_at).toBe(T);
   });
 
+  test('migration 0002 adds tombstones and the sha256 index', async () => {
+    const h = await openMigrated();
+    const tombstone = {
+      kind: 'share_link',
+      key: 'hash-1',
+      deleted_at: T,
+      expires_at: null,
+    } as const;
+    await h.db.insertInto('tombstones').values(tombstone).execute();
+    // Another kind with the same key is a different tombstone; the same pair is refused.
+    await h.db
+      .insertInto('tombstones')
+      .values({ ...tombstone, kind: 'artifact' })
+      .execute();
+    await expect(h.db.insertInto('tombstones').values(tombstone).execute()).rejects.toThrow(
+      /unique|duplicate/i,
+    );
+
+    const { rows } =
+      dialect === 'sqlite'
+        ? await sql<{ name: string; table: string }>`
+            select name, tbl_name as "table" from sqlite_master where type = 'index'`.execute(h.db)
+        : await sql<{ name: string; table: string }>`
+            select indexname as name, tablename as "table" from pg_indexes
+            where schemaname = current_schema()`.execute(h.db);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        { name: 'tombstones_expires_at_idx', table: 'tombstones' },
+        { name: 'version_files_sha256_idx', table: 'version_files' },
+      ]),
+    );
+  });
+
   test('ping works while open and close can be called twice', async () => {
     const h = await open();
     await expect(h.ping()).resolves.toBeUndefined();
@@ -535,10 +575,10 @@ describe('sqlite connection', () => {
     for (const m of migrators) m.go();
     const applied = await Promise.all(migrators.map((m) => m.applied));
 
-    expect(applied.sort((a, b) => a.length - b.length)).toEqual([[], ['0001_initial']]);
+    expect(applied.sort((a, b) => a.length - b.length)).toEqual([[], ALL_MIGRATIONS]);
     const h = await connectDb({ kind: 'sqlite', path });
     onTestFinished(() => h.close());
-    expect(await recorded(h.db)).toEqual(['0001_initial']);
+    expect(await recorded(h.db)).toEqual(ALL_MIGRATIONS);
     expect(await migrateToLatest(h)).toEqual([]);
     await expect(h.db.selectFrom('users').selectAll().execute()).resolves.toEqual([]);
   }, 30_000);
@@ -554,8 +594,8 @@ describe.runIf(dialects.includes('postgres'))('postgres migrations', () => {
     onTestFinished(() => Promise.all(handles.map((h) => h.close())).then(() => {}));
 
     const applied = await Promise.all(handles.map((h) => migrateToLatest(h)));
-    expect(applied.sort((a, b) => a.length - b.length)).toEqual([[], ['0001_initial']]);
-    expect(await recorded(handles[0]?.db as Kysely<Database>)).toEqual(['0001_initial']);
+    expect(applied.sort((a, b) => a.length - b.length)).toEqual([[], ALL_MIGRATIONS]);
+    expect(await recorded(handles[0]?.db as Kysely<Database>)).toEqual(ALL_MIGRATIONS);
   });
 });
 
