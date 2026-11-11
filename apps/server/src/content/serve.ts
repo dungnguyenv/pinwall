@@ -11,7 +11,11 @@ import { RESERVED_DIR } from '../publish/paths.ts';
 import { type ContentErrorKind, renderContentErrorPage } from './error-page.ts';
 import { contentBaseUrl, type ResolvedGrant, resolveGrant } from './grants.ts';
 import type { ContentHooks } from './hooks.ts';
-import { renderMarkdownPage } from './markdown.ts';
+import {
+  MARKDOWN_RENDER_MAX_BYTES,
+  renderMarkdownPage,
+  renderMarkdownTooLargePage,
+} from './markdown.ts';
 import { isHtmlType, isMarkdownType } from './mime.ts';
 
 /** Single-domain mode: content runs in an opaque origin, never the app's (no allow-same-origin). */
@@ -255,13 +259,17 @@ async function serveFile(
   const asPage =
     isMarkdownType(file.content_type) && !new URL(c.req.url).searchParams.has('source');
   if (asPage || (transform !== undefined && isHtmlType(file.content_type))) {
-    const stored = Buffer.concat(await (await deps.blobs.get(file.sha256)).toArray());
-    let body: Buffer = stored;
-    if (asPage) {
-      // The page's stylesheet link is relative to the URL it is requested at: the root of the
-      // grant for an entry in a folder, the file's own path otherwise.
-      const pagePath = requestPath === '' ? (file.path.split('/').at(-1) ?? file.path) : file.path;
-      body = Buffer.from(renderMarkdownPage(utf8.decode(stored), pagePath));
+    // The page's stylesheet link is relative to the URL it is requested at: the root of the
+    // grant for an entry in a folder, the file's own path otherwise.
+    const pagePath = requestPath === '' ? (file.path.split('/').at(-1) ?? file.path) : file.path;
+    let body: Buffer;
+    if (asPage && file.size > MARKDOWN_RENDER_MAX_BYTES) {
+      // Never read: a file of up to `PINWALL_MAX_FILE_BYTES`, escaped into a page, would cost
+      // several times its size in memory and block the event loop for every request.
+      body = Buffer.from(renderMarkdownTooLargePage(pagePath));
+    } else {
+      const stored = Buffer.concat(await (await deps.blobs.get(file.sha256)).toArray());
+      body = asPage ? Buffer.from(renderMarkdownPage(utf8.decode(stored), pagePath)) : stored;
     }
     if (transform !== undefined) {
       body = await transform(body, {

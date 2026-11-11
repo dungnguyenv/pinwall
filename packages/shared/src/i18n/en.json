@@ -79,6 +79,8 @@
   "content.error.message": "Pinwall could not serve this file. Try again.",
   "content.markdownContents": "Contents",
   "content.markdownTooLarge": "This Markdown file is larger than {{limit}} KB, so its source is shown as plain text instead of formatted.",
+  "content.markdownTooLargePage": "This Markdown file is larger than {{limit}} KB, too large to show formatted.",
+  "content.markdownSource": "Open its source",
   "project.defaultName": "Default",
   "project.notFound": "This project does not exist.",
   "project.archived": "This project is archived. Unarchive it or publish to another project.",

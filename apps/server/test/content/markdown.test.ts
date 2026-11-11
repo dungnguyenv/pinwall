@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { createGrant, type GrantMode } from '../../src/content/grants.ts';
 import { type ContentHooks, contentHooks } from '../../src/content/hooks.ts';
 import {
@@ -525,19 +525,31 @@ describe.each(dialects)('Markdown pages on %s', (dialect) => {
       );
     });
 
-    test('a Markdown file over the cap is served as preformatted text with a notice', async () => {
+    test('a Markdown file over the cap is never read: a short page links its source', async () => {
       const big = `# Big <b>\n\n${'line\n'.repeat(MARKDOWN_RENDER_MAX_BYTES / 4)}`;
-      const { token } = await grantFor({ 'index.md': big });
-      const page = await get(token, '');
-      expect(page.status).toBe(200);
-      expect(page.headers.get('content-type')).toBe('text/html; charset=utf-8');
-      const body = await page.text();
-      expect(body).toContain('<p class="pw-md-notice" role="note">');
-      expect(body).toContain('<pre class="pw-md-source"># Big &lt;b&gt;');
-      expect(body).not.toContain('<h1');
-      expect(page.headers.get('etag')).toBe(`"${sha256(body)}"`);
-      // The source itself is still there for ?source.
+      const { token } = await grantFor({ 'index.md': big, 'docs/big.md': big });
+      const read = vi.spyOn(ctx.deps.blobs, 'get');
+      for (const path of ['', 'index.md', 'docs/big.md']) {
+        const page = await get(token, path);
+        expect(page.status, path).toBe(200);
+        expect(page.headers.get('content-type')).toBe('text/html; charset=utf-8');
+        const body = await page.text();
+        expect(body.length, path).toBeLessThan(2_000);
+        expect(body).toContain(
+          t('content.markdownTooLargePage', { limit: MARKDOWN_RENDER_MAX_BYTES / 1000 }),
+        );
+        // Relative to the page's own URL, so it names the same file wherever it is served.
+        expect(body).toContain(`<a href="?source">${t('content.markdownSource')}</a>`);
+        expect(body).not.toContain('Big');
+        expect(body).not.toContain('line');
+        expect(page.headers.get('etag')).toBe(`"${sha256(body)}"`);
+        const head = await get(token, path, { method: 'HEAD' });
+        expect(head.headers.get('content-length')).toBe(String(Buffer.byteLength(body)));
+      }
+      expect(read).not.toHaveBeenCalled();
+      // ?source streams the stored bytes.
       expect(await (await get(token, '?source')).text()).toBe(big);
+      expect(await (await get(token, 'docs/big.md?source')).text()).toBe(big);
     });
 
     test('a review grant passes the rendered page through transformReviewHtml, a raw grant does not', async () => {
