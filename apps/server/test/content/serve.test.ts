@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { request as httpRequest, type Server } from 'node:http';
+import { request as httpRequest, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { serve } from '@hono/node-server';
 import { afterEach, beforeEach, describe, expect, onTestFinished, test } from 'vitest';
@@ -36,25 +36,30 @@ async function listen(ctx: TestContext): Promise<number> {
   return (server.address() as AddressInfo).port;
 }
 
-/** A GET over a real socket with the given `Host` and request target, sent as written. */
-function rawGet(
+/** A request over a real socket with the given `Host` and request target, sent as written. */
+function rawRequest(
   port: number,
   host: string,
   target: string,
-  headers: Record<string, string> = {},
-): Promise<{ status: number; type: string; body: string; frameOptions: string | undefined }> {
+  o: { method?: string; headers?: Record<string, string> } = {},
+): Promise<{ status: number; headers: IncomingHttpHeaders; body: string }> {
   return new Promise((resolve, reject) => {
     const req = httpRequest(
-      { host: '127.0.0.1', port, path: target, headers: { ...headers, host } },
+      {
+        host: '127.0.0.1',
+        port,
+        path: target,
+        method: o.method ?? 'GET',
+        headers: { ...o.headers, host },
+      },
       (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (chunk: Buffer) => chunks.push(chunk));
         res.on('end', () =>
           resolve({
             status: res.statusCode ?? 0,
-            type: res.headers['content-type'] ?? '',
+            headers: res.headers,
             body: Buffer.concat(chunks).toString(),
-            frameOptions: res.headers['x-frame-options'] as string | undefined,
           }),
         );
       },
@@ -62,6 +67,22 @@ function rawGet(
     req.on('error', reject);
     req.end();
   });
+}
+
+/** A GET over a real socket with the given `Host` and request target, sent as written. */
+async function rawGet(
+  port: number,
+  host: string,
+  target: string,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; type: string; body: string; frameOptions: string | undefined }> {
+  const r = await rawRequest(port, host, target, { headers });
+  return {
+    status: r.status,
+    type: r.headers['content-type'] ?? '',
+    body: r.body,
+    frameOptions: r.headers['x-frame-options'] as string | undefined,
+  };
 }
 
 /** A PNG signature followed by bytes that differ per call site. */
@@ -111,6 +132,10 @@ describe.each([
     expect(r.headers.get('cross-origin-opener-policy')).toBeNull();
     expect(r.headers.get('strict-transport-security')).toBeNull();
     expect(r.headers.getSetCookie()).toEqual([]);
+    // Anyone holding the URL may read it, a sandboxed page (`Origin: null`) included; nothing
+    // ever lets a browser send credentials along.
+    expect(r.headers.get('access-control-allow-origin')).toBe('*');
+    expect(r.headers.get('access-control-allow-credentials')).toBeNull();
   }
 
   test('serves files with exactly the content headers', async () => {
@@ -129,9 +154,15 @@ describe.each([
     expect(r.headers.get('x-frame-options')).toBeNull();
     expect(r.headers.get('content-length')).toBe(String(Buffer.byteLength(html)));
     expect(r.headers.get('accept-ranges')).toBe('bytes');
+    expect(r.headers.get('access-control-allow-origin')).toBe('*');
+    expect(r.headers.get('access-control-expose-headers')).toBe(
+      'Accept-Ranges, Content-Range, ETag',
+    );
     expect([...r.headers.keys()].sort()).toEqual(
       [
         'accept-ranges',
+        'access-control-allow-origin',
+        'access-control-expose-headers',
         'cache-control',
         'content-length',
         'content-type',
@@ -367,14 +398,88 @@ describe.each([
 
   test('only GET and HEAD are served', async () => {
     const { token } = await grantFor({ 'index.html': '<p>x</p>' });
-    for (const method of ['POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']) {
+    for (const method of ['POST', 'PUT', 'DELETE', 'PATCH']) {
       for (const tok of [token, 'a'.repeat(32)]) {
         const r = await fetchContent(ctx, tok, 'index.html', { method });
         expect(r.status, method).toBe(405);
-        expect(r.headers.get('allow')).toBe('GET, HEAD');
+        expect(r.headers.get('allow')).toBe('GET, HEAD, OPTIONS');
         expectContentHeaders(r);
       }
     }
+  });
+
+  test('a sandboxed page can load its own scripts, fonts and data across origins', async () => {
+    const { token } = await grantFor({
+      'index.html': '<script type="module" src="app.js"></script>',
+      'app.js': 'export const x = 1;',
+      'fonts/body.woff2': Buffer.from('wOF2-font'),
+      'data.json': '{"rows":[]}',
+    });
+    const port = await listen(ctx);
+    const host = single ? 'localhost:8080' : `${token}.pw-content.test`;
+    const at = (path: string) => (single ? `/c/${token}/${path}` : `/${path}`);
+    // What a document without allow-same-origin sends for its own files: an opaque origin.
+    const opaque = { origin: 'null', 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors' };
+
+    for (const [path, dest, body] of [
+      ['app.js', 'script', 'export const x = 1;'],
+      ['fonts/body.woff2', 'font', 'wOF2-font'],
+      ['data.json', 'empty', '{"rows":[]}'],
+    ] as const) {
+      const r = await rawRequest(port, host, at(path), {
+        headers: { ...opaque, 'sec-fetch-dest': dest },
+      });
+      expect(r.status, path).toBe(200);
+      expect(r.body, path).toBe(body);
+      expect(r.headers['access-control-allow-origin'], path).toBe('*');
+      expect(r.headers['access-control-allow-credentials'], path).toBeUndefined();
+      expect(r.headers['access-control-expose-headers'], path).toBe(
+        'Accept-Ranges, Content-Range, ETag',
+      );
+    }
+
+    // A fetch with a Range or a header of its own is preflighted; the preflight needs no grant
+    // lookup and allows reading only.
+    for (const tok of [token, 'a'.repeat(32)]) {
+      const target = single ? `/c/${tok}/data.json` : '/data.json';
+      const preflight = await rawRequest(port, single ? host : `${tok}.pw-content.test`, target, {
+        method: 'OPTIONS',
+        headers: {
+          ...opaque,
+          'sec-fetch-dest': 'empty',
+          'access-control-request-method': 'GET',
+          'access-control-request-headers': 'range,x-requested-with',
+        },
+      });
+      expect(preflight.status).toBe(204);
+      expect(preflight.body).toBe('');
+      expect(preflight.headers).toMatchObject({
+        'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'GET, HEAD',
+        'access-control-allow-headers': 'range,x-requested-with',
+        allow: 'GET, HEAD, OPTIONS',
+        vary: 'Access-Control-Request-Headers',
+        'cache-control': 'private, max-age=300, no-transform',
+        'x-content-type-options': 'nosniff',
+      });
+      expect(preflight.headers['access-control-allow-credentials']).toBeUndefined();
+      expect(preflight.headers['set-cookie']).toBeUndefined();
+      expect(preflight.headers['content-security-policy']).toBe(
+        single ? CONTENT_SANDBOX_CSP : undefined,
+      );
+    }
+
+    // Only a plain list of header names is echoed back.
+    const odd = await rawRequest(port, host, at('data.json'), {
+      method: 'OPTIONS',
+      headers: {
+        ...opaque,
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': 'range, <x>',
+      },
+    });
+    expect(odd.status).toBe(204);
+    expect(odd.headers['access-control-allow-headers']).toBeUndefined();
   });
 
   test('missing files get a 404 page with content headers', async () => {

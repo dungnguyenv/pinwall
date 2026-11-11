@@ -33,11 +33,23 @@ const ERROR_STATUS: Record<ContentErrorKind, number> = {
 /** Directory requests try these, in order. */
 const INDEX_NAMES = ['index.html', 'index.md'] as const;
 
+/** What a content URL answers to; `OPTIONS` only as a CORS preflight. */
+const ALLOW = 'GET, HEAD, OPTIONS';
+
+/** A comma-separated list of header names, as `Access-Control-Request-Headers` carries it. */
+const HEADER_NAMES = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:[ \t]*,[ \t]*[!#$%&'*+.^_`|~0-9A-Za-z-]+)*$/;
+
 /**
  * The headers of every content response, errors and redirects included: nothing of the app's
  * (no `frame-ancestors`, no `X-Frame-Options`, no cookie). The sandbox policy is added in
  * single-domain mode, where content shares the app's origin. An error response (`status` 400 or
  * more) is never cached: the file, the grant or the blob it lacks may be back a moment later.
+ *
+ * Every response allows any origin to read it (CORS). A document sandboxed without
+ * `allow-same-origin` has an opaque origin, so its requests for its own files (module scripts,
+ * fonts, `fetch`) are cross-origin with `Origin: null`, and the browser would block them. The URL
+ * is the capability and content never reads cookies, so `*` lets nobody read more than what the
+ * URL already gives; credentials are never allowed.
  */
 export function contentHeaders(config: Config, status = 200): Record<string, string> {
   return {
@@ -45,6 +57,8 @@ export function contentHeaders(config: Config, status = 200): Record<string, str
       status >= 400 ? 'no-store, no-transform' : 'private, max-age=300, no-transform',
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Range, ETag',
     ...(config.isolation.mode === 'single-domain'
       ? { 'Content-Security-Policy': CONTENT_SANDBOX_CSP }
       : {}),
@@ -98,10 +112,14 @@ export function contentErrorResponse(c: Context<AppEnv>, kind: ContentErrorKind)
   return reply(c, ERROR_STATUS[kind], { 'Content-Type': HTML }, renderContentErrorPage(kind));
 }
 
-/** Allows GET and HEAD only, and turns anything `serve` throws into the content 500 page. */
+/**
+ * Serves GET and HEAD, answers a CORS preflight (`OPTIONS`), refuses other methods, and turns
+ * anything `serve` throws into the content 500 page.
+ */
 async function guarded(c: Context<AppEnv>, serve: () => Promise<Response>): Promise<Response> {
+  if (c.req.method === 'OPTIONS') return preflight(c);
   if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
-    return reply(c, 405, { Allow: 'GET, HEAD' }, null);
+    return reply(c, 405, { Allow: ALLOW }, null);
   }
   try {
     return await serve();
@@ -117,6 +135,24 @@ async function guarded(c: Context<AppEnv>, serve: () => Promise<Response>): Prom
     );
     return contentErrorResponse(c, 'error');
   }
+}
+
+/**
+ * The answer to a CORS preflight: reading is allowed, with whatever request headers the page
+ * asks for (content ignores all but `Range` and the conditional ones, so allowing more grants
+ * nothing). It never looks the grant up: the request that follows does, and answers for it.
+ */
+function preflight(c: Context<AppEnv>): Response {
+  const headers: Record<string, string> = {
+    Allow: ALLOW,
+    'Access-Control-Allow-Methods': 'GET, HEAD',
+    Vary: 'Access-Control-Request-Headers',
+  };
+  const requested = c.req.header('access-control-request-headers')?.trim();
+  if (requested !== undefined && HEADER_NAMES.test(requested)) {
+    headers['Access-Control-Allow-Headers'] = requested;
+  }
+  return reply(c, 204, headers, null);
 }
 
 /** The grant, or the page that says why there is none (404, 410 gone, 410 expired). */
