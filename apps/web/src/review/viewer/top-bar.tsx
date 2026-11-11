@@ -6,7 +6,7 @@ import {
   MessageSquarePlus,
   Share,
 } from 'lucide-react';
-import { useContext, useEffect, useId, useRef } from 'react';
+import { useContext, useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router';
 import type { ApiError } from '../../api/client.ts';
@@ -24,6 +24,7 @@ import {
   Tooltip,
 } from '../../ui/index.ts';
 import type { Device } from '../frame/device.ts';
+import { ShareDialog } from '../share/share-dialog.tsx';
 import { DevicePicker } from './device-picker.tsx';
 import { ReviewMenu } from './review-menu.tsx';
 import { keysOf } from './shortcuts.ts';
@@ -35,6 +36,8 @@ export interface TopBarProps {
   meId: string;
   /** The version shown; null while none is. */
   shown: number | null;
+  /** The version shown as the server describes it; null while it is not known, or none is shown. */
+  shownVersion: VersionSummary | null;
   /** Whether the review follows the latest version rather than one chosen in the address. */
   follow: boolean;
   versions: UseInfiniteQueryResult<InfiniteData<VersionList>, ApiError>;
@@ -169,6 +172,7 @@ function CommentsToggle({
 export function TopBar(p: TopBarProps) {
   const { t } = useTranslation();
   const commentKeys = keysOf('commentMode');
+  const [sharing, setSharing] = useState(false);
   // The versions read so far; a next page means there are more than the first page holds.
   const versionCount = p.versions.hasNextPage
     ? Math.max(p.versionList.length, 2)
@@ -227,7 +231,13 @@ export function TopBar(p: TopBarProps) {
       ) : null}
       <CommentsToggle open={p.commentsOpen} count={p.openCount} onToggle={p.onComments} />
       {p.phone ? null : (
-        <Button size="sm" leadingIcon={<Share />} className="ml-0.5">
+        <Button
+          size="sm"
+          leadingIcon={<Share />}
+          className="ml-0.5"
+          disabled={p.shown === null}
+          onClick={() => setSharing(true)}
+        >
           {t('web.review.share')}
         </Button>
       )}
@@ -244,10 +254,22 @@ export function TopBar(p: TopBarProps) {
               <MenuItem asChild icon={<GitCompareArrows />}>
                 <Link to={p.compareHref}>{t('web.review.compare')}</Link>
               </MenuItem>
-              <MenuItem icon={<Share />}>{t('web.review.share')}</MenuItem>
+              <MenuItem
+                icon={<Share />}
+                disabled={p.shown === null}
+                onSelect={() => setSharing(true)}
+              >
+                {t('web.review.share')}
+              </MenuItem>
             </>
           ) : undefined
         }
+      />
+      <ShareDialog
+        open={sharing}
+        onOpenChange={setSharing}
+        artifact={p.artifact}
+        shown={p.shownVersion}
       />
     </header>
   );

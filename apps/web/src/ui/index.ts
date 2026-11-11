@@ -30,6 +30,7 @@ export { Segmented } from './segmented.tsx';
 export { Select } from './select.tsx';
 export { LoadingRegion, Skeleton } from './skeleton.tsx';
 export { Spinner } from './spinner.tsx';
+export { Switch } from './switch.tsx';
 export { Tabs, TabsContent, TabsList, TabsTrigger } from './tabs.tsx';
 export { Textarea } from './textarea.tsx';
 export { Toaster, toast } from './toast.tsx';

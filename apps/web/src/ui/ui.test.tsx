@@ -24,6 +24,7 @@ import {
   MenuTrigger,
   Select,
   Skeleton,
+  Switch,
   Tabs,
   TabsContent,
   TabsList,
@@ -466,4 +467,38 @@ test('copy field copies with the Clipboard API and without it', async () => {
   expect(field.selectionStart).toBe(0);
   expect(field.selectionEnd).toBe(field.value.length);
   expect(screen.getByRole('status')).toHaveTextContent('Press Ctrl+C to copy.');
+});
+
+function SwitchHarness({ disabled = false }: { disabled?: boolean }) {
+  const [on, setOn] = useState(false);
+  return (
+    <Switch
+      label="Allow comments"
+      description="People with the link can comment."
+      checked={on}
+      onCheckedChange={setOn}
+      disabled={disabled}
+    />
+  );
+}
+
+test('switch toggles from its label or the keyboard, and says what on means', async () => {
+  const user = userEvent.setup();
+  const first = render(<SwitchHarness />);
+  const control = screen.getByRole('switch', { name: 'Allow comments' });
+  expect(control).toHaveAccessibleDescription('People with the link can comment.');
+  expect(control).toHaveAttribute('aria-checked', 'false');
+
+  await user.click(screen.getByText('Allow comments'));
+  expect(control).toHaveAttribute('aria-checked', 'true');
+  control.focus();
+  await user.keyboard(' ');
+  expect(control).toHaveAttribute('aria-checked', 'false');
+  first.unmount();
+
+  render(<SwitchHarness disabled />);
+  const locked = screen.getByRole('switch', { name: 'Allow comments' });
+  expect(locked).toBeDisabled();
+  await user.click(locked);
+  expect(locked).toHaveAttribute('aria-checked', 'false');
 });
