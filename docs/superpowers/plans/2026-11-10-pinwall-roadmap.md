@@ -252,7 +252,7 @@ Contract (M5 builds the annotator, M8 the viewer): the annotator defines one glo
 | M1 | Foundation | `…-m1-foundation.md` | — | done |
 | M2 | Owner account, sessions, API tokens | `…-m2-identity.md` | M1 | done |
 | M3 | OIDC, roles, access re-check | `…-m3-oidc.md` | M2 | done |
-| M4 | Publishing and content serving | `…-m4a-publishing-core.md` (Tasks 1–6), `…-m4b-publishing-http.md` (Tasks 7–13) | M2 | |
+| M4 | Publishing and content serving | `…-m4a-publishing-core.md` (Tasks 1–6), `…-m4b-publishing-http.md` (Tasks 7–13) | M2 | done |
 | M5 | Comments, sharing, live updates, annotator | `…-m5-review-server.md` | M4 | |
 | M6 | MCP, OAuth authorization server, agent skill | `…-m6-mcp.md` | M3, M5 | |
 | M7 | Web app: shell, library, accounts, admin | `…-m7a-web-shell.md` (Tasks 1–7), `…-m7b-web-accounts-admin.md` (Tasks 8–12) | M3, M4 | |
