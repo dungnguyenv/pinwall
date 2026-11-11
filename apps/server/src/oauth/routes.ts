@@ -1,57 +1,28 @@
 import type { Context, Hono } from 'hono';
 import type { AppEnv } from '../app.ts';
 import { enforceRateLimit } from '../auth/rate-limits.ts';
+import type { AppDeps } from '../deps.ts';
 import { AppError, payloadTooLarge } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { renderErrorPage } from '../pages/error-page.tsx';
+import { mediaType, readBody } from './body.ts';
 import { registerClient } from './clients.ts';
 import { OAUTH_RATES } from './constants.ts';
 import { OAuthError, oauthJson } from './errors.ts';
 import { authorizationServerMetadata, protectedResourceMetadata } from './metadata.ts';
 import { AuthorizePageError, startAuthorization } from './requests.ts';
+import { exchangeCode, readTokenForm, type TokenResponse } from './tokens.ts';
 
-/** The largest request body an OAuth endpoint reads. */
-const MAX_BODY_BYTES = 65_536;
+/** The largest registration request body read. */
+const MAX_REGISTRATION_BYTES = 65_536;
 
-function tooLarge(): Error {
-  return payloadTooLarge(t('oauth.body.tooLarge'));
-}
-
-/**
- * The request body as text, read inside the handler so `oauthJson` shapes a refusal: a declared
- * length over `MAX_BODY_BYTES` is refused before reading, and reading stops once the body
- * passes it.
- */
-async function readBody(c: Context<AppEnv>): Promise<string> {
-  const declared = Number(c.req.header('content-length'));
-  if (declared > MAX_BODY_BYTES) throw tooLarge();
-  const stream = c.req.raw.body;
-  if (!stream) return '';
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > MAX_BODY_BYTES) {
-      await reader.cancel();
-      throw tooLarge();
-    }
-    chunks.push(value);
-  }
-  return new TextDecoder().decode(Buffer.concat(chunks));
-}
-
-function isJsonMediaType(contentType: string | undefined): boolean {
-  return (contentType ?? '').split(';')[0]?.trim().toLowerCase() === 'application/json';
-}
+const tooLarge = (): Error => payloadTooLarge(t('oauth.body.tooLarge'));
 
 /** The registration request's JSON body; anything but JSON is `invalid_client_metadata`. */
 async function readClientMetadata(c: Context<AppEnv>): Promise<unknown> {
   const notJson = () => new OAuthError('invalid_client_metadata', t('oauth.register.body'));
-  if (!isJsonMediaType(c.req.header('content-type'))) throw notJson();
-  const text = await readBody(c);
+  if (mediaType(c.req.header('content-type')) !== 'application/json') throw notJson();
+  const text = await readBody(c, MAX_REGISTRATION_BYTES, tooLarge);
   try {
     return JSON.parse(text);
   } catch {
@@ -101,11 +72,21 @@ async function authorize(c: Context<AppEnv>): Promise<Response> {
   }
 }
 
+/** The tokens the form's `grant_type` stands for; any type but those supported is refused. */
+async function grantTokens(deps: AppDeps, form: URLSearchParams): Promise<TokenResponse> {
+  switch (form.get('grant_type')) {
+    case 'authorization_code':
+      return exchangeCode(deps, form);
+    default:
+      throw new OAuthError('unsupported_grant_type', t('oauth.token.grantType'));
+  }
+}
+
 /**
  * Pinwall's OAuth authorization server for its MCP resource: the metadata documents (JSON for
- * every client, browsers included), the RFC 7591 registration endpoint, whose every refusal is
- * RFC 6749 JSON, and the authorization endpoint, which hands off to the SPA's consent page. Its
- * URLs all come from the public origin. Mount it before the SPA.
+ * every client, browsers included), the authorization endpoint, which hands off to the SPA's
+ * consent page, and the registration (RFC 7591) and token endpoints, whose every refusal is
+ * RFC 6749 JSON. Its URLs all come from the public origin. Mount it before the SPA.
  */
 export function mountOAuth(app: Hono<AppEnv>): void {
   app.get('/.well-known/oauth-authorization-server', (c) =>
@@ -131,4 +112,15 @@ export function mountOAuth(app: Hono<AppEnv>): void {
   );
 
   app.get('/oauth/authorize', authorize);
+
+  app.post(
+    '/oauth/token',
+    oauthJson(async (c) => {
+      // Counted before the body is read, so malformed requests use up the limit too.
+      await enforceRateLimit(c, OAUTH_RATES.token);
+      // RFC 6749 §5.1, with the `Cache-Control: no-store` every OAuth answer carries.
+      c.header('Pragma', 'no-cache');
+      return c.json(await grantTokens(c.var.deps, await readTokenForm(c)));
+    }),
+  );
 }

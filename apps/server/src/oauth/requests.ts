@@ -65,7 +65,8 @@ export class AuthorizePageError extends Error {
 }
 
 const requestKey = (id: string) => `oauth:request:${hashSecret(id)}`;
-const codeKey = (code: string) => `oauth:code:${hashSecret(code)}`;
+/** Where an authorization code waits in the one-time store: under its hash, never itself. */
+export const codeKey = (code: string): string => `oauth:code:${hashSecret(code)}`;
 
 const expired = () => notFound(t('oauth.request.expired'));
 

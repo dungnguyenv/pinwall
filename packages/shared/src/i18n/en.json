@@ -591,5 +591,13 @@
   "oauth.authorize.state": "The state parameter is longer than 1024 characters.",
   "oauth.authorize.resource": "This server only issues tokens for {{resource}}.",
   "oauth.request.expired": "This authorization request has expired or was already answered.",
-  "oauth.consent.unnamedUser": "Unnamed user"
+  "oauth.consent.unnamedUser": "Unnamed user",
+  "oauth.token.form": "Send the request as application/x-www-form-urlencoded.",
+  "oauth.token.repeated": "Send each parameter at most once.",
+  "oauth.token.grantType": "Supported grant types are authorization_code and refresh_token.",
+  "oauth.token.unknownClient": "Unknown client_id. Register the client again.",
+  "oauth.token.badCode": "The authorization code is invalid, expired or already used.",
+  "oauth.token.mismatch": "The code was issued for another client or redirect_uri, or the code_verifier does not match.",
+  "oauth.token.resource": "Tokens are issued only for {{resource}}.",
+  "oauth.token.accessEnded": "Your Pinwall access could not be confirmed. Sign in again."
 }

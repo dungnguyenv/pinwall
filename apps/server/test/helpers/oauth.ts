@@ -99,3 +99,48 @@ export async function approve(
   if (code === null) throw new Error(`the decision sent no code: ${redirect_to}`);
   return { code, verifier, redirectTo };
 }
+
+/**
+ * Posts `form` to the token endpoint (or `/oauth/revoke`) as a public client does: an
+ * `application/x-www-form-urlencoded` body, no cookie, no `Origin`.
+ */
+export function tokenRequest(
+  ctx: TestContext,
+  form: Record<string, string>,
+  path: '/oauth/token' | '/oauth/revoke' = '/oauth/token',
+): Promise<Response> {
+  return ctx.request(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(form).toString(),
+  });
+}
+
+/**
+ * The whole sign-in of an MCP client for the holder of `cookie`: registers a new client,
+ * approves it and redeems the code at the token endpoint for the MCP resource. Returns the
+ * client and the access and refresh tokens it got.
+ */
+export async function issueTestTokens(
+  ctx: TestContext,
+  cookie: string,
+): Promise<{ clientId: string; redirectUri: string; access: string; refresh: string }> {
+  const { clientId, redirectUri } = await registerTestClient(ctx);
+  const { code, verifier } = await approve(ctx, cookie, { clientId, redirectUri });
+  const r = await tokenRequest(ctx, {
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: redirectUri,
+    code_verifier: verifier,
+    client_id: clientId,
+    resource: new URL('/mcp', ctx.deps.config.publicOrigin).href,
+  });
+  if (r.status !== 200) {
+    throw new Error(`POST /oauth/token answered ${r.status}: ${await r.text()}`);
+  }
+  const { access_token, refresh_token } = (await r.json()) as {
+    access_token: string;
+    refresh_token: string;
+  };
+  return { clientId, redirectUri, access: access_token, refresh: refresh_token };
+}
