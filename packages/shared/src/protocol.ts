@@ -12,8 +12,11 @@
  * - Each frame of a review grant posts `ready` once its DOM is loaded (DOMContentLoaded). On every
  *   `ready` the viewer sends `set-mode` and `show-anchors` to all frames under its review frame.
  * - Each annotator keeps the anchors whose `page` is its own page and always answers with
- *   `anchors-placed`, listing every anchor it kept. `found` is true when a text or element anchor
- *   re-attached by its quote or DOM path, and always for a point anchor.
+ *   `anchors-placed`, listing every anchor it kept and `via`, how it placed it: by its quote, its
+ *   DOM path, or its stored position. `found` is true for a point anchor, for a text anchor placed
+ *   by its quote, for an element anchor placed by its DOM path, and for a text anchor placed by
+ *   its DOM path only while that element's text still holds the quote (whitespace and Unicode
+ *   normalized); otherwise the pin sits at the element or the position, and `found` is false.
  * - A frame that has not posted `ready` within 3 seconds of its `load` event has no annotator
  *   (its own Content-Security-Policy may block the script); the viewer places point comments for
  *   it on its own overlay.
@@ -100,6 +103,9 @@ export const Anchor = z
   );
 export type Anchor = z.infer<typeof Anchor>;
 
+/** How an annotator placed an anchor: by its quote, its DOM path, or its stored position. */
+const PlacedVia = z.enum(['quote', 'dom', 'position']);
+
 /** Fields of every message, in either direction. */
 const envelope = { pinwall: z.literal(PROTOCOL_VERSION) };
 
@@ -114,7 +120,7 @@ export const PageToViewerMessage = z.discriminatedUnion('type', [
     ...envelope,
     type: z.literal('anchors-placed'),
     results: z
-      .array(z.object({ id: MessageId, found: z.boolean() }))
+      .array(z.object({ id: MessageId, found: z.boolean(), via: z.optional(PlacedVia) }))
       .check(z.maxLength(MAX_ANCHORS)),
     frameId: MessageId,
   }),

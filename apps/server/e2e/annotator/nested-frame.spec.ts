@@ -68,7 +68,7 @@ test('pins a comment on text inside a nested frame', async ({ page }) => {
     .poll(async () =>
       (await receivedOf(page, 'anchors-placed')).map((m) => [m.frameId === innerId, m.results]),
     )
-    .toContainEqual([true, [{ id: 'c1', found: true }]]);
+    .toContainEqual([true, [{ id: 'c1', found: true, via: 'quote' }]]);
   const pin = inner.locator('pinwall-overlay [data-pin-id="c1"]');
   await expect(pin).toHaveText('1');
   expect(await target.boundingBox()).toEqual(box);

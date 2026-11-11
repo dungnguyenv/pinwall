@@ -297,7 +297,7 @@ test('a same-document navigation posts navigated and re-applies anchors', () => 
   expect(sent('anchors-placed').at(-1)).toEqual({
     pinwall: 1,
     type: 'anchors-placed',
-    results: [{ id: 'c9', found: true }],
+    results: [{ id: 'c9', found: true, via: 'position' }],
     frameId,
   });
   // A fragment change is not another page.
@@ -352,7 +352,7 @@ test('a nested frame runs its own annotator and reports its own page', () => {
     {
       pinwall: 1,
       type: 'anchors-placed',
-      results: [{ id: 'c2', found: true }],
+      results: [{ id: 'c2', found: true, via: 'quote' }],
       frameId: own?.frameId,
     },
   ]);

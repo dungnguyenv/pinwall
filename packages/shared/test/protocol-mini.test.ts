@@ -83,4 +83,17 @@ test('messages validate under zod/mini as under zod', () => {
     frameId: 'f1',
   });
   expect(parsePageMessage({ pinwall: 1, type: 'pin-clicked', id: '' })).toBeNull();
+  const placed = {
+    pinwall: 1,
+    type: 'anchors-placed',
+    results: [
+      { id: 'c1', found: true, via: 'quote' },
+      { id: 'c2', found: false },
+    ],
+    frameId: 'f1',
+  };
+  expect(parsePageMessage(placed)).toEqual(placed);
+  expect(
+    parsePageMessage({ ...placed, results: [{ id: 'c1', found: true, via: 'path' }] }),
+  ).toBeNull();
 });

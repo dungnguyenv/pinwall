@@ -105,6 +105,16 @@ test('every page message parses, and ids stay short', () => {
     { pinwall: 1, type: 'ready', page: 'a.html', frameId: 'f1' },
     { pinwall: 1, type: 'anchor-picked', anchor: text, frameId: 'f1' },
     { pinwall: 1, type: 'anchors-placed', results: [{ id: 'c1', found: true }], frameId: 'f1' },
+    {
+      pinwall: 1,
+      type: 'anchors-placed',
+      results: [
+        { id: 'c1', found: true, via: 'quote' },
+        { id: 'c2', found: false, via: 'dom' },
+        { id: 'c3', found: false, via: 'position' },
+      ],
+      frameId: 'f1',
+    },
     { pinwall: 1, type: 'pin-clicked', id: 'c1' },
     { pinwall: 1, type: 'navigated', page: 'docs/', frameId: 'f2' },
   ];
@@ -114,6 +124,12 @@ test('every page message parses, and ids stay short', () => {
     { pinwall: 1, type: 'pin-clicked', id: 'x'.repeat(65) },
     { pinwall: 1, type: 'ready', page: '', frameId: 'f'.repeat(65) },
     { pinwall: 1, type: 'anchor-picked', anchor: { ...text, kind: 'element', dom: undefined } },
+    {
+      pinwall: 1,
+      type: 'anchors-placed',
+      results: [{ id: 'c1', found: true, via: 'path' }],
+      frameId: 'f1',
+    },
     {
       pinwall: 1,
       type: 'anchors-placed',

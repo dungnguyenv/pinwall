@@ -31,7 +31,7 @@ import {
   stopImmediatePropagation,
   windowListeners,
 } from './pristine.ts';
-import { placeAnchor } from './reattach.ts';
+import { type Placement, placeAnchor } from './reattach.ts';
 import { buildTextIndex, type TextIndex } from './text-index.ts';
 
 export interface BootOptions {
@@ -49,7 +49,7 @@ export interface Annotator {
 }
 
 type ShowAnchors = Extract<ViewerToPageMessage, { type: 'show-anchors' }>['anchors'];
-type Result = { id: string; found: boolean };
+type Result = { id: string; found: boolean; via: Placement['via'] };
 type Win = Window & typeof globalThis;
 
 /** Unfound anchors are placed again this long after `show-anchors` (pages that render late). */
@@ -77,12 +77,15 @@ function newFrameId(win: Win): string {
 }
 
 function sameResults(a: readonly Result[], b: readonly Result[]): boolean {
-  return a.length === b.length && a.every((r, i) => r.id === b[i]?.id && r.found === b[i]?.found);
+  return (
+    a.length === b.length &&
+    a.every((r, i) => r.id === b[i]?.id && r.found === b[i]?.found && r.via === b[i]?.via)
+  );
 }
 
 /** An index with no text: for anchors without a quote, and pages whose text cannot be read. */
 function emptyIndex(doc: Document): TextIndex {
-  return { text: '', toOffset: () => 0, toRange: () => createRange(doc) };
+  return { text: '', complete: false, toOffset: () => 0, toRange: () => createRange(doc) };
 }
 
 /**
@@ -173,7 +176,11 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
       anchor,
       placement: placeAnchor(doc, anchor.kind === 'text' ? textIndex() : none, anchor),
     }));
-    const next = pins.map((pin) => ({ id: pin.id, found: pin.placement.found }));
+    const next = pins.map(({ id, placement }) => ({
+      id,
+      found: placement.found,
+      via: placement.via,
+    }));
     unfound = next.some((r) => !r.found);
     const changed = !sameResults(next, results);
     results = next;
