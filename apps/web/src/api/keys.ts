@@ -1,3 +1,5 @@
+import type { ThreadScope } from '../review/comments/threads.ts';
+
 /** Which artifacts a list shows: one project's, a search's, or all of them. */
 export interface ArtifactFilter {
   projectId?: string;
@@ -37,4 +39,32 @@ export const qk = {
   adminConfig: ['admin', 'config'] as const,
   /** An OAuth authorization request waiting on the consent page. */
   consent: (id: string) => ['oauth', 'consent', id] as const,
+  /** The versions of an artifact, newest first, a page at a time. */
+  versions: (id: string) => ['versions', id] as const,
+  /**
+   * A content grant for one version (`null`: none chosen yet). Its own prefix,
+   * not under `versions`: refreshing the version list must not hand the frame
+   * a new URL.
+   */
+  preview: (id: string, n: number | null, mode: 'review' | 'raw') =>
+    ['preview', id, n, mode] as const,
+  /**
+   * Every comment thread of an artifact, or of what a share link shows. A
+   * share scope holds the link's token: like every key, it lives in memory
+   * only, and signing out drops it.
+   */
+  threads: (scope: ThreadScope) =>
+    scope.kind === 'artifact'
+      ? (['threads', 'artifact', scope.artifactId] as const)
+      : (['threads', 'share', scope.token] as const),
+  shareLinks: (id: string) => ['share-links', id] as const,
+  shareInfo: (token: string) => ['share', 'info', token] as const,
+  /** The files that changed between two versions; `null` while a side is not chosen. */
+  diff: (id: string, from: number | null, to: number | null) => ['diff', id, from, to] as const,
+  /** The unified diff of one text file between two versions. */
+  fileDiff: (id: string, from: number | null, to: number | null, path: string | null) =>
+    ['diff', id, from, to, 'file', path] as const,
+  /** The block diff of one Markdown file between two versions. */
+  mdDiff: (id: string, from: number | null, to: number | null, path: string | null) =>
+    ['diff', id, from, to, 'markdown', path] as const,
 };
