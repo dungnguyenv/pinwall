@@ -364,15 +364,12 @@ export function Sidebar({
         <button
           type="button"
           aria-keyshortcuts={ariaKeyShortcuts(SEARCH_SHORTCUT)}
-          className={cn(ROW, 'group')}
+          className={ROW}
           onClick={openSearch}
         >
           <Search aria-hidden="true" className="text-fg-muted" />
           <span className="min-w-0 flex-1 truncate">{t('web.sidebar.search')}</span>
-          <span
-            aria-hidden="true"
-            className="opacity-70 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 pointer-coarse:hidden"
-          >
+          <span aria-hidden="true" className="pointer-coarse:hidden">
             <Kbd keys={SEARCH_SHORTCUT} />
           </span>
         </button>
