@@ -74,7 +74,7 @@ export async function resolveSession(
   if (now - session.last_seen_at < SESSION_TOUCH_INTERVAL_MS) {
     return { session, user, refreshed: false };
   }
-  // M3's inline IdP re-check rides on these renewals, in resolveAuth's session branch.
+  // The inline IdP re-check (resolveAuth's session branch) runs on any request once it is due.
   const expiresAt = now + deps.config.ttl.sessionMs;
   const touched = await db
     .updateTable('sessions')

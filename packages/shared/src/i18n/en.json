@@ -57,5 +57,6 @@
   "oidc.noAccess.noEmail": "No email address",
   "oidc.noAccess.unverified": "Email address not verified",
   "oidc.noAccess.switch": "Use a different account",
-  "oidc.noAccess.retryHint": "If {{idp}} picks the same account again, sign out of {{idp}} first, then try again."
+  "oidc.noAccess.retryHint": "If {{idp}} picks the same account again, sign out of {{idp}} first, then try again.",
+  "oidc.recheckRequired": "Your access could not be confirmed with your identity provider. Sign in to Pinwall again."
 }

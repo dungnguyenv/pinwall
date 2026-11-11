@@ -3,6 +3,7 @@ import type { AppEnv, AuthContext } from '../app.ts';
 import type { AppDeps } from '../deps.ts';
 import { AppError, unauthorized } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
+import { gateUser } from './oidc/gate.ts';
 import { hasAccess } from './roles.ts';
 import { clearSessionCookie, readSessionCookie, setSessionCookie } from './session-cookie.ts';
 import { deleteSession, resolveSession } from './sessions.ts';
@@ -20,9 +21,13 @@ export interface BearerResolver {
 const BEARER_HEADER = /^Bearer (\S+)$/i;
 
 /** RFC 6750 §3: the challenge says why the token was refused. */
-function bearerRefused(c: Context<AppEnv>, error: 'invalid_request' | 'invalid_token'): AppError {
+function bearerRefused(
+  c: Context<AppEnv>,
+  error: 'invalid_request' | 'invalid_token',
+  message = t('auth.invalidToken'),
+): AppError {
   c.header('WWW-Authenticate', `Bearer error="${error}"`);
-  return unauthorized(t('auth.invalidToken'));
+  return unauthorized(message);
 }
 
 async function authFromBearer(
@@ -35,11 +40,13 @@ async function authFromBearer(
   const resolver = resolvers.find((r) => r.matches(token));
   const auth = resolver ? await resolver.resolve(c.var.deps, token) : null;
   if (!auth) throw bearerRefused(c, 'invalid_token');
-  // M3 puts its IdP access gate (no inline re-check) here, before hasAccess.
-  if (!hasAccess(auth.user)) {
+  // Never waits on the IdP: a token whose user's last IdP check is too old is refused.
+  const gate = await gateUser(c.var.deps, auth.user, { inline: false });
+  if (!gate.ok) throw bearerRefused(c, 'invalid_token', t('oidc.recheckRequired'));
+  if (!hasAccess(gate.user)) {
     throw new AppError('access_denied', 403, t('auth.accessDenied'));
   }
-  return auth;
+  return { ...auth, user: gate.user };
 }
 
 async function authFromCookie(c: Context<AppEnv>): Promise<AuthContext | null> {
@@ -51,14 +58,15 @@ async function authFromCookie(c: Context<AppEnv>): Promise<AuthContext | null> {
     clearSessionCookie(c);
     return null;
   }
-  // M3 puts its IdP access gate (inline re-check when due) here, before hasAccess.
-  if (!hasAccess(found.user)) {
+  // A due IdP user is re-checked with the IdP before this request is answered.
+  const gate = await gateUser(deps, found.user, { inline: true });
+  if (!gate.ok || !hasAccess(gate.user)) {
     await deleteSession(deps, found.session.id_hash);
     clearSessionCookie(c);
     return null;
   }
   if (found.refreshed) setSessionCookie(c, secret);
-  return { user: found.user, via: 'session', sessionId: found.session.id_hash };
+  return { user: gate.user, via: 'session', sessionId: found.session.id_hash };
 }
 
 /**
