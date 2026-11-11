@@ -194,8 +194,8 @@ export const fx = {
 
   /**
    * What a link without comments shows: version 1 of an HTML artifact, as raw
-   * files. With `allow_comments` its grant is a review grant, as the server
-   * sends it.
+   * files, with "Open original" for link `tok`. With `allow_comments` its grant
+   * is a review grant, as the server sends it.
    */
   shareInfo(o: Partial<ShareInfo> = {}): ShareInfo {
     const allowComments = o.allow_comments ?? false;
@@ -206,6 +206,7 @@ export const fx = {
       follows_current: true,
       allow_comments: allowComments,
       expires_at: null,
+      original_url: 'http://localhost:3000/s/tok/original',
       content: fx.grant({ mode: allowComments ? 'review' : 'raw' }),
       ...o,
     });

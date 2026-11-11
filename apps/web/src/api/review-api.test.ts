@@ -316,7 +316,9 @@ test('share link calls use the member routes and the share viewer routes', async
     'tok',
   );
   await revokeShareLink('shl_1');
-  expect((await getShareInfo('tok')).artifact_name).toBe('Homepage');
+  const info = await getShareInfo('tok');
+  expect(info.artifact_name).toBe('Homepage');
+  expect(info.original_url).toBe('http://localhost:3000/s/tok/original');
   await unlockShare('tok', 'secret-password');
 
   expect(seen).toEqual([

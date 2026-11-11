@@ -50,7 +50,10 @@ export function revokeShareLink(linkId: string): Promise<void> {
   return api(`/share-links/${encodeURIComponent(linkId)}`, { method: 'DELETE' });
 }
 
-/** What a share viewer shows: the artifact, the version, and a grant to its content. */
+/**
+ * What a share viewer shows: the artifact, the version, a grant to its content,
+ * and `original_url`, "Open original", which leads to the stored files as they are.
+ */
 export function getShareInfo(token: string): Promise<ShareInfo> {
   return api(sharePath(token), { schema: ShareInfo, ...viewer });
 }
