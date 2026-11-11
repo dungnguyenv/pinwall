@@ -179,7 +179,6 @@ async function ingest(
     const meta = await extractMetadata(
       files.map((file) => metadataFile(deps.blobs, file)),
       entryPath,
-      kind,
     );
     const { artifact, version } = await commitVersion(deps, opts.actor, target, {
       entryPath,

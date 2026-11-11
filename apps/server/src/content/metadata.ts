@@ -1,6 +1,5 @@
 import { Parser } from 'htmlparser2';
 import MarkdownIt, { type Token } from 'markdown-it';
-import type { ArtifactKind } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import { AppError } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
@@ -14,13 +13,24 @@ export const SEARCH_TEXT_MAX_CHARS = 200_000;
 export const MAX_WARNINGS = 50;
 /** Per HTML/CSS file scanned for warnings: bytes beyond this are not scanned. */
 export const SCAN_MAX_BYTES = 5_000_000;
-/** markdown-it's inline parser needs up to ~2.6 µs per byte on hostile input, so it reads less. */
-export const MARKDOWN_MAX_BYTES = 500_000;
+/**
+ * Per Markdown file. markdown-it holds a token for every heading, list item and table cell until
+ * the parse ends (a few hundred bytes of heap per byte of `#\n`), and its inline parser needs up
+ * to ~2 µs per byte on hostile input, so it reads much less than HTML.
+ */
+export const MARKDOWN_MAX_BYTES = 200_000;
+/** Markdown bytes read in all across the files of one version, which bounds its parse time. */
+export const MARKDOWN_BUDGET_BYTES = 500_000;
 /**
  * Bytes read in all across the files of one version for metadata and search text. The file that
  * reaches it is read only up to it, and the files after it are skipped.
  */
 export const SCAN_BUDGET_BYTES = 20_000_000;
+/**
+ * htmlparser2 collects every attribute of a tag before it reports the tag, so a page whose tag has
+ * more than this many stops being scanned at the next write.
+ */
+export const HTML_MAX_ATTRIBUTES = 1_000;
 
 export interface PublishWarning {
   code: 'root_absolute_url';
@@ -116,14 +126,13 @@ const markdown = new MarkdownIt({ html: false, linkify: false, typographer: fals
 /**
  * Reads what a version shows: the title, theme color and thumbnail of its entry page, the text of
  * its pages for search, and the warnings that tell the publisher a page will not load in
- * single-domain mode. Never executes or fetches anything, and never throws on malformed markup:
- * each file is read up to `SCAN_MAX_BYTES` (Markdown up to less), the version up to
- * `SCAN_BUDGET_BYTES`, and what it collects is bounded.
+ * single-domain mode. Every file, the entry too, is scanned by its extension (`.html`/`.htm`,
+ * `.md`, `.css`), as `extractVersionText` does. Never executes or fetches anything, and never
+ * throws on malformed markup: what is read is bounded by `ScanBudget`, and what is collected too.
  */
 export async function extractMetadata(
   files: readonly MetadataFile[],
   entryPath: string,
-  kind: ArtifactKind,
 ): Promise<VersionMetadata> {
   const byPath = new Map(files.map((file) => [file.path, file]));
   const sink = new TextSink(SEARCH_TEXT_MAX_CHARS);
@@ -131,24 +140,22 @@ export async function extractMetadata(
   const probe = new EntryProbe();
 
   const queue = files
-    .map((file) => ({
-      file,
-      type: file.path === entryPath ? entryType(kind) : scanTypeOf(file.path),
-    }))
+    .map((file) => ({ file, type: scanTypeOf(file.path) }))
     .filter((item): item is { file: MetadataFile; type: ScanType } => item.type !== null)
     .sort((a, b) => compareForText(entryPath, a.file.path, b.file.path));
 
-  let budget = SCAN_BUDGET_BYTES;
+  const budget = new ScanBudget();
   for (const { file, type } of queue) {
-    if (budget <= 0) break;
+    if (budget.spent) break;
     const isEntry = file.path === entryPath;
     const wantText = type !== 'css' && !sink.full;
     const wantWarnings = type !== 'markdown' && !warnings.full;
     if (!isEntry && !wantText && !wantWarnings) continue;
 
-    const max = Math.min(readLimit(type), budget);
+    const max = budget.allowance(type);
+    if (max <= 0) continue;
     const bytes = await file.read(max);
-    budget -= Math.min(bytes.length, max);
+    budget.spend(type, Math.min(bytes.length, max));
     const source = decode(bytes, max);
     if (type === 'markdown') {
       scanMarkdown(source, wantText ? sink : null, isEntry ? probe : null);
@@ -177,9 +184,9 @@ export async function extractMetadata(
 /**
  * The search text of a stored version, by the same rule as `extractMetadata`: its entry first,
  * then its other `.html`/`.htm`/`.md` files by path, up to `SEARCH_TEXT_MAX_CHARS`. Only the head
- * of each file is read, and at most `SCAN_BUDGET_BYTES` in all; unlike at publish, stylesheets do
- * not count against that budget, as they are not read here. A file whose blob is missing is
- * logged and skipped, so one lost blob does not stop a re-index.
+ * of each file is read, within the same `ScanBudget`; unlike at publish, stylesheets do not count
+ * against it, as they are not read here. A file whose blob is missing is logged and skipped, so
+ * one lost blob does not stop a re-index.
  */
 export async function extractVersionText(deps: AppDeps, versionId: string): Promise<string> {
   const rows = await deps.db.db
@@ -203,14 +210,15 @@ export async function extractVersionText(deps: AppDeps, versionId: string): Prom
     )
     .sort((a, b) => compareForText(a.row.entryPath, a.row.path, b.row.path));
 
-  let budget = SCAN_BUDGET_BYTES;
+  const budget = new ScanBudget();
   for (const { row, type } of pages) {
-    if (sink.full || budget <= 0) break;
+    if (sink.full || budget.spent) break;
     if (row.size <= 0) continue;
-    const max = Math.min(readLimit(type), budget);
+    const max = budget.allowance(type);
+    if (max <= 0) continue;
     const bytes = await readHead(deps, versionId, row, max);
     if (bytes === null) continue;
-    budget -= bytes.length;
+    budget.spend(type, bytes.length);
     const source = decode(bytes, max);
     if (type === 'markdown') scanMarkdown(source, sink, null);
     else scanHtml(source, row.path, sink, null, null);
@@ -272,10 +280,6 @@ function scanTypeOf(path: string): ScanType | null {
   }
 }
 
-function entryType(kind: ArtifactKind): ScanType {
-  return kind === 'markdown' ? 'markdown' : 'html';
-}
-
 /** The entry first, then the others by path (plain code unit order, the same on every host). */
 function compareForText(entryPath: string, a: string, b: string): number {
   if (a === b) return 0;
@@ -284,9 +288,30 @@ function compareForText(entryPath: string, a: string, b: string): number {
   return a < b ? -1 : 1;
 }
 
-/** Bytes read of a file: `SCAN_MAX_BYTES`, or less for Markdown. */
-function readLimit(type: ScanType): number {
-  return type === 'markdown' ? MARKDOWN_MAX_BYTES : SCAN_MAX_BYTES;
+/**
+ * What one version may still read: `SCAN_BUDGET_BYTES` in all, of which `MARKDOWN_BUDGET_BYTES`
+ * of Markdown, and of each file its own cap. Markdown past its budget is skipped while the other
+ * files are still read.
+ */
+class ScanBudget {
+  private total = SCAN_BUDGET_BYTES;
+  private markdown = MARKDOWN_BUDGET_BYTES;
+
+  /** Nothing more may be read. */
+  get spent(): boolean {
+    return this.total <= 0;
+  }
+
+  /** Bytes to read of the next file of `type`; 0 when it must be skipped. */
+  allowance(type: ScanType): number {
+    if (type === 'markdown') return Math.min(MARKDOWN_MAX_BYTES, this.markdown, this.total);
+    return Math.min(SCAN_MAX_BYTES, this.total);
+  }
+
+  spend(type: ScanType, bytes: number): void {
+    this.total -= bytes;
+    if (type === 'markdown') this.markdown -= bytes;
+  }
 }
 
 function decode(bytes: Buffer, max: number): string {
@@ -435,6 +460,9 @@ function scanHtml(
 ): void {
   sink?.boundary();
   let depth = 0;
+  /** Attributes of the tag being read, and whether any tag had more than allowed. */
+  let attributes = 0;
+  let tooManyAttributes = false;
   /** Inside script, style or template: no text, no metadata. */
   let silent = 0;
   let svg = 0;
@@ -444,6 +472,13 @@ function scanHtml(
   let heading: { name: string; text: string } | null = null;
 
   const parser = new Parser({
+    onopentagname() {
+      attributes = 0;
+    },
+    onattribute() {
+      attributes++;
+      if (attributes > HTML_MAX_ATTRIBUTES) tooManyAttributes = true;
+    },
     onopentag(name, attribs) {
       depth++;
       if (warnings !== null && !warnings.full) {
@@ -521,7 +556,7 @@ function scanHtml(
   try {
     for (const chunk of chunks(source)) {
       parser.write(chunk);
-      if (depth > HTML_MAX_DEPTH || finished()) break;
+      if (depth > HTML_MAX_DEPTH || tooManyAttributes || finished()) break;
     }
     parser.end();
   } catch {

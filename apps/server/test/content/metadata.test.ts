@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   extractMetadata,
   extractVersionText,
+  HTML_MAX_ATTRIBUTES,
+  MARKDOWN_BUDGET_BYTES,
+  MARKDOWN_MAX_BYTES,
   MAX_WARNINGS,
   type MetadataFile,
   resolveRef,
@@ -29,7 +32,7 @@ const wellFormed = (text: string) =>
   !/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(text);
 
 const html = (body: string, entry = 'index.html') =>
-  extractMetadata(files({ [entry]: body }), entry, 'html');
+  extractMetadata(files({ [entry]: body }), entry);
 
 /**
  * A small entry and five pages, each a word and a root-absolute link followed by more than
@@ -42,6 +45,22 @@ function budgetSite(): Record<string, string> {
       `<p>word${n}</p><a href="/abs${n}">x</a><!--${'x'.repeat(SCAN_MAX_BYTES)}-->`;
   }
   return site;
+}
+
+/**
+ * An entry and six Markdown pages of 300 KB, each a word and blank lines: the per-file cap cuts
+ * every page, and the Markdown budget runs out inside the third, so the fourth on are not read.
+ */
+function markdownBudgetSite(): Record<string, string> {
+  const site: Record<string, string> = { 'index.html': '<p>entry</p>' };
+  for (let n = 1; n <= 6; n++) site[`p${n}.md`] = `word${n}\n${'\n'.repeat(300_000)}`;
+  return site;
+}
+
+/** A tag with `count` distinct attributes (about 7 bytes each), then a paragraph after it. */
+function attributeFlood(count: number): string {
+  const names = Array.from({ length: count }, (_, i) => `a${i}`).join(' ');
+  return `<p>before</p><a ${names}><p>after</p>`;
 }
 
 describe('title', () => {
@@ -69,7 +88,6 @@ describe('title', () => {
     const m = await extractMetadata(
       files({ 'index.md': 'intro\n\n## Báo cáo *quý*\n\n# Later\n' }),
       'index.md',
-      'markdown',
     );
     expect(m.title).toBe('Báo cáo quý');
   });
@@ -77,7 +95,7 @@ describe('title', () => {
   test('titles are capped at 200 characters', async () => {
     expect((await html(`<title>${'x'.repeat(500)}</title>`)).title).toHaveLength(200);
     expect((await html(`<title>${'😀'.repeat(300)}</title>`)).title).toBe('😀'.repeat(200));
-    const md = await extractMetadata(files({ 'a.md': `# ${'y'.repeat(500)}` }), 'a.md', 'markdown');
+    const md = await extractMetadata(files({ 'a.md': `# ${'y'.repeat(500)}` }), 'a.md');
     expect(md.title).toHaveLength(200);
   });
 
@@ -89,7 +107,6 @@ describe('title', () => {
     const m = await extractMetadata(
       files({ 'index.html': '<p>x</p>', 'other.html': '<title>Other</title>' }),
       'index.html',
-      'html',
     );
     expect(m.title).toBeNull();
   });
@@ -109,7 +126,7 @@ describe('theme color', () => {
     expect(await color('url(x)')).toBeNull();
     expect(await color('#12')).toBeNull();
     expect(await color(`rgb(${'1,'.repeat(40)}1)`)).toBeNull();
-    const md = await extractMetadata(files({ 'a.md': '# T' }), 'a.md', 'markdown');
+    const md = await extractMetadata(files({ 'a.md': '# T' }), 'a.md');
     expect(md.themeColor).toBeNull();
   });
 
@@ -126,7 +143,7 @@ describe('thumbnail', () => {
   test('from og:image, then the first image, raster only', async () => {
     const entry = (head: string) => `<html><head>${head}</head><body></body></html>`;
     const withFiles = (head: string, extra: Record<string, string>) =>
-      extractMetadata(files({ 'index.html': entry(head), ...extra }), 'index.html', 'html');
+      extractMetadata(files({ 'index.html': entry(head), ...extra }), 'index.html');
 
     expect(
       (
@@ -169,7 +186,6 @@ describe('thumbnail', () => {
         'photo.jpg': '',
       }),
       'index.html',
-      'html',
     );
     expect(m.thumbnailPath).toBe('photo.jpg');
   });
@@ -186,7 +202,6 @@ describe('thumbnail', () => {
         },
       ],
       'index.html',
-      'html',
     );
     expect(m.thumbnailPath).toBeNull();
   });
@@ -196,7 +211,6 @@ describe('thumbnail', () => {
       extractMetadata(
         files({ 'docs/index.html': `<img src="${src}">`, 'img/x.webp': '', 'x.png': '' }),
         'docs/index.html',
-        'html',
       );
     expect((await at('../img/x.webp')).thumbnailPath).toBe('img/x.webp');
     expect((await at('../../x.png')).thumbnailPath).toBeNull();
@@ -207,11 +221,7 @@ describe('thumbnail', () => {
   test('macOS names: NFD in a link finds the NFC file, percent-encoded or not', async () => {
     const stored = 'ảnh đẹp.png'.normalize('NFC');
     const at = (src: string) =>
-      extractMetadata(
-        files({ 'index.html': `<img src="${src}">`, [stored]: '' }),
-        'index.html',
-        'html',
-      );
+      extractMetadata(files({ 'index.html': `<img src="${src}">`, [stored]: '' }), 'index.html');
     expect((await at(encodeURIComponent(stored))).thumbnailPath).toBe(stored);
     expect((await at(stored.normalize('NFD'))).thumbnailPath).toBe(stored);
     expect((await at(encodeURIComponent(stored.normalize('NFD')))).thumbnailPath).toBe(stored);
@@ -225,7 +235,6 @@ describe('thumbnail', () => {
         'pics/two.png': '',
       }),
       'index.md',
-      'markdown',
     );
     expect(m.thumbnailPath).toBe('pics/one.png');
   });
@@ -235,7 +244,6 @@ describe('thumbnail', () => {
     const m = await extractMetadata(
       files({ 'index.md': '![ảnh](hình/ảnh đẹp.png)\n\n![x](<hình/ảnh đẹp.png>)', [stored]: '' }),
       'index.md',
-      'markdown',
     );
     expect(m.thumbnailPath).toBe(stored);
   });
@@ -250,7 +258,6 @@ describe('search text', () => {
         'b.md': '# Giá',
       }),
       'index.html',
-      'html',
     );
     expect(m.text).toContain('chụp ảnh');
     expect(m.text).toContain('Giá');
@@ -265,7 +272,6 @@ describe('search text', () => {
     const spread = await extractMetadata(
       files({ 'index.html': `<p>${'a '.repeat(120_000)}</p>`, 'z.md': 'tail '.repeat(100_000) }),
       'index.html',
-      'html',
     );
     expect(spread.text).toHaveLength(SEARCH_TEXT_MAX_CHARS);
     expect(spread.text).not.toContain('tail');
@@ -281,7 +287,6 @@ describe('search text', () => {
         'c.css': 'cssword',
       }),
       'docs/index.html',
-      'html',
     );
     expect(m.text).toBe('entry alpha beta zeta');
   });
@@ -312,7 +317,6 @@ describe('search text', () => {
           '# Head\n\nSome *emphasis* and `inline_code` here.\n\n```js\nconst fenced = 1;\n```\n\n    indented\n\n[link text](http://x.example/u)\n\n- item one\n- item two\n',
       }),
       'a.md',
-      'markdown',
     );
     expect(m.text).toBe(
       'Head Some emphasis and inline_code here. const fenced = 1; indented link text item one item two',
@@ -328,7 +332,6 @@ describe('search text', () => {
         'a.js': 'code()',
       }),
       'index.html',
-      'html',
     );
     expect(m.text).toBe('page');
   });
@@ -343,7 +346,6 @@ describe('root-absolute URL warnings', () => {
         'style.css': 'body{background:url(/bg.png)} @import "/base.css";',
       }),
       'index.html',
-      'html',
     );
     expect(m.warnings.map((w) => [w.file, w.url])).toEqual([
       ['index.html', '/x.css'],
@@ -361,7 +363,6 @@ describe('root-absolute URL warnings', () => {
     const m = await extractMetadata(
       files({ 'index.html': '<img src="/x.png">', 'sub/page.html': '<img src="/x.png">' }),
       'index.html',
-      'html',
     );
     expect(m.warnings.map((w) => w.file)).toEqual(['index.html', 'sub/page.html']);
   });
@@ -383,7 +384,6 @@ describe('root-absolute URL warnings', () => {
         ].join(''),
       }),
       'index.html',
-      'html',
     );
     expect(m.warnings.map((w) => w.url)).toEqual(['/a', '/b', '/c', '/d', '/e', '/f', '/g', '\\i']);
   });
@@ -395,7 +395,6 @@ describe('root-absolute URL warnings', () => {
           '<img srcset="  /a.png 1x,/b.png 2x , c.png 3x, /d.png,,  /e.png  100w"><img srcset="data:image/png;base64,AAAA 1x, /f.png 2x">',
       }),
       'index.html',
-      'html',
     );
     expect(m.warnings.map((w) => w.url)).toEqual([
       '/a.png',
@@ -423,7 +422,6 @@ describe('root-absolute URL warnings', () => {
     const m = await extractMetadata(
       files({ 'index.html': `<style>${css}</style>`, 'css/site.css': css }),
       'index.html',
-      'html',
     );
     const expected = [
       '/one.png',
@@ -452,7 +450,6 @@ describe('root-absolute URL warnings', () => {
         'z.html': '<img src="/z.png">',
       }),
       'index.html',
-      'html',
     );
     expect(spread.warnings).toHaveLength(MAX_WARNINGS);
   });
@@ -470,11 +467,7 @@ describe('root-absolute URL warnings', () => {
   });
 
   test('a markdown entry has no warnings; its other pages are not scanned', async () => {
-    const m = await extractMetadata(
-      files({ 'index.md': '![x](/x.png) [y](/y)' }),
-      'index.md',
-      'markdown',
-    );
+    const m = await extractMetadata(files({ 'index.md': '![x](/x.png) [y](/y)' }), 'index.md');
     expect(m.warnings).toEqual([]);
   });
 });
@@ -510,7 +503,7 @@ describe('untrusted input never throws and stays bounded', () => {
       Buffer.from([0xff, 0xfe, 0xc3, 0x28, 0xe2, 0x82, 0x00, 0xf0, 0x9f]),
       Buffer.from('</p>'),
     ]);
-    const m = await extractMetadata(files({ 'index.html': bytes }), 'index.html', 'html');
+    const m = await extractMetadata(files({ 'index.html': bytes }), 'index.html');
     expect(typeof m.title).toBe('string');
     expect(m.text).toContain('�');
     // Lone surrogates would make a later INSERT fail on Postgres.
@@ -519,7 +512,6 @@ describe('untrusted input never throws and stays bounded', () => {
     const md = await extractMetadata(
       files({ 'a.md': Buffer.from([0xff, 0xfe, 0x23, 0x20, 0xc3]) }),
       'a.md',
-      'markdown',
     );
     expect(wellFormed(md.text)).toBe(true);
   });
@@ -530,7 +522,6 @@ describe('untrusted input never throws and stays bounded', () => {
         'index.html': Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('<h1>Hi</h1>')]),
       }),
       'index.html',
-      'html',
     );
     expect(m.title).toBe('Hi');
     expect(m.text).toBe('Hi');
@@ -574,7 +565,6 @@ describe('untrusted input never throws and stays bounded', () => {
         'index.html': `<img srcset="${','.repeat(4_000_000)}x,"><img srcset="${'a ,'.repeat(1_000_000)}">`,
       }),
       'index.html',
-      'html',
     );
     expect(css.warnings).toEqual([]);
     expect(resolveRef('a.html', '../'.repeat(100_000))).toBeNull();
@@ -586,7 +576,6 @@ describe('untrusted input never throws and stays bounded', () => {
     const m = await extractMetadata(
       files({ 'index.md': `${'![['.repeat(2_000_000)}\n`, 'b.md': '*'.repeat(6_000_000) }),
       'index.md',
-      'markdown',
     );
     expect(m.text.length).toBeLessThanOrEqual(SEARCH_TEXT_MAX_CHARS);
     expect(performance.now() - started).toBeLessThan(5000);
@@ -600,7 +589,6 @@ describe('untrusted input never throws and stays bounded', () => {
         'b.css': `${filler}a{background:url(/late.png)}`,
       }),
       'index.html',
-      'html',
     );
     expect(m.text).toBe('early');
     expect(m.warnings).toEqual([]);
@@ -627,8 +615,76 @@ describe('untrusted input never throws and stays bounded', () => {
     expect(m.text.endsWith('😀')).toBe(true);
   });
 
+  test('Markdown is read up to MARKDOWN_MAX_BYTES a file and MARKDOWN_BUDGET_BYTES a version', async () => {
+    const site = markdownBudgetSite();
+    const reads: { path: string; bytes: number }[] = [];
+    const watched = files(site).map(
+      (file): MetadataFile => ({
+        ...file,
+        read: async (max) => {
+          const bytes = (await file.read(max)).subarray(0, max);
+          reads.push({ path: file.path, bytes: bytes.length });
+          return bytes;
+        },
+      }),
+    );
+    const m = await extractMetadata(watched, 'index.html');
+
+    expect(m.text).toBe('entry word1 word2 word3');
+    const markdown = reads.filter((r) => r.path.endsWith('.md'));
+    expect(markdown.map((r) => r.path)).toEqual(['p1.md', 'p2.md', 'p3.md']);
+    expect(Math.max(...markdown.map((r) => r.bytes))).toBeLessThanOrEqual(MARKDOWN_MAX_BYTES);
+    expect(markdown.reduce((sum, r) => sum + r.bytes, 0)).toBe(MARKDOWN_BUDGET_BYTES);
+  });
+
+  test('hostile Markdown costs a bounded time per version', async () => {
+    // Empty headings: no text, so the text cap never stops the scan, and the most tokens a byte.
+    const page = Buffer.from('#\n'.repeat(250_000));
+    const site: MetadataFile[] = Array.from({ length: 45 }, (_, n) => ({
+      path: `p${String(n).padStart(2, '0')}.md`,
+      contentType: 'text/markdown; charset=utf-8',
+      size: page.length,
+      read: async (max) => page.subarray(0, max),
+    }));
+    const started = performance.now();
+    await extractMetadata(site, 'p00.md');
+    // About 0.5 s here; reading 500 KB of each page took about 18 s.
+    expect(performance.now() - started).toBeLessThan(4000);
+  }, 60_000);
+
+  test('a tag with more than HTML_MAX_ATTRIBUTES attributes ends the scan of its page', async () => {
+    const flood = attributeFlood(600_000); // about 4.7 MB, under SCAN_MAX_BYTES
+    expect(flood.length).toBeGreaterThan(4_500_000);
+    const site: Record<string, string> = { 'index.html': flood, 'z.html': '<p>other</p>' };
+    for (let n = 1; n <= 3; n++) site[`p${n}.html`] = flood;
+    const started = performance.now();
+    const m = await extractMetadata(files(site), 'index.html');
+    // About 10 ms here; building the attributes of four such tags took about 1.7 s.
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(m.text).toBe('before before before before other');
+
+    // A tag at the limit is still read through.
+    const limit = await html(attributeFlood(HTML_MAX_ATTRIBUTES));
+    expect(limit.text).toBe('before after');
+  });
+
+  test('an entry is scanned by its extension: a single non-HTML file is not read as HTML', async () => {
+    const pdf = '<title>Fake</title><p>pdf words</p>';
+    for (const path of ['report.pdf', 'photo.png', 'notes']) {
+      const m = await extractMetadata(files({ [path]: pdf }), path);
+      expect(m, path).toEqual({
+        title: null,
+        themeColor: null,
+        thumbnailPath: null,
+        text: '',
+        warnings: [],
+      });
+    }
+    expect((await extractMetadata(files({ 'page.HTM': pdf }), 'page.HTM')).title).toBe('Fake');
+  });
+
   test('a missing entry yields only what the other files give', async () => {
-    const m = await extractMetadata(files({ 'a.md': 'alpha' }), 'index.html', 'html');
+    const m = await extractMetadata(files({ 'a.md': 'alpha' }), 'index.html');
     expect(m).toEqual({
       title: null,
       themeColor: null,
@@ -650,7 +706,7 @@ describe('untrusted input never throws and stays bounded', () => {
         },
       }),
     );
-    const m = await extractMetadata(watched, 'index.html', 'html');
+    const m = await extractMetadata(watched, 'index.html');
 
     expect(m.text).toContain('word4');
     expect(m.text).not.toContain('word5');
@@ -692,7 +748,6 @@ describe('untrusted input never throws and stays bounded', () => {
         counted('e.png', 'png'),
       ],
       'index.html',
-      'html',
     );
     expect(reads).toEqual(['index.html']);
   });
@@ -843,7 +898,7 @@ describe.each(dialects)('extractVersionText on %s', (dialect) => {
       'about.html': '<h1>About</h1><p>us &amp; them</p>',
       'x.js': 'nope',
     };
-    const meta = await extractMetadata(files(record), 'index.md', 'markdown');
+    const meta = await extractMetadata(files(record), 'index.md');
     const id = await version('index.md', record);
     expect(await extractVersionText(ctx.deps, id)).toBe(meta.text);
   });
@@ -870,7 +925,28 @@ describe.each(dialects)('extractVersionText on %s', (dialect) => {
     const text = await extractVersionText(ctx.deps, await version('index.html', site));
     expect(text).toContain('word4');
     expect(text).not.toContain('word5');
-    expect(text).toBe((await extractMetadata(files(site), 'index.html', 'html')).text);
+    expect(text).toBe((await extractMetadata(files(site), 'index.html')).text);
+  });
+
+  test('applies the same Markdown and attribute bounds as extractMetadata', async () => {
+    const site = { ...markdownBudgetSite(), 'p0.html': attributeFlood(5_000) };
+    const get = vi.spyOn(ctx.deps.blobs, 'get');
+    const text = await extractVersionText(ctx.deps, await version('index.html', site));
+    expect(text).toBe('entry before word1 word2 word3');
+    expect(text).toBe((await extractMetadata(files(site), 'index.html')).text);
+    const markdownBytes = get.mock.calls
+      .map(([, range]) => (range?.end ?? -1) + 1 - (range?.start ?? 0))
+      .slice(2); // index.html and p0.html come first
+    expect(markdownBytes).toHaveLength(3);
+    expect(Math.max(...markdownBytes)).toBeLessThanOrEqual(MARKDOWN_MAX_BYTES);
+    expect(markdownBytes.reduce((sum, n) => sum + n, 0)).toBe(MARKDOWN_BUDGET_BYTES);
+  });
+
+  test('a single non-HTML entry gives no text, as at publish', async () => {
+    const record = { 'report.pdf': '<title>Fake</title><p>pdf words</p>' };
+    const id = await version('report.pdf', record);
+    expect(await extractVersionText(ctx.deps, id)).toBe('');
+    expect((await extractMetadata(files(record), 'report.pdf')).text).toBe('');
   });
 
   test('a file whose blob is gone is skipped, not fatal', async () => {
