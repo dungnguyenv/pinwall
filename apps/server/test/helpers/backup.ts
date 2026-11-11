@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { PassThrough } from 'node:stream';
+import { PassThrough, type Readable } from 'node:stream';
 import { buffer } from 'node:stream/consumers';
 import { sql } from 'kysely';
 import { extract, pack } from 'tar-stream';
@@ -19,7 +19,7 @@ import {
 } from '../../src/ops/backup/format.ts';
 import { createUserToken, setupOwner } from './auth.ts';
 import { sha, storeBlob } from './blobs.ts';
-import type { TestContext } from './context.ts';
+import { createTestContext, type TestContext } from './context.ts';
 import { issueTestTokens } from './oauth.ts';
 import { publishFiles } from './publish.ts';
 import { sampleAnchor } from './review.ts';
@@ -200,4 +200,83 @@ function byKeys(keys: readonly string[]) {
     }
     return 0;
   };
+}
+
+/** A database and blob store pairing a backup is restored from or into. */
+export type StorageCombo = 'sqlite+local' | 'postgres+s3';
+
+const s3Env = {
+  endpoint: process.env.PINWALL_TEST_S3_ENDPOINT,
+  bucket: process.env.PINWALL_TEST_S3_BUCKET ?? 'pinwall-test',
+  accessKeyId: process.env.PINWALL_TEST_S3_ACCESS_KEY_ID ?? '',
+  secretAccessKey: process.env.PINWALL_TEST_S3_SECRET_ACCESS_KEY ?? '',
+};
+
+/** The pairings the test stack offers: Postgres + S3 needs both test services configured. */
+export const storageCombos: StorageCombo[] =
+  process.env.PINWALL_TEST_POSTGRES_URL && s3Env.endpoint
+    ? ['sqlite+local', 'postgres+s3']
+    : ['sqlite+local'];
+
+if (storageCombos.length === 1) {
+  console.info(
+    'PINWALL_TEST_POSTGRES_URL or PINWALL_TEST_S3_ENDPOINT is not set: postgres+s3 backup and restore tests skipped (pnpm test:integration).',
+  );
+}
+
+/**
+ * A fresh installation on `combo`: SQLite with local blobs, or a new Postgres database with blobs
+ * under a bucket prefix of its own, which `close()` empties. `env` is added last, so it can set
+ * `PINWALL_SECRET_KEY`.
+ */
+export async function storageContext(
+  combo: StorageCombo,
+  env: Record<string, string> = {},
+): Promise<TestContext> {
+  if (combo === 'sqlite+local') return createTestContext({ env });
+  const ctx = await createTestContext({
+    dialect: 'postgres',
+    env: {
+      PINWALL_STORAGE: 's3',
+      PINWALL_S3_BUCKET: s3Env.bucket,
+      PINWALL_S3_ENDPOINT: s3Env.endpoint ?? '',
+      PINWALL_S3_ACCESS_KEY_ID: s3Env.accessKeyId,
+      PINWALL_S3_SECRET_ACCESS_KEY: s3Env.secretAccessKey,
+      PINWALL_S3_FORCE_PATH_STYLE: 'true',
+      PINWALL_S3_PREFIX: `restore-${randomBytes(6).toString('hex')}/`,
+      ...env,
+    },
+  });
+  let closing: Promise<void> | undefined;
+  const close = async () => {
+    try {
+      for await (const key of ctx.deps.blobs.list()) await ctx.deps.blobs.delete(key);
+    } finally {
+      await ctx.close();
+    }
+  };
+  return {
+    ...ctx,
+    close: () => {
+      closing ??= close();
+      return closing;
+    },
+  };
+}
+
+/** How many rows each backed-up table holds. */
+export async function rowCounts(deps: AppDeps): Promise<Record<BackupTable, number>> {
+  const counts = {} as Record<BackupTable, number>;
+  for (const table of BACKUP_TABLES) {
+    const { rows } = await sql<{ n: number | string }>`
+      select count(*) as n from ${sql.table(table)}
+    `.execute(deps.db.db);
+    counts[table] = Number(rows[0]?.n ?? 0);
+  }
+  return counts;
+}
+
+/** Every byte of `s`, such as a blob from `BlobStore.get`. */
+export async function readAll(s: Readable | Promise<Readable>): Promise<Buffer> {
+  return buffer(await s);
 }

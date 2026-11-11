@@ -688,5 +688,12 @@
   "mcp.share.revoked": "Revoked share link {{id}}; it no longer opens anything.",
   "backup.busy": "Another backup or restore is running (lease maintenance:backup). Try again when it has finished.",
   "backup.leaseLost": "The backup lease was lost, so stored files may have been removed meanwhile. Run the backup again.",
-  "backup.blobBad": "Stored file {{sha}} is missing or does not match its SHA-256; the backup was not completed."
+  "backup.blobBad": "Stored file {{sha}} is missing or does not match its SHA-256; the backup was not completed.",
+  "restore.notEmpty": "The target is not empty ({{found}}). Restore into a new installation: an empty data directory, or an empty database and bucket prefix.",
+  "restore.notBackup": "This is not a Pinwall backup archive.",
+  "restore.newerFormat": "This backup was made by a newer Pinwall (backup format {{version}}). Upgrade Pinwall, then restore.",
+  "restore.unknownMigrations": "This backup comes from a Pinwall with database migrations this version does not have ({{names}}). Upgrade Pinwall, then restore.",
+  "restore.damaged": "The archive is damaged or incomplete: {{detail}}. Nothing was restored.",
+  "restore.changed": "The target gained data while the restore was running. Nothing was restored.",
+  "restore.keyChanged": "The secret key differs from the one that made this backup, so its identity-provider refresh tokens cannot be read. {{count}} single sign-on users must sign in again. To keep them signed in, restore with the original PINWALL_SECRET_KEY (on a SQLite install it is the secret.key file in the old data directory)."
 }
