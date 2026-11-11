@@ -48,6 +48,17 @@ test('paths that normalize into /auth/oidc/ are refused', () => {
   expect(safeReturnTo('/auth/oidcx', o)).toBe('/auth/oidcx');
 });
 
+test('paths whose dot segments normalize to //host are refused', () => {
+  for (const raw of [
+    '/.//evil.com',
+    '/..//evil.com',
+    '/a/..//evil.com',
+    '/%2e//evil.com',
+    '/./\\evil.com',
+  ])
+    expect(safeReturnTo(raw, o)).toBe('/');
+});
+
 test('the result is the normalized path, never longer than 2048 characters', () => {
   expect(safeReturnTo('/a/./b/../c?q=1', o)).toBe('/a/c?q=1');
   expect(safeReturnTo('/é', o)).toBe('/%C3%A9');
