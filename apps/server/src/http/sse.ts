@@ -2,7 +2,10 @@ import { LiveEvent } from '@pinwall/shared';
 import type { Context } from 'hono';
 import type { AppEnv } from '../app.ts';
 import type { PinwallEvent } from '../infra/event-bus.ts';
+import type { StreamQuota } from '../infra/live-streams.ts';
 import { AppError } from '../lib/errors.ts';
+import { t } from '../lib/i18n.ts';
+import { clientIp } from './client-ip.ts';
 
 /**
  * How often an open stream gets a heartbeat comment, well inside the 100 s after which proxies
@@ -15,6 +18,11 @@ export const SSE_HEARTBEAT_MS = 25_000;
  * that keeps up is never cut off for a single large event.
  */
 export const SSE_MAX_BUFFERED_BYTES = 1_048_576;
+/**
+ * How many live streams may be open at once from one client address, on one share link, and in
+ * one browser session. One more answers 429 `live.tooManyStreams`.
+ */
+export const LIVE_STREAM_LIMITS = { perAddress: 20, perShareLink: 50, perSession: 10 } as const;
 export const SSE_HEADERS: Record<string, string> = {
   'Content-Type': 'text/event-stream; charset=utf-8',
   'Cache-Control': 'no-cache, no-transform',
@@ -38,6 +46,11 @@ export interface LiveStreamOptions {
   redact?(e: LiveEvent): LiveEvent;
   /** Asked at every heartbeat; false or a throw closes the stream. */
   stillAllowed(): Promise<boolean>;
+  /**
+   * Caps the stream counts under besides `perAddress` for its client address, which every
+   * stream counts under: `perShareLink` for its link, `perSession` for its session.
+   */
+  quotas?: readonly StreamQuota[];
 }
 
 /** The Node adapter's response, through which a reader that fell behind is cut off. */
@@ -46,8 +59,16 @@ function nodeResponseOf(c: Context<AppEnv>): { destroy(): void } | undefined {
   return env?.outgoing;
 }
 
+/** The answer to a stream that would go over one of its caps. */
+function tooManyStreams(): AppError {
+  return new AppError('rate_limited', 429, t('live.tooManyStreams'));
+}
+
 /**
- * A `text/event-stream` response that follows `o.topic` on the event bus. It opens with
+ * A `text/event-stream` response that follows `o.topic` on the event bus. A stream that would
+ * go over `LIVE_STREAM_LIMITS.perAddress` for its client address, or over one of `o.quotas`,
+ * is refused with 429 `live.tooManyStreams` instead; an open stream holds its places until it
+ * ends. It opens with
  * `retry: 5000`; each bus event that passes `LiveEvent` and `o.forward` goes out as
  * `event: <type>` and `data: <json>`; every `SSE_HEARTBEAT_MS` a `: ping` comment goes out and
  * `o.stillAllowed` is asked again. The stream ends, unsubscribing and stopping its timer, when
@@ -59,7 +80,14 @@ export function liveStream(c: Context<AppEnv>, o: LiveStreamOptions): Response {
   // Hono answers HEAD with the GET handler and drops the body unread, so a stream made for one
   // would never end.
   if (c.req.method === 'HEAD') return new Response(null, { headers: SSE_HEADERS });
-  const { events, liveStreams, logger } = c.var.deps;
+  const { config, events, liveStreams, logger } = c.var.deps;
+  const quotas: StreamQuota[] = [
+    { key: `address:${clientIp(c, config.trustProxy)}`, limit: LIVE_STREAM_LIMITS.perAddress },
+    ...(o.quotas ?? []),
+  ];
+  // The places are taken in `start`, which the stream's constructor runs before anything else
+  // can: nothing comes between this check and the `add`.
+  if (!liveStreams.hasRoom(quotas)) throw tooManyStreams();
   const { signal } = c.req.raw;
   const encoder = new TextEncoder();
   let controller!: ReadableStreamDefaultController<Uint8Array>;
@@ -150,7 +178,7 @@ export function liveStream(c: Context<AppEnv>, o: LiveStreamOptions): Response {
           return;
         }
         signal.addEventListener('abort', onAbort);
-        untrack = liveStreams.add(() => close('end'));
+        untrack = liveStreams.add(() => close('end'), quotas);
       },
       cancel() {
         close('cancelled');

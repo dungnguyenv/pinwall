@@ -42,7 +42,7 @@ import {
   unlockShare,
 } from '../domain/share-access.ts';
 import { clientIp } from '../http/client-ip.ts';
-import { type LiveStreamOptions, liveStream } from '../http/sse.ts';
+import { LIVE_STREAM_LIMITS, type LiveStreamOptions, liveStream } from '../http/sse.ts';
 import { hashSecret } from '../lib/ids.ts';
 import { jsonBodyLimit } from './body-limit.ts';
 import { EVENT_STREAM_CONTENT } from './events.ts';
@@ -246,12 +246,16 @@ const eventsRoute = createRoute({
   tags: ['share viewer'],
   summary: 'Follow the changes a share link shows',
   description:
-    'The live updates members get, for `EventSource`, kept to what the link shows. A link that follows the current version hears of new and deleted versions; a per-version link only of the deletion of its own version. Comment changes come only when the link allows comments, only for threads written on the version the link shows or an older one, and redacted as the comment routes are. The link and the unlock cookie are checked again at every heartbeat, so the stream ends within 25 seconds of the link being revoked or expiring or of the unlock running out; it also ends after `artifact.deleted`. Needs no account.',
+    'The live updates members get, for `EventSource`, kept to what the link shows. A link that follows the current version hears of new and deleted versions; a per-version link only of the deletion of its own version. Comment changes come only when the link allows comments, only for threads written on the version the link shows or an older one, and redacted as the comment routes are. The link and the unlock cookie are checked again at every heartbeat, so the stream ends within 25 seconds of the link being revoked or expiring or of the unlock running out; it also ends after `artifact.deleted`. Needs no account. Opens are limited per address; a link may have 50 streams open at once, and a client address 20.',
+  middleware: [rateLimit(SHARE_RATES.events)] as MiddlewareHandler<AppEnv>[],
   request: { params: TokenParam },
   responses: {
     200: { description: 'The event stream', content: EVENT_STREAM_CONTENT },
     ...lockedError,
     ...linkErrors,
+    429: error(
+      'Too many opens from this address (`rate_limited`, `details.retry_after_seconds`), or this link or this address already holds as many live streams as it may (`rate_limited`)',
+    ),
   },
 });
 
@@ -304,6 +308,7 @@ function shareStream(
   let shown = s.version.number;
   return {
     topic: ARTIFACT_TOPIC(s.artifact.id),
+    quotas: [{ key: `share-link:${s.link.id}`, limit: LIVE_STREAM_LIMITS.perShareLink }],
     forward(e) {
       switch (e.type) {
         case 'version.published':

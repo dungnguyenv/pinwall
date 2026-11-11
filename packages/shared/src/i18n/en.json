@@ -555,6 +555,7 @@
   "comment.deleteForbidden": "Only the author, the artifact's publisher or an admin can delete this comment.",
   "comment.notThread": "Only the first comment of a thread can be resolved or reopened.",
   "comment.guestWindow": "Guest comments can be changed only within 15 minutes, from the browser that wrote them.",
+  "live.tooManyStreams": "Too many live update connections are open. Close other Pinwall tabs, or try again later.",
   "share.unknown": "This share link does not exist.",
   "share.passwordTooShort": "Use a password of at least {{min}} characters.",
   "share.passwordTooLong": "Use a password of at most {{max}} characters.",

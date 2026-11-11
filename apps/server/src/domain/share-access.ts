@@ -31,6 +31,7 @@ export const SHARE_RATES: {
   guestComment: RateRule;
   guestCommentLink: RateRule;
   guestEdit: RateRule;
+  events: RateRule;
 } = {
   /** Opening `/s/<token>`, per client address. */
   open: { name: 'share-open', limit: 120, windowMs: 600_000 },
@@ -46,6 +47,8 @@ export const SHARE_RATES: {
   guestCommentLink: { name: 'share-comment-link', limit: 200, windowMs: 3_600_000 },
   /** Guest edits and deletes on one link from one address (`<link id>:<address>`). */
   guestEdit: { name: 'share-comment-edit', limit: 30, windowMs: 600_000 },
+  /** Opening a share link's live stream, per client address. */
+  events: { name: 'share-events', limit: 60, windowMs: 60_000 },
 };
 
 /** The HKDF purpose of the key that signs unlock cookies. */
