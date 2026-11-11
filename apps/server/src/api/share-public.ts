@@ -178,6 +178,9 @@ const guestThreadRoute = createRoute({
       content: { 'application/json': { schema: GuestCreated } },
     },
     ...guestWriteErrors,
+    409: error(
+      'The version the link showed was deleted while the comment was sent; reload to see the current one (`conflict`)',
+    ),
   },
 });
 

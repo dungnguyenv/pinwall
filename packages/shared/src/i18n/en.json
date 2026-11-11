@@ -567,6 +567,7 @@
   "share.gone.message": "This share link was revoked, or what it shared was deleted.",
   "share.expired.title": "Link expired",
   "share.expired.message": "This share link has expired. Ask the person who shared it for a new one.",
+  "share.versionGone": "The version on this page was deleted. Reload the page to see the current one.",
   "share.passwordRequired": "Enter the password to open this link.",
   "share.commentsOff": "Comments are turned off for this share link.",
   "version.notInArtifact": "That version does not belong to this artifact."

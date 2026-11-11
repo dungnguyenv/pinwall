@@ -8,7 +8,16 @@ import {
 } from '@pinwall/shared';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import type { UserRow, VersionRow } from '../../src/db/schema.ts';
-import { GUEST_EDIT_WINDOW_MS, GUEST_TOKEN_HEADER } from '../../src/domain/comments.ts';
+import {
+  addReply,
+  type CommentActor,
+  createThread,
+  deleteComment,
+  editComment,
+  GUEST_EDIT_WINDOW_MS,
+  GUEST_TOKEN_HEADER,
+} from '../../src/domain/comments.ts';
+import { deleteVersion } from '../../src/domain/deletion.ts';
 import { ARTIFACT_TOPIC } from '../../src/domain/search.ts';
 import { SHARE_RATES } from '../../src/domain/share-access.ts';
 import { createShareLink, revokeShareLink } from '../../src/domain/shares.ts';
@@ -17,7 +26,7 @@ import { t } from '../../src/lib/i18n.ts';
 import { hashSecret } from '../../src/lib/ids.ts';
 import { apiInit, createSignedInUser } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
-import { dialects } from '../helpers/db.ts';
+import { dialects, untilWaitingOnALock } from '../helpers/db.ts';
 import { publishFiles } from '../helpers/publish.ts';
 import { type ErrorJson, restClient } from '../helpers/rest.ts';
 import { postThread, sampleAnchor } from '../helpers/review.ts';
@@ -557,6 +566,114 @@ describe.each(dialects)('guest comments through share links on %s', (dialect) =>
       await errorOf(await guestPatch(expiring.token, e.comment_id, { body: 'x' }, e.guest_token)),
     ).toMatchObject({ status: 410, details: { reason: 'expired' } });
     expect(await commentRow(g.comment_id)).toMatchObject({ body: 'Đẹp quá' });
+  });
+
+  test('guest writes check the link again inside their transaction', async () => {
+    const thread = await postThread(ctx, member.cookie, artifactId);
+    const guest = (link: string, guestToken: string | null = null): CommentActor => ({
+      kind: 'guest',
+      shareLinkId: link,
+      name: guestToken === null ? 'Lan' : null,
+      guestToken,
+    });
+    type Target = { linkId: string; commentId: string; guestToken: string };
+    const writes: Record<string, (x: Target) => Promise<unknown>> = {
+      thread: (x) =>
+        createThread(ctx.deps, guest(x.linkId), artifactId, {
+          body: 'Muộn',
+          anchor: sampleAnchor(),
+          versionId: v1.id,
+        }),
+      reply: (x) => addReply(ctx.deps, guest(x.linkId), thread.id, 'Muộn'),
+      edit: (x) => editComment(ctx.deps, guest(x.linkId, x.guestToken), x.commentId, 'Muộn'),
+      delete: (x) => deleteComment(ctx.deps, guest(x.linkId, x.guestToken), x.commentId),
+    };
+    const { db } = ctx.deps.db;
+    const countComments = async () =>
+      (await db.selectFrom('comments').select('id').execute()).length;
+
+    for (const [name, write] of Object.entries(writes)) {
+      const link = await share();
+      const g = await created(await guestPost(link.token, newThread()));
+      const before = await countComments();
+      let outcome: Promise<unknown> | undefined;
+      // The link was open when the request resolved it, and a revoke has marked it, without
+      // committing yet, when the write runs.
+      await db.transaction().execute(async (trx) => {
+        await trx
+          .updateTable('share_links')
+          .set({ revoked_at: clock.now() })
+          .where('id', '=', link.linkId)
+          .execute();
+        outcome = write({ ...link, commentId: g.comment_id, guestToken: g.guest_token }).then(
+          () => 'written',
+          (err: unknown) => err,
+        );
+        if (dialect === 'postgres') await untilWaitingOnALock(db, outcome);
+      });
+      expect(await outcome, name).toMatchObject({ status: 410, details: { reason: 'revoked' } });
+      expect(await countComments(), name).toBe(before);
+      expect(await commentRow(g.comment_id), name).toMatchObject({ body: 'Đẹp quá' });
+    }
+  });
+
+  test('a guest write refused inside its transaction answers as the link does', async () => {
+    const guest: CommentActor = {
+      kind: 'guest',
+      shareLinkId: linkId,
+      name: 'Lan',
+      guestToken: null,
+    };
+    const write = (versionId: string, actor = guest) =>
+      createThread(ctx.deps, actor, artifactId, {
+        body: 'Muộn',
+        anchor: sampleAnchor(),
+        versionId,
+      });
+    const { db } = ctx.deps.db;
+
+    // Expired since the request resolved it.
+    const expiring = await share({ expiresAt: clock.now() + 1000 });
+    clock.advance(1000);
+    await expect(write(v1.id, { ...guest, shareLinkId: expiring.linkId })).rejects.toMatchObject({
+      status: 410,
+      details: { reason: 'expired' },
+    });
+    // Comments turned off.
+    const quiet = await share();
+    await db
+      .updateTable('share_links')
+      .set({ allow_comments: 0 })
+      .where('id', '=', quiet.linkId)
+      .execute();
+    await expect(write(v1.id, { ...guest, shareLinkId: quiet.linkId })).rejects.toMatchObject({
+      status: 403,
+      message: t('share.commentsOff'),
+    });
+
+    // The version a following link showed was deleted: the page is out of date, the link is not.
+    const v2 = await publishV2();
+    const pinned = await share({ versionId: v2.id });
+    await deleteVersion(ctx.deps, { user: member.user, via: 'session' }, artifactId, 2);
+    const stale = await write(v2.id).then(
+      () => 'written',
+      (err: unknown) => err,
+    );
+    expect(stale).toMatchObject({ status: 409, code: 'conflict', message: t('share.versionGone') });
+    expect((stale as { details?: unknown }).details).toBeUndefined();
+    // A per-version link went with its version.
+    await expect(write(v2.id, { ...guest, shareLinkId: pinned.linkId })).rejects.toMatchObject({
+      status: 410,
+      details: { reason: 'deleted' },
+    });
+    // Members are not concerned: they get the version error, with its field.
+    await expect(
+      createThread(ctx.deps, { kind: 'member', user: member.user }, artifactId, {
+        body: 'x',
+        anchor: sampleAnchor(),
+        versionId: v2.id,
+      }),
+    ).rejects.toMatchObject({ status: 400, details: { field: 'version_id' } });
   });
 
   test('guest writes are rate limited per IP and per link', async () => {

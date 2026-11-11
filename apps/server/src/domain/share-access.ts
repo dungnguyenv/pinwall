@@ -2,16 +2,24 @@ import { createHmac } from 'node:crypto';
 import type { ShareInfo } from '@pinwall/shared';
 import type { Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
+import type { Transaction } from 'kysely';
 import type { AppEnv } from '../app.ts';
 import { normalizePassword } from '../auth/password.ts';
 import { enforceRateLimit, type RateRule } from '../auth/rate-limits.ts';
 import type { Config } from '../config/types.ts';
 import { contentUrl, createGrant, type GrantMode } from '../content/grants.ts';
-import type { ArtifactRow, ContentGrantRow, ShareLinkRow, VersionRow } from '../db/schema.ts';
+import type { DbDialect } from '../db/connect.ts';
+import type {
+  ArtifactRow,
+  ContentGrantRow,
+  Database,
+  ShareLinkRow,
+  VersionRow,
+} from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import { clientIp } from '../http/client-ip.ts';
 import { deriveKey, safeEqual, verifyPassword } from '../lib/crypto.ts';
-import { AppError, forbidden, gone, notFound, unauthorized } from '../lib/errors.ts';
+import { AppError, conflict, forbidden, gone, notFound, unauthorized } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { hashSecret } from '../lib/ids.ts';
 import { entryKind } from '../publish/paths.ts';
@@ -154,6 +162,53 @@ export async function resolveCommentShare(
   const s = await resolveOpenShare(deps, token, unlockCookie);
   if (s.link.allow_comments !== 1) throw forbidden(t('share.commentsOff'));
   return s;
+}
+
+/**
+ * The share link `linkId` a guest writes a comment through, read again in the write's
+ * transaction once the artifact is held, and share-locked on Postgres (the order `shareGrant`,
+ * revokes and deletions lock in). A revoke, expiry or deletion that landed after the request
+ * resolved the link refuses the write (410, `details.reason` as `resolveShare` gives it), and
+ * one that comes later waits for the write; a link closed to comments answers 403.
+ */
+export async function holdCommentLink(
+  trx: Transaction<Database>,
+  dialect: DbDialect,
+  linkId: string,
+  now: number,
+): Promise<ShareLinkRow> {
+  const link = await trx
+    .selectFrom('share_links')
+    .selectAll()
+    .where('id', '=', linkId)
+    .$if(dialect === 'postgres', (qb) => qb.forShare())
+    .executeTakeFirst();
+  // A per-version link goes with its version, and every link with its artifact.
+  if (link === undefined) throw linkGone('deleted');
+  assertOpen(link, now);
+  if (link.allow_comments !== 1) throw forbidden(t('share.commentsOff'));
+  return link;
+}
+
+/**
+ * Version `versionId` of `artifact`, which guest link `link` showed when the request resolved
+ * it. Gone since: a link that follows the current version still works, so the page is only out
+ * of date (409); a per-version link went with it (410).
+ */
+export async function sharedVersion(
+  trx: Transaction<Database>,
+  artifact: ArtifactRow,
+  link: ShareLinkRow,
+  versionId: string,
+): Promise<VersionRow> {
+  const version = await trx
+    .selectFrom('versions')
+    .selectAll()
+    .where('id', '=', versionId)
+    .where('artifact_id', '=', artifact.id)
+    .executeTakeFirst();
+  if (version !== undefined) return version;
+  throw link.version_id === null ? conflict(t('share.versionGone')) : linkGone('deleted');
 }
 
 /**
