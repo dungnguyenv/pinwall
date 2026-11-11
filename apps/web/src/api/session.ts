@@ -63,19 +63,22 @@ export function usePublicConfig(): UseQueryResult<PublicConfig, ApiError> {
 /**
  * What happens in the browser once the session has ended on the server:
  * forgets everything cached for this person and opens the sign-in page. With
- * `returnTo`, signing in again goes back there. Sign-out and "Revoke now" on
- * your own account both end this way.
+ * `returnTo`, signing in again goes back there; with `chooseAccount` too, the
+ * sign-in page offers the provider's account picker (see `signInPath`).
+ * Sign-out and "Revoke now" on your own account both end this way.
  */
-export function useLeaveSession(o: { returnTo?: string } = {}): () => Promise<void> {
+export function useLeaveSession(
+  o: { returnTo?: string; chooseAccount?: boolean } = {},
+): () => Promise<void> {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const { returnTo } = o;
+  const { returnTo, chooseAccount } = o;
   return async () => {
     // Signed out first, so the sign-in page does not send the person back in.
     queryClient.setQueryData(qk.me, null);
     // Then leave the signed-in pages, in one synchronous render, so none of
     // them asks for its data again after the cache is emptied.
-    await navigate(returnTo === undefined ? '/signin' : signInPath(returnTo), {
+    await navigate(returnTo === undefined ? '/signin' : signInPath(returnTo, { chooseAccount }), {
       flushSync: true,
     });
     replaceSession(queryClient, null);
@@ -84,9 +87,12 @@ export function useLeaveSession(o: { returnTo?: string } = {}): () => Promise<vo
 
 /**
  * Signs out, forgets everything cached for this user, and opens the sign-in
- * page. With `returnTo`, signing in again goes back there.
+ * page. With `returnTo`, signing in again goes back there; see
+ * `useLeaveSession` for `chooseAccount`.
  */
-export function useSignOut(o: { returnTo?: string } = {}): UseMutationResult<void, ApiError, void> {
+export function useSignOut(
+  o: { returnTo?: string; chooseAccount?: boolean } = {},
+): UseMutationResult<void, ApiError, void> {
   const leave = useLeaveSession(o);
   return useMutation<void, ApiError, void>({ mutationFn: signOut, onSuccess: leave });
 }

@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
 import {
+  chooseAccountFrom,
   isServerRoute,
   oidcStartPath,
   returnToFrom,
@@ -50,6 +51,18 @@ test('sign-in and OIDC links carry the return path', () => {
   );
   expect(oidcStartPath('/a/art_1#c')).toBe('/auth/oidc/start?return_to=%2Fa%2Fart_1%23c');
   expect(oidcStartPath('/', true)).toBe('/auth/oidc/start?return_to=%2F&prompt=select_account');
+});
+
+test('a sign-in link can ask to choose another account', () => {
+  expect(signInPath('/oauth/consent?request=req_1', { chooseAccount: true })).toBe(
+    '/signin?return_to=%2Foauth%2Fconsent%3Frequest%3Dreq_1&choose_account=1',
+  );
+  expect(signInPath('/x', { chooseAccount: false })).toBe('/signin?return_to=%2Fx');
+  expect(chooseAccountFrom(new URLSearchParams('return_to=%2F&choose_account=1'))).toBe(true);
+  // Only the exact value counts, so a stray or hostile query asks for nothing.
+  for (const query of ['', 'choose_account=0', 'choose_account=true', 'choose_account=']) {
+    expect(chooseAccountFrom(new URLSearchParams(query))).toBe(false);
+  }
 });
 
 test('server routes need a full navigation', () => {

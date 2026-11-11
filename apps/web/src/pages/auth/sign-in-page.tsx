@@ -10,7 +10,7 @@ import type { Me, PublicConfig } from '../../api/dto.ts';
 import { replaceSession, useMe, usePublicConfig } from '../../api/session.ts';
 import { useGoTo } from '../../lib/navigation.ts';
 import { usePageTitle } from '../../lib/page-title.ts';
-import { oidcStartPath, returnToFrom } from '../../lib/return-to.ts';
+import { chooseAccountFrom, oidcStartPath, returnToFrom } from '../../lib/return-to.ts';
 import { getPasskeyAssertion, passkeyErrorMessage, passkeysUsable } from '../../lib/webauthn.ts';
 import { Button, ErrorState, Field, Input } from '../../ui/index.ts';
 import { AuthLayout, AuthNotice, AuthSkeleton, FormAlert, OrDivider } from './auth-layout.tsx';
@@ -26,6 +26,7 @@ export function SignInPage() {
   usePageTitle(t('web.signin.pageTitle'));
   const [params] = useSearchParams();
   const returnTo = returnToFrom(params);
+  const chooseAccount = chooseAccountFrom(params);
   const config = usePublicConfig();
   const me = useMe();
   const queryClient = useQueryClient();
@@ -75,7 +76,12 @@ export function SignInPage() {
       {config.data.setup_required ? (
         <AuthNotice icon={<Wrench />}>{t('auth.setup.required')}</AuthNotice>
       ) : (
-        <SignInOptions config={config.data} returnTo={returnTo} onSignedIn={signedIn} />
+        <SignInOptions
+          config={config.data}
+          returnTo={returnTo}
+          chooseAccount={chooseAccount}
+          onSignedIn={signedIn}
+        />
       )}
     </AuthLayout>
   );
@@ -84,10 +90,13 @@ export function SignInPage() {
 function SignInOptions({
   config,
   returnTo,
+  chooseAccount,
   onSignedIn,
 }: {
   config: PublicConfig;
   returnTo: string;
+  /** The person came here to be someone else, so the provider must not pick for them. */
+  chooseAccount: boolean;
   onSignedIn(me: Me): void;
 }) {
   const { t } = useTranslation();
@@ -102,7 +111,7 @@ function SignInOptions({
     <div className="flex flex-col gap-3">
       {/* A full page load: the server starts the sign-in and redirects to the IdP. */}
       <Button asChild size="lg" className="w-full">
-        <a href={oidcStartPath(returnTo)}>{t('web.signin.oidc', { name: idp })}</a>
+        <a href={oidcStartPath(returnTo, chooseAccount)}>{t('web.signin.oidc', { name: idp })}</a>
       </Button>
       <Button
         variant="ghost"

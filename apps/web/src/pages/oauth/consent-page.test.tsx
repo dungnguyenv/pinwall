@@ -271,10 +271,29 @@ test('not you? signs out and returns here after sign-in', async () => {
 
   await user.click(screen.getByRole('button', { name: 'Not you?' }));
   await waitFor(() => expect(router.state.location.pathname).toBe('/signin'));
-  expect(router.state.location.search).toBe('?return_to=%2Foauth%2Fconsent%3Frequest%3Dreq_1');
+  // choose_account: behind single sign-on the provider would otherwise sign the same person back in.
+  expect(router.state.location.search).toBe(
+    '?return_to=%2Foauth%2Fconsent%3Frequest%3Dreq_1&choose_account=1',
+  );
   expect(signedOut).toHaveBeenCalledOnce();
 
   await signInWithPassword(user);
   expect(await heading()).toBeInTheDocument();
   expect(router.state.location.pathname + router.state.location.search).toBe(CONSENT_URL);
+});
+
+test('not you? behind single sign-on asks the provider to pick another account', async () => {
+  serveConsent();
+  server.use(http.post(`${API}/auth/sign-out`, () => new HttpResponse(null, { status: 204 })));
+  const { user } = renderRoute(CONSENT_URL, {
+    config: { oidc: { enabled: true, display_name: 'Zitadel' } },
+  });
+  await heading();
+
+  await user.click(screen.getByRole('button', { name: 'Not you?' }));
+  const sso = await screen.findByRole('link', { name: 'Continue with Zitadel' });
+  expect(sso).toHaveAttribute(
+    'href',
+    '/auth/oidc/start?return_to=%2Foauth%2Fconsent%3Frequest%3Dreq_1&prompt=select_account',
+  );
 });

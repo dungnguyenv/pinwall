@@ -65,8 +65,20 @@ export function returnToFrom(search: URLSearchParams): string {
   return safeReturnTo(search.get('return_to') ?? search.get('next'));
 }
 
-export function signInPath(returnTo: string): string {
-  return `/signin?return_to=${encodeURIComponent(returnTo)}`;
+/**
+ * The sign-in page, asking to come back to `returnTo`. With `chooseAccount`
+ * it is for someone who wants to be a different person than the one who was
+ * just signed in: behind single sign-on, the page then asks the provider to
+ * offer its account picker rather than sign the same account straight back in.
+ */
+export function signInPath(returnTo: string, o: { chooseAccount?: boolean } = {}): string {
+  const choose = o.chooseAccount ? '&choose_account=1' : '';
+  return `/signin?return_to=${encodeURIComponent(returnTo)}${choose}`;
+}
+
+/** Whether a sign-in URL asks for the account picker; only the exact value `1` does. */
+export function chooseAccountFrom(search: URLSearchParams): boolean {
+  return search.get('choose_account') === '1';
 }
 
 /** Starts OIDC sign-in; `selectAccount` asks the IdP to let the person pick another account. */

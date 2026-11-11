@@ -64,7 +64,11 @@ function ConsentCard({
 }) {
   const { t } = useTranslation();
   const location = useLocation();
-  const signOut = useSignOut({ returnTo: location.pathname + location.search });
+  // "Not you?" is for another account, so single sign-on must offer to pick one.
+  const signOut = useSignOut({
+    returnTo: location.pathname + location.search,
+    chooseAccount: true,
+  });
   const [pending, setPending] = useState<Choice | null>(null);
   // The server took the answer; `leaving` once the browser is on its way back.
   const [answered, setAnswered] = useState<{ choice: Choice; leaving: boolean } | null>(null);

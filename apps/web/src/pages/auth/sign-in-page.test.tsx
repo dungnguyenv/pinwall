@@ -218,6 +218,27 @@ test('the OIDC button uses the configured label and carries return_to', async ()
   expect(screen.getByRole('button', { name: 'Sign in with a passkey' })).toBeInTheDocument();
 });
 
+test('choose_account makes the OIDC button ask the provider to pick an account', async () => {
+  renderRoute('/signin?return_to=%2Foauth%2Fconsent%3Frequest%3Dreq_1&choose_account=1', {
+    me: null,
+    config: { oidc: { enabled: true, display_name: 'Zitadel' } },
+  });
+  const sso = await screen.findByRole('link', { name: 'Continue with Zitadel' });
+  expect(sso).toHaveAttribute(
+    'href',
+    '/auth/oidc/start?return_to=%2Foauth%2Fconsent%3Frequest%3Dreq_1&prompt=select_account',
+  );
+});
+
+test('without choose_account the OIDC button does not ask for another account', async () => {
+  renderRoute('/signin?return_to=%2Fprojects%2Fp1&choose_account=yes', {
+    me: null,
+    config: { oidc: { enabled: true, display_name: 'Zitadel' } },
+  });
+  const sso = await screen.findByRole('link', { name: 'Continue with Zitadel' });
+  expect(sso).toHaveAttribute('href', '/auth/oidc/start?return_to=%2Fprojects%2Fp1');
+});
+
 test('the OIDC button has a generic label when none is configured', async () => {
   renderRoute('/signin', { me: null, config: { oidc: { enabled: true, display_name: null } } });
   const sso = await screen.findByRole('link', {
