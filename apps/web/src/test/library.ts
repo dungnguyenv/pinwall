@@ -39,3 +39,11 @@ export function serveArtifacts(
   );
   return requests;
 }
+
+/**
+ * The name of an artifact's card or row link: the artifact's name, then the
+ * version, time and signals that the link also shows.
+ */
+export function artifactLink(name: string): RegExp {
+  return new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?: |$)`);
+}

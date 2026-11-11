@@ -4,7 +4,7 @@ import { afterEach, expect, onTestFinished, test, vi } from 'vitest';
 import type { ArtifactSummary } from '../api/dto.ts';
 import i18n from '../i18n.ts';
 import { fx } from '../test/fixtures.ts';
-import { hoursAgo, serveArtifacts, serveSidebar } from '../test/library.ts';
+import { artifactLink, hoursAgo, serveArtifacts, serveSidebar } from '../test/library.ts';
 import { renderRoute } from '../test/render.tsx';
 import { apiError } from '../test/server.ts';
 import { ArtifactCard } from './artifact-card.tsx';
@@ -58,7 +58,7 @@ test('cards show thumbnail or generated card, version, comments and sharing', as
     }),
   ]);
 
-  const pricing = await screen.findByRole('link', { name: 'Pricing' });
+  const pricing = await screen.findByRole('link', { name: artifactLink('Pricing') });
   expect(pricing).toHaveAttribute('href', '/a/art_1');
   const image = pricing.querySelector('img');
   expect(image).toHaveAttribute('src', '/api/v1/artifacts/art_1/thumbnail?v=ver_1');
@@ -68,9 +68,10 @@ test('cards show thumbnail or generated card, version, comments and sharing', as
   expect(within(pricing).getByText('v3 · 2 hours ago')).toBeInTheDocument();
   expect(within(pricing).getByText('2 comments')).toBeInTheDocument();
   expect(within(pricing).getByText('Shared')).toBeInTheDocument();
-  expect(pricing).toHaveAccessibleDescription('v3 · 2 hours ago 2 comments Shared');
+  // Everything the card shows is in the link's name, the artifact's name first.
+  expect(pricing).toHaveAccessibleName('Pricing v3 · 2 hours ago 2 comments Shared');
 
-  const report = screen.getByRole('link', { name: 'Security report' });
+  const report = screen.getByRole('link', { name: artifactLink('Security report') });
   expect(report.querySelector('img')).toBeNull();
   expect(generatedCard(report)).toHaveTextContent('Security report');
   expect(generatedCard(report)).toHaveAttribute('aria-hidden', 'true');
@@ -78,7 +79,7 @@ test('cards show thumbnail or generated card, version, comments and sharing', as
   expect(within(report).queryByText('Shared')).not.toBeInTheDocument();
 
   // The page's own title and theme color make its card; zero counts show nothing.
-  const priced = screen.getByRole('link', { name: 'pricing-2027' });
+  const priced = screen.getByRole('link', { name: artifactLink('pricing-2027') });
   expect(generatedCard(priced)).toHaveTextContent('Bảng giá 2027');
   expect(generatedCard(priced)?.style.backgroundColor).toMatch(/^rgb\(14,? 165,? 233\)$/);
   expect(within(priced).queryByText(/comment/)).not.toBeInTheDocument();
@@ -87,7 +88,7 @@ test('cards show thumbnail or generated card, version, comments and sharing', as
 
 test('one open thread reads as one comment', async () => {
   renderCards([fx.artifact({ open_thread_count: 1 })]);
-  const card = await screen.findByRole('link', { name: 'Homepage' });
+  const card = await screen.findByRole('link', { name: artifactLink('Homepage') });
   expect(within(card).getByText('1 comment')).toBeInTheDocument();
 });
 
@@ -98,7 +99,7 @@ test('a thumbnail that fails to load falls back to the generated card', async ()
       current_version: fx.version({ has_thumbnail: true }),
     }),
   ]);
-  const card = await screen.findByRole('link', { name: 'Landing' });
+  const card = await screen.findByRole('link', { name: artifactLink('Landing') });
   const image = card.querySelector('img');
   expect(image).not.toBeNull();
   fireEvent.error(image as HTMLImageElement);
@@ -109,7 +110,7 @@ test('a thumbnail that fails to load falls back to the generated card', async ()
 test('long and markup-like names render as text', async () => {
   const name = `<img src=x onerror=alert(1)>${'x'.repeat(300)}`;
   renderCards([fx.artifact({ name })]);
-  const card = await screen.findByRole('link', { name });
+  const card = await screen.findByRole('link', { name: artifactLink(name) });
   expect(within(card).getAllByText(name).length).toBeGreaterThan(0);
   expect(document.querySelector('img[src="x"]')).toBeNull();
   // The full name stays reachable when the card truncates it.
@@ -133,14 +134,14 @@ test('grid or list is remembered per user', async () => {
   serveOneArtifact();
   const { user } = renderRoute('/', { me });
   expect(await viewOption('Grid')).toHaveAttribute('aria-checked', 'true');
-  await screen.findByRole('link', { name: 'Pricing' });
+  await screen.findByRole('link', { name: artifactLink('Pricing') });
 
   await user.click(await viewOption('List'));
   expect(await viewOption('List')).toHaveAttribute('aria-checked', 'true');
   expect(localStorage.getItem('pinwall:library-view:usr_1')).toBe('list');
   // Rows name the project, since All artifacts mixes them.
-  expect(await screen.findByRole('link', { name: 'Pricing' })).toHaveAccessibleDescription(
-    /^Launch site · v1 · /,
+  expect(await screen.findByRole('link', { name: artifactLink('Pricing') })).toHaveAccessibleName(
+    /^Pricing Launch site · v1 · /,
   );
   cleanup();
 
@@ -168,11 +169,11 @@ test('view toggle survives a throwing localStorage', async () => {
   serveOneArtifact();
   const { user } = renderRoute('/', { me });
   expect(await viewOption('Grid')).toHaveAttribute('aria-checked', 'true');
-  expect(await screen.findByRole('link', { name: 'Pricing' })).toBeInTheDocument();
+  expect(await screen.findByRole('link', { name: artifactLink('Pricing') })).toBeInTheDocument();
   await user.click(await viewOption('List'));
   expect(await viewOption('List')).toHaveAttribute('aria-checked', 'true');
-  expect(await screen.findByRole('link', { name: 'Pricing' })).toHaveAccessibleDescription(
-    /^Launch site · /,
+  expect(await screen.findByRole('link', { name: artifactLink('Pricing') })).toHaveAccessibleName(
+    /^Pricing Launch site · /,
   );
 });
 
@@ -192,7 +193,7 @@ test('collections have skeleton, empty and error states and load more', async ()
     await screen.findByRole('status', { name: i18n.t('web.library.loading') }),
   ).toBeInTheDocument();
   release();
-  expect(await screen.findByRole('link', { name: 'Pricing' })).toBeInTheDocument();
+  expect(await screen.findByRole('link', { name: artifactLink('Pricing') })).toBeInTheDocument();
   expect(
     screen.queryByRole('status', { name: i18n.t('web.library.loading') }),
   ).not.toBeInTheDocument();
@@ -233,10 +234,12 @@ test('collections have skeleton, empty and error states and load more', async ()
     ),
   );
   const { user } = renderRoute('/', { me });
-  await screen.findByRole('link', { name: 'First page' });
+  await screen.findByRole('link', { name: artifactLink('First page') });
   await user.click(screen.getByRole('button', { name: 'Load more' }));
-  expect(await screen.findByRole('link', { name: 'Second page' })).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: 'First page' })).toBeInTheDocument();
+  expect(
+    await screen.findByRole('link', { name: artifactLink('Second page') }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: artifactLink('First page') })).toBeInTheDocument();
   expect(requests).toEqual(['?limit=48', '?cursor=c2&limit=48']);
   expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
   const list = screen.getByRole('list', { name: 'All artifacts' });

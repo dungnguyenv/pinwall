@@ -3,7 +3,7 @@ import { HttpResponse } from 'msw';
 import { afterEach, expect, test } from 'vitest';
 import i18n from '../i18n.ts';
 import { fx } from '../test/fixtures.ts';
-import { hoursAgo, serveArtifacts, serveSidebar } from '../test/library.ts';
+import { artifactLink, hoursAgo, serveArtifacts, serveSidebar } from '../test/library.ts';
 import { renderRoute } from '../test/render.tsx';
 
 const me = fx.me({ id: 'usr_1' });
@@ -32,10 +32,9 @@ test('search queries the server with the term as typed', async () => {
   expect(box).toHaveValue('chup anh');
   expect(box).toHaveAttribute('maxlength', '256');
   const results = await screen.findByRole('list', { name: i18n.t('web.search.results') });
-  expect(within(results).getByRole('link', { name: 'Chụp ảnh cưới' })).toHaveAttribute(
-    'href',
-    '/a/art_1',
-  );
+  expect(
+    within(results).getByRole('link', { name: artifactLink('Chụp ảnh cưới') }),
+  ).toHaveAttribute('href', '/a/art_1');
   expect(requests).toEqual(['?q=chup+anh&limit=48']);
   await waitFor(() => expect(document.title).toBe('Results for “chup anh” · Pinwall'));
 
@@ -95,12 +94,8 @@ test('all artifacts lists everything with project names in list view', async () 
   const list = await screen.findByRole('list', { name: 'All artifacts' });
   const rows = within(list).getAllByRole('link');
   expect(rows.map((row) => row.getAttribute('href'))).toEqual(['/a/art_1', '/a/art_2']);
-  expect(within(list).getByRole('link', { name: 'Bảng giá 2027' })).toHaveAccessibleDescription(
-    'Launch site · v5 · 1 hour ago',
-  );
-  expect(within(list).getByRole('link', { name: 'Security report' })).toHaveAccessibleDescription(
-    'Default · v1 · yesterday',
-  );
+  expect(rows[0]).toHaveAccessibleName('Bảng giá 2027 Launch site · v5 · 1 hour ago');
+  expect(rows[1]).toHaveAccessibleName('Security report Default · v1 · yesterday');
   expect(requests).toEqual(['?limit=48']);
   await waitFor(() => expect(document.title).toBe('All artifacts · Pinwall'));
 });

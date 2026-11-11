@@ -23,11 +23,9 @@ export function useArtifactMeta(artifact: ArtifactSummary, projectName?: string)
  */
 export function ArtifactSignals({
   artifact,
-  id,
   className,
 }: {
   artifact: ArtifactSummary;
-  id?: string;
   className?: string;
 }) {
   const { t } = useTranslation();
@@ -36,7 +34,7 @@ export function ArtifactSignals({
   if (threads === 0 && !shared) return null;
   const comments = t('web.artifact.comments', { count: threads });
   return (
-    <span id={id} className={cn('inline-flex shrink-0 items-center gap-2', className)}>
+    <span className={cn('inline-flex shrink-0 items-center gap-2', className)}>
       {threads > 0 ? (
         <span title={comments} className="inline-flex items-center gap-1 text-fg-muted text-sm">
           <MessageSquare aria-hidden="true" className="size-3.5 shrink-0" />

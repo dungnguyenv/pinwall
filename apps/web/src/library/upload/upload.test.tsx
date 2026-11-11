@@ -6,7 +6,7 @@ import type { ArtifactSummary, Project, PublishResult, PublishWarning } from '..
 import i18n from '../../i18n.ts';
 import { dir, fakeDrop, file, folderFile } from '../../test/fake-entries.ts';
 import { fx } from '../../test/fixtures.ts';
-import { serveArtifacts, serveSidebar } from '../../test/library.ts';
+import { artifactLink, serveArtifacts, serveSidebar } from '../../test/library.ts';
 import { formParts } from '../../test/multipart.ts';
 import { renderRoute } from '../../test/render.tsx';
 import { API, apiError, server } from '../../test/server.ts';
@@ -107,7 +107,10 @@ test('dropping a folder on the project page publishes into that project', async 
     },
   ]);
   // The list refetches and shows the new artifact.
-  expect(await screen.findByRole('link', { name: 'E2E Site' })).toHaveAttribute('href', '/a/art_9');
+  expect(await screen.findByRole('link', { name: artifactLink('E2E Site') })).toHaveAttribute(
+    'href',
+    '/a/art_9',
+  );
   expect(screen.queryByText(dropHere('Launch site'))).not.toBeInTheDocument();
 
   const open = within(toast).getByRole('link', { name: 'Open' });
@@ -356,5 +359,5 @@ test('All artifacts publishes to the default project', async () => {
 
   await findToast('Published “E2E Site” v1');
   expect(state.uploads).toEqual([{ target: '{}', paths: ['index.html'], files: ['index.html'] }]);
-  expect(await screen.findByRole('link', { name: 'E2E Site' })).toBeInTheDocument();
+  expect(await screen.findByRole('link', { name: artifactLink('E2E Site') })).toBeInTheDocument();
 });
