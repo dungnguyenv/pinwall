@@ -126,6 +126,7 @@ function OpenLink({ href, onOpen }: { href: string; onOpen(href: string): void }
  */
 export function UploadToast({
   label,
+  note,
   store,
   onCancel,
   onOpen,
@@ -133,6 +134,8 @@ export function UploadToast({
 }: {
   /** What is being uploaded: the folder, the archive, or the first file and how many more. */
   label: string;
+  /** What was left out of the upload, if anything; it stays with the toast through every phase. */
+  note?: string;
   store: UploadStore;
   onCancel(): void;
   onOpen(href: string): void;
@@ -227,6 +230,7 @@ export function UploadToast({
           {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
         </div>
         {body}
+        {note ? <p className="text-fg-muted text-sm">{note}</p> : null}
       </div>
     </div>
   );
@@ -241,13 +245,14 @@ export function nextUploadToastId(): string {
 }
 
 /** A failed-upload toast for a selection that was never sent, or could not be read. */
-export function toastUploadFailure(label: string, message: string): void {
+export function toastUploadFailure(label: string, message: string, note?: string): void {
   const id = nextUploadToastId();
   const store = createUploadStore({ phase: 'failed', message });
   toast.custom(
     () => (
       <UploadToast
         label={label}
+        note={note}
         store={store}
         onCancel={() => {}}
         onOpen={() => {}}

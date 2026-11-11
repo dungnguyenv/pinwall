@@ -1,6 +1,6 @@
 import { X } from 'lucide-react';
 import { Dialog as RadixDialog } from 'radix-ui';
-import { type ReactNode, useCallback, useRef } from 'react';
+import { type ReactNode, type RefObject, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from './cn.ts';
 import { IconButton } from './icon-button.tsx';
@@ -67,6 +67,7 @@ export function Dialog({
   footer,
   children,
   dismissible = true,
+  initialFocus,
   onCloseAutoFocus,
 }: {
   open: boolean;
@@ -83,6 +84,11 @@ export function Dialog({
    */
   dismissible?: boolean;
   /**
+   * The element to focus when the dialog opens, instead of the first one in
+   * it. For a dialog whose safest choice is not its first button.
+   */
+  initialFocus?: RefObject<HTMLElement | null>;
+  /**
    * Runs as the dialog closes, before focus goes back to the opener. Calling
    * `event.preventDefault()` leaves focus alone, e.g. when the dialog opened a
    * new page that focuses its own heading.
@@ -98,7 +104,13 @@ export function Dialog({
         <RadixDialog.Overlay className={OVERLAY_CLASS}>
           <RadixDialog.Content
             className={panelClass(size)}
-            onOpenAutoFocus={returnFocus.onOpenAutoFocus}
+            onOpenAutoFocus={(event) => {
+              returnFocus.onOpenAutoFocus();
+              const first = initialFocus?.current;
+              if (!first) return;
+              event.preventDefault();
+              first.focus();
+            }}
             onEscapeKeyDown={(event) => {
               if (!dismissible) event.preventDefault();
             }}

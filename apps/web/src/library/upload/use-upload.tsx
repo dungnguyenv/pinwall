@@ -11,11 +11,14 @@ import { usePublicConfig } from '../../api/session.ts';
 import {
   checkSelection,
   collectFromFileList,
+  hiddenFiles,
   selectionStats,
   type UploadSelection,
+  withoutHidden,
 } from '../../lib/upload/collect.ts';
 import { buildUploadForm, sendUpload } from '../../lib/upload/send.ts';
 import { toast } from '../../ui/index.ts';
+import { type HiddenChoice, HiddenFilesDialog } from './hidden-files-dialog.tsx';
 import {
   createUploadStore,
   nextUploadToastId,
@@ -39,6 +42,7 @@ function runUpload(
   s: UploadSelection,
   target: PublishTargetInput,
   projectId: string | null,
+  note: string | undefined,
   { t, queryClient, navigate }: UploadContext,
 ): void {
   const { label, bytes } = selectionStats(s);
@@ -52,6 +56,7 @@ function runUpload(
       () => (
         <UploadToast
           label={label}
+          note={note}
           store={store}
           onCancel={() => controller.abort()}
           onOpen={(href) => {
@@ -115,7 +120,10 @@ export interface UploadControls {
   start(s: UploadSelection): void;
   /** Opens the browser's picker for files (or one archive), or for a folder. */
   pick(kind: 'files' | 'folder'): void;
-  /** The hidden file inputs `pick` opens. Render them once, anywhere on the page. */
+  /**
+   * The hidden file inputs `pick` opens, and the dialog that asks about hidden
+   * files before they are sent. Render them once, anywhere on the page.
+   */
   inputs: ReactNode;
   /** The project uploads go to, for headings. */
   projectName: string;
@@ -123,12 +131,23 @@ export interface UploadControls {
   started: number;
 }
 
+/** What the toast says about the files that were not sent, or nothing when all of them were. */
+function leftOutNote(t: TFunction, versionControl: number, hidden: number): string | undefined {
+  const parts = [
+    versionControl > 0 ? t('web.upload.skippedVcs', { count: versionControl }) : null,
+    hidden > 0 ? t('web.upload.skippedHidden', { count: hidden }) : null,
+  ].filter((part) => part !== null);
+  return parts.length > 0 ? parts.join(' ') : undefined;
+}
+
 /**
  * Upload into one project (`projectId`), or into the default project when it
  * is `null`. Each upload gets its own toast with its progress, a Cancel while
  * the body is going up, and then the published version with an Open link, or
  * the server's message as it wrote it. A selection over the limits the server
- * publishes is refused before anything is sent.
+ * publishes is refused before anything is sent. Files in version-control
+ * folders are never sent, and the person says whether hidden files (names
+ * starting with a dot) are, before anything leaves the browser.
  */
 export function useUpload(target: {
   projectId: string | null;
@@ -144,11 +163,13 @@ export function useUpload(target: {
   const folderInput = useRef<HTMLInputElement>(null);
   const [started, setStarted] = useState(0);
 
-  const start = useCallback(
-    (s: UploadSelection) => {
-      if (disabled) return;
-      setStarted((n) => n + 1);
+  // A selection with hidden files waits here for the person's answer.
+  const [asked, setAsked] = useState<{ selection: UploadSelection; paths: string[] } | null>(null);
+
+  const send = useCallback(
+    (s: UploadSelection, hiddenLeftOut: number) => {
       const { label, files } = selectionStats(s);
+      const note = leftOutNote(t, s.kind === 'files' ? (s.skipped ?? 0) : 0, hiddenLeftOut);
       // Before the configuration loads, only an empty selection is refused here; the server checks the rest.
       const problem = limits
         ? checkSelection(s, limits, t)
@@ -156,16 +177,40 @@ export function useUpload(target: {
           ? t('web.upload.empty')
           : null;
       if (problem) {
-        toastUploadFailure(label, problem);
+        toastUploadFailure(label, problem, note);
         return;
       }
-      runUpload(s, projectId ? { project_id: projectId } : {}, projectId, {
+      runUpload(s, projectId ? { project_id: projectId } : {}, projectId, note, {
         t,
         queryClient,
         navigate,
       });
     },
-    [disabled, limits, t, projectId, queryClient, navigate],
+    [limits, t, projectId, queryClient, navigate],
+  );
+
+  const start = useCallback(
+    (s: UploadSelection) => {
+      if (disabled) return;
+      setStarted((n) => n + 1);
+      const hidden = hiddenFiles(s);
+      if (hidden.length > 0) {
+        setAsked({ selection: s, paths: hidden.map(({ path }) => path) });
+        return;
+      }
+      send(s, 0);
+    },
+    [disabled, send],
+  );
+
+  const answer = useCallback(
+    (choice: HiddenChoice) => {
+      if (!asked) return;
+      setAsked(null);
+      if (choice === 'include') send(asked.selection, 0);
+      else if (choice === 'skip') send(withoutHidden(asked.selection), asked.paths.length);
+    },
+    [asked, send],
   );
 
   const pick = useCallback((kind: 'files' | 'folder') => {
@@ -192,9 +237,10 @@ export function useUpload(target: {
           // Not in React's types; every current browser supports it.
           {...{ webkitdirectory: '' }}
         />
+        <HiddenFilesDialog paths={asked?.paths ?? null} onChoose={answer} />
       </>
     );
-  }, [start]);
+  }, [start, asked, answer]);
 
   return { start, pick, inputs, projectName, started };
 }

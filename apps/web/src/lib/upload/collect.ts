@@ -12,7 +12,12 @@ export interface UploadFile {
 /** What a person chose to upload: one archive the server unpacks, or a set of files. */
 export type UploadSelection =
   | { kind: 'archive'; file: File }
-  | { kind: 'files'; files: UploadFile[] };
+  | {
+      kind: 'files';
+      files: UploadFile[];
+      /** How many files were left out for sitting in a version-control folder; none when absent. */
+      skipped?: number;
+    };
 
 /** Names the server unpacks when the file comes alone. */
 export const ARCHIVE_NAME = /\.(zip|tar|tgz|tar\.gz)$/i;
@@ -38,6 +43,45 @@ const count = new Intl.NumberFormat('en');
  */
 function isJunk(name: string): boolean {
   return name === '.DS_Store' || name === '__MACOSX' || name.startsWith('._');
+}
+
+/**
+ * Version-control folders (and the `.git` file a submodule has) hold history,
+ * and often tokens in their config. They are never part of a site, so they are
+ * left out without asking. Case does not matter: macOS and Windows disks don't.
+ */
+const VERSION_CONTROL = new Set(['.git', '.svn', '.hg']);
+
+function isVersionControl(name: string): boolean {
+  return VERSION_CONTROL.has(name.toLowerCase());
+}
+
+/**
+ * What to do with a path, by its first segment that is not an ordinary name:
+ * junk goes quietly, version control goes and is counted, the rest stays.
+ */
+function classify(path: string): 'junk' | 'versionControl' | 'keep' {
+  for (const segment of path.split('/')) {
+    if (isJunk(segment)) return 'junk';
+    if (isVersionControl(segment)) return 'versionControl';
+  }
+  return 'keep';
+}
+
+/** Whether a path has a name that starts with a dot, which file managers hide: `.env`, `a/.well-known/b`. */
+function isHiddenPath(path: string): boolean {
+  return path.split('/').some((segment) => segment.startsWith('.'));
+}
+
+/** The files of the selection a file manager would hide, for the person to decide on. */
+export function hiddenFiles(s: UploadSelection): UploadFile[] {
+  return s.kind === 'files' ? s.files.filter(({ path }) => isHiddenPath(path)) : [];
+}
+
+/** The selection without its hidden files; what was left out before is still counted. */
+export function withoutHidden(s: UploadSelection): UploadSelection {
+  if (s.kind !== 'files') return s;
+  return { ...s, files: s.files.filter(({ path }) => !isHiddenPath(path)) };
 }
 
 /** macOS hands out names in NFD; links in HTML are NFC, and so are stored paths. */
@@ -87,12 +131,38 @@ async function readFolder(
   }
 }
 
+/** What a drop's walk has found so far. */
+interface Collected {
+  files: UploadFile[];
+  skipped: number;
+}
+
+/**
+ * How many files lie under `entry`, without reading any of them. A folder
+ * that cannot be listed counts what was seen: this only feeds a message, and
+ * the folder is not uploaded either way.
+ */
+async function countFiles(entry: FileSystemEntry, path: string): Promise<number> {
+  if (isFileEntry(entry)) return 1;
+  if (!isDirectoryEntry(entry)) return 0;
+  const children = await readFolder(entry, path).catch(() => []);
+  const counts = await Promise.all(
+    children.map((child) => countFiles(child, `${path}/${child.name}`)),
+  );
+  return counts.reduce((sum, n) => sum + n, 0);
+}
+
 /** Adds the file, or every file under the folder, at `entry` to `out`. */
-async function walk(entry: FileSystemEntry, parent: string, out: UploadFile[]): Promise<void> {
+async function walk(entry: FileSystemEntry, parent: string, out: Collected): Promise<void> {
   if (isJunk(entry.name)) return;
   const path = parent + entry.name;
-  if (isFileEntry(entry)) {
-    out.push({ path: nfc(path), file: await readFile(entry, path) });
+  if (isVersionControl(entry.name)) {
+    // Added after the await: siblings walk at the same time, and `+= await` would
+    // add to the count as it was before they finished.
+    const left = await countFiles(entry, path);
+    out.skipped += left;
+  } else if (isFileEntry(entry)) {
+    out.files.push({ path: nfc(path), file: await readFile(entry, path) });
   } else if (isDirectoryEntry(entry)) {
     const children = await readFolder(entry, path);
     await Promise.all(children.map((child) => walk(child, `${path}/`, out)));
@@ -138,18 +208,20 @@ export async function collectFromDataTransfer(dt: DataTransfer): Promise<UploadS
     if (lone && isArchive(lone) && !isJunk(lone.name)) return { kind: 'archive', file: lone };
   }
 
-  const files: UploadFile[] = [];
+  const found: Collected = { files: [], skipped: 0 };
   await Promise.all(
     dropped.map(async ({ entry, file }) => {
       // A top-level file is taken as the browser handed it over.
       if (file && !entry?.isDirectory) {
-        if (!isJunk(file.name)) files.push({ path: nfc(file.name), file });
+        const kind = classify(file.name);
+        if (kind === 'keep') found.files.push({ path: nfc(file.name), file });
+        else if (kind === 'versionControl') found.skipped += 1;
       } else if (entry) {
-        await walk(entry, '', files);
+        await walk(entry, '', found);
       }
     }),
   );
-  return { kind: 'files', files: files.sort(byPath) };
+  return { kind: 'files', files: found.files.sort(byPath), skipped: found.skipped };
 }
 
 /**
@@ -162,21 +234,19 @@ export function collectFromFileList(
   o: { folder: boolean },
 ): UploadSelection | null {
   const all = Array.from(list);
-  if (o.folder) {
-    const files = all
-      .map((file) => ({ path: nfc(file.webkitRelativePath || file.name), file }))
-      .filter(({ path }) => !path.split('/').some(isJunk));
-    return { kind: 'files', files: files.sort(byPath) };
-  }
-  if (all.length === 0) return null;
+  if (!o.folder && all.length === 0) return null;
   const [only] = all;
-  if (all.length === 1 && only && isArchive(only) && !isJunk(only.name)) {
+  if (!o.folder && all.length === 1 && only && isArchive(only) && !isJunk(only.name)) {
     return { kind: 'archive', file: only };
   }
-  const files = all
-    .filter((file) => !isJunk(file.name))
-    .map((file) => ({ path: nfc(file.name), file }));
-  return { kind: 'files', files: files.sort(byPath) };
+  const found: Collected = { files: [], skipped: 0 };
+  for (const file of all) {
+    const path = nfc(o.folder ? file.webkitRelativePath || file.name : file.name);
+    const kind = classify(path);
+    if (kind === 'keep') found.files.push({ path, file });
+    else if (kind === 'versionControl') found.skipped += 1;
+  }
+  return { kind: 'files', files: found.files.sort(byPath), skipped: found.skipped };
 }
 
 /**

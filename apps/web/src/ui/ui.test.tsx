@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { FolderOpen, LayoutGrid, List, X } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 import {
   Avatar,
@@ -143,6 +143,30 @@ test('dialog traps focus, closes on Escape and returns focus to the trigger', as
   await user.keyboard('{Escape}');
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   expect(trigger).toHaveFocus();
+});
+
+function SafeChoiceDialog() {
+  const safe = useRef<HTMLButtonElement>(null);
+  return (
+    <Dialog
+      open
+      onOpenChange={() => {}}
+      title="Hidden files"
+      initialFocus={safe}
+      footer={
+        <>
+          <Button variant="secondary">Include them</Button>
+          <Button ref={safe}>Skip hidden files</Button>
+        </>
+      }
+    />
+  );
+}
+
+test('a dialog opens with focus on the element it names, not the first one', async () => {
+  render(<SafeChoiceDialog />);
+  const dialog = await screen.findByRole('dialog', { name: 'Hidden files' });
+  expect(within(dialog).getByRole('button', { name: 'Skip hidden files' })).toHaveFocus();
 });
 
 test('dialog has a labelled close button', async () => {

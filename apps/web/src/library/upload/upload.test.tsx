@@ -119,6 +119,144 @@ test('dropping a folder on the project page publishes into that project', async 
   await waitFor(() => expect(router.state.location.pathname).toBe('/a/art_9'));
 });
 
+const hiddenTitle = () => t('web.upload.hiddenTitle');
+
+test('version-control folders are never sent, and the toast says how many files stayed behind', async () => {
+  const state = serveLibrary({ project: launchSite });
+  renderRoute('/projects/prj_2', { me });
+  await screen.findByRole('heading', { level: 1, name: 'Launch site' });
+
+  dragAndDrop(
+    fakeDrop([
+      dir('site', [
+        file('index.html'),
+        dir('.git', [file('config'), dir('objects', [file('ab12'), file('cd34')])]),
+        dir('.svn', [file('entries')]),
+      ]),
+    ]),
+  );
+
+  const toast = await findToast('Published “E2E Site” v1');
+  expect(within(toast).getByText(t('web.upload.skippedVcs', { count: 4 }))).toBeInTheDocument();
+  expect(state.uploads.map((u) => u.paths)).toEqual([['site/index.html']]);
+  // Nothing hidden is left to ask about.
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+test('hidden files are listed before sending, and skipping them is the default', async () => {
+  const state = serveLibrary({ project: launchSite });
+  const { user } = renderRoute('/projects/prj_2', { me });
+  await screen.findByRole('heading', { level: 1, name: 'Launch site' });
+
+  dragAndDrop(
+    fakeDrop([
+      dir('site', [
+        file('index.html'),
+        file('.env'),
+        dir('.well-known', [file('security.txt')]),
+        dir('.git', [file('config')]),
+      ]),
+    ]),
+  );
+
+  const dialog = await screen.findByRole('dialog', { name: hiddenTitle() });
+  expect(within(dialog).getByText(t('web.upload.hiddenBody', { count: 2 }))).toBeInTheDocument();
+  const listed = within(within(dialog).getByRole('list', { name: t('web.upload.hiddenList') }));
+  expect(listed.getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+    'site/.env',
+    'site/.well-known/security.txt',
+  ]);
+  // Nothing has left the browser, and the safe answer has the focus.
+  expect(state.uploads).toEqual([]);
+  const skip = within(dialog).getByRole('button', { name: t('web.upload.hiddenSkip') });
+  expect(skip).toHaveFocus();
+
+  await user.click(skip);
+  const toast = await findToast('Published “E2E Site” v1');
+  expect(state.uploads.map((u) => u.paths)).toEqual([['site/index.html']]);
+  expect(
+    within(toast).getByText(
+      `${t('web.upload.skippedVcs', { count: 1 })} ${t('web.upload.skippedHidden', { count: 2 })}`,
+    ),
+  ).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+});
+
+test('"Include them" sends the hidden files too', async () => {
+  const state = serveLibrary({ project: launchSite });
+  const { user } = renderRoute('/projects/prj_2', { me });
+  await screen.findByRole('heading', { level: 1, name: 'Launch site' });
+
+  dragAndDrop(fakeDrop([dir('site', [file('index.html'), file('.htaccess')])]));
+  const dialog = await screen.findByRole('dialog', { name: hiddenTitle() });
+  await user.click(within(dialog).getByRole('button', { name: t('web.upload.hiddenInclude') }));
+
+  const toast = await findToast('Published “E2E Site” v1');
+  expect(state.uploads.map((u) => u.paths)).toEqual([['site/.htaccess', 'site/index.html']]);
+  expect(within(toast).queryByText(/left out/)).not.toBeInTheDocument();
+});
+
+test('closing the hidden files question sends nothing', async () => {
+  const state = serveLibrary({ project: launchSite });
+  const { user } = renderRoute('/projects/prj_2', { me });
+  await screen.findByRole('heading', { level: 1, name: 'Launch site' });
+
+  dragAndDrop(fakeDrop([dir('site', [file('index.html'), file('.env')])]));
+  await screen.findByRole('dialog', { name: hiddenTitle() });
+  await user.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  await act(() => delay(20));
+  expect(state.uploads).toEqual([]);
+  expect(document.querySelector('[data-sonner-toast]')).toBeNull();
+});
+
+test('a selection of only hidden files has nothing to send once they are skipped', async () => {
+  const state = serveLibrary({ project: launchSite });
+  const { user } = renderRoute('/projects/prj_2', { me });
+  await screen.findByRole('heading', { level: 1, name: 'Launch site' });
+
+  dragAndDrop(fakeDrop([file('.env'), file('.npmrc')]));
+  const dialog = await screen.findByRole('dialog', { name: hiddenTitle() });
+  await user.click(within(dialog).getByRole('button', { name: t('web.upload.hiddenSkip') }));
+
+  const toast = await findToast(t('web.upload.empty'));
+  expect(within(toast).getByText(t('web.upload.skippedHidden', { count: 2 }))).toBeInTheDocument();
+  expect(state.uploads).toEqual([]);
+});
+
+test('many hidden files are listed in part, and the folder picker asks too', async () => {
+  const state = serveLibrary({ project: launchSite });
+  const { user } = renderRoute('/projects/prj_2', { me });
+  await screen.findByRole('heading', { level: 1, name: 'Launch site' });
+  const clicked = vi.spyOn(HTMLInputElement.prototype, 'click');
+  onTestFinished(() => clicked.mockRestore());
+
+  await user.click(screen.getByRole('button', { name: t('web.upload.action') }));
+  const picker = await screen.findByRole('dialog', {
+    name: t('web.upload.title', { project: 'Launch site' }),
+  });
+  await user.click(within(picker).getByRole('button', { name: t('web.upload.chooseFolder') }));
+  const folderInput = clicked.mock.contexts.at(-1) as HTMLInputElement;
+
+  const chooser = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
+  const many = Array.from({ length: 11 }, (_, i) => folderFile(`site/.d/f${i}.txt`));
+  await chooser.upload(folderInput, [
+    folderFile('site/index.html'),
+    folderFile('site/.git/config'),
+    ...many,
+  ]);
+
+  const dialog = await screen.findByRole('dialog', { name: hiddenTitle() });
+  const items = within(dialog).getAllByRole('listitem');
+  expect(items).toHaveLength(9);
+  expect(items.at(-1)).toHaveTextContent(t('web.upload.hiddenMore', { count: 3 }));
+  expect(state.uploads).toEqual([]);
+
+  await user.click(within(dialog).getByRole('button', { name: t('web.upload.hiddenSkip') }));
+  await findToast('Published “E2E Site” v1');
+  expect(state.uploads.map((u) => u.paths)).toEqual([['site/index.html']]);
+});
+
 test('the overlay appears only for file drags', async () => {
   serveLibrary({ project: launchSite });
   renderRoute('/projects/prj_2', { me });

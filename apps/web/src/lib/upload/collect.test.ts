@@ -7,9 +7,11 @@ import {
   checkSelection,
   collectFromDataTransfer,
   collectFromFileList,
+  hiddenFiles,
   selectionStats,
   UploadReadError,
   type UploadSelection,
+  withoutHidden,
 } from './collect.ts';
 import { buildUploadForm } from './send.ts';
 
@@ -66,6 +68,91 @@ test('macOS junk is left out and paths are NFC', async () => {
   const s = await collectFromDataTransfer(fakeDrop([site, file('.DS_Store')]));
   expect(paths(s)).toEqual(['site/báo-cáo.html', 'site/index.html']);
   expect(paths(s)[0]).toBe('site/báo-cáo.html'.normalize('NFC'));
+});
+
+function skipped(s: UploadSelection | null): number {
+  if (s?.kind !== 'files') throw new Error(`Expected files, got ${JSON.stringify(s)}`);
+  return s.skipped ?? 0;
+}
+
+test('version-control folders are left out of a drop and counted', async () => {
+  const site = dir('site', [
+    file('index.html'),
+    file('.gitignore'),
+    dir('.git', [file('config'), file('HEAD'), dir('objects', [dir('ab', [file('cd12')])])]),
+    dir('.svn', [file('entries')]),
+    dir('docs', [dir('.hg', [file('store')]), file('a.md')]),
+    // A submodule's .git is a file naming the real one.
+    file('.GIT'),
+  ]);
+  const s = await collectFromDataTransfer(fakeDrop([site], { batch: 2 }));
+  expect(paths(s)).toEqual(['site/.gitignore', 'site/docs/a.md', 'site/index.html']);
+  // config, HEAD, cd12, entries, store and the .GIT file.
+  expect(skipped(s)).toBe(6);
+
+  // Dropped on its own, the folder leaves nothing to upload.
+  const alone = await collectFromDataTransfer(fakeDrop([dir('.git', [file('config')])]));
+  expect(paths(alone)).toEqual([]);
+  expect(skipped(alone)).toBe(1);
+});
+
+test('version-control folders are left out of a picked folder and counted', () => {
+  const s = collectFromFileList(
+    [
+      folderFile('site/index.html'),
+      folderFile('site/.git/config'),
+      folderFile('site/.git/objects/ab/cd12'),
+      folderFile('site/.svn/entries'),
+      folderFile('site/.github/workflows/ci.yml'),
+    ],
+    { folder: true },
+  );
+  expect(paths(s)).toEqual(['site/.github/workflows/ci.yml', 'site/index.html']);
+  expect(skipped(s)).toBe(3);
+  // Files picked one by one are checked the same way.
+  const loose = collectFromFileList([new File([''], '.git'), new File([''], 'a.html')], {
+    folder: false,
+  });
+  expect(paths(loose)).toEqual(['a.html']);
+  expect(skipped(loose)).toBe(1);
+});
+
+test('a selection with nothing left out has no skipped count', async () => {
+  expect(skipped(await collectFromDataTransfer(fakeDrop([file('a.html')])))).toBe(0);
+  expect(skipped(collectFromFileList([folderFile('site/a.html')], { folder: true }))).toBe(0);
+});
+
+test('hiddenFiles finds every file with a dot in its path, and withoutHidden drops them', async () => {
+  const s = await collectFromDataTransfer(
+    fakeDrop([
+      dir('site', [
+        file('index.html'),
+        file('.env'),
+        file('.npmrc'),
+        dir('.well-known', [file('security.txt')]),
+        dir('css', [file('a.css'), file('.hidden.css')]),
+        dir('.git', [file('config')]),
+      ]),
+    ]),
+  );
+  if (s?.kind !== 'files') throw new Error('Expected files');
+  expect(hiddenFiles(s).map((f) => f.path)).toEqual([
+    'site/.env',
+    'site/.npmrc',
+    'site/.well-known/security.txt',
+    'site/css/.hidden.css',
+  ]);
+  const shown = withoutHidden(s);
+  expect(paths(shown)).toEqual(['site/css/a.css', 'site/index.html']);
+  // What was left out before is still counted.
+  expect(skipped(shown)).toBe(1);
+
+  // A dot inside a name is not hidden, and an archive is never searched.
+  expect(
+    hiddenFiles({ kind: 'files', files: [{ path: 'a.b/c.d.e', file: new File([], 'c.d.e') }] }),
+  ).toEqual([]);
+  expect(hiddenFiles({ kind: 'archive', file: new File([], '.env.zip') })).toEqual([]);
+  expect(withoutHidden({ kind: 'archive', file: new File([], '.env.zip') }).kind).toBe('archive');
 });
 
 test('reads every entry of a large folder', async () => {
