@@ -9,7 +9,8 @@
   },
   "exports": {
     ".": "./src/index.ts",
-    "./i18n/en.json": "./src/i18n/en.json"
+    "./i18n/en.json": "./src/i18n/en.json",
+    "./protocol": "./src/protocol.ts"
   },
   "scripts": {
     "test": "vitest run"
