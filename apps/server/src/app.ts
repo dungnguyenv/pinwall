@@ -15,6 +15,7 @@ import { originCheck } from './http/origin-check.ts';
 import { requestId } from './http/request-id.ts';
 import { appSecurityHeaders } from './http/security-headers.ts';
 import { defaultWebDir, mountSpa } from './http/spa.ts';
+import { mountMcp } from './mcp/route.ts';
 import { mountOAuth } from './oauth/routes.ts';
 import { PAGES_CSS, PAGES_CSS_PATH } from './pages/pages.css.ts';
 import { mountUploadRoute } from './publish/upload-route.ts';
@@ -117,6 +118,8 @@ export function buildApp(deps: AppDeps, opts: { contentHooks?: ContentHooks } = 
   mountShareLinks(app);
   // OAuth metadata and `/oauth/*`: no cookies on its machine endpoints, no origin check.
   mountOAuth(app);
+  // `/mcp`: bearer only (OAuth access token or API token), never cookies.
+  mountMcp(app);
 
   mountSpa(app, deps.config.webDir ?? defaultWebDir(), deps.logger);
 

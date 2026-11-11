@@ -604,5 +604,20 @@
   "oauth.token.accessEnded": "Your Pinwall access could not be confirmed. Sign in again.",
   "oauth.token.badRefresh": "The refresh token is invalid, expired or revoked. Sign in again.",
   "oauth.token.reused": "This refresh token was already used, so Pinwall ended the connection for safety. Sign in again.",
-  "oauth.revoke.missing": "Send token and client_id."
+  "oauth.revoke.missing": "Send token and client_id.",
+  "mcp.signIn": "Connect with OAuth (your MCP client opens a browser to sign in) or send a Pinwall API token as a Bearer token.",
+  "mcp.origin": "Requests from web pages at {{origin}} are not accepted here. MCP clients send no Origin header, or {{expected}}.",
+  "mcp.method": "Use POST: this MCP endpoint is stateless and has no event stream.",
+  "mcp.error.internal": "Pinwall hit an unexpected error (request {{requestId}}). Try again; if it keeps happening, tell whoever runs this Pinwall.",
+  "mcp.error.details": "Details: {{details}}",
+  "mcp.hint.version_conflict": "Call get_artifact to see the current version, then publish with expected_version_id set to its id.",
+  "mcp.hint.not_found": "Check the id with list_projects, list_artifacts or search_artifacts.",
+  "mcp.hint.gone": "It was deleted and cannot be changed or published to.",
+  "mcp.hint.payload_too_large": "For larger or binary content, call create_publish_session and run its upload command.",
+  "mcp.whoami.text": "Signed in to {{url}} as {{name}} ({{role}}, via {{via}}). Isolation: {{isolation}}. Upload limit {{upload}} per publish; inline limit {{inline}}. Authoring notes:",
+  "mcp.notes.entry": "The entry page is index.html or index.md at the top level of what you publish.",
+  "mcp.notes.relativeLinks": "Use relative links and asset paths (css/site.css, not /css/site.css): every version is served under its own address.",
+  "mcp.notes.selfContained": "Include every file the page needs; a version never changes after it is published.",
+  "mcp.notes.opaqueOrigin": "Pages run in a sandbox without an origin of their own: cookies, localStorage, sessionStorage, IndexedDB and service workers do not work. Keep state in memory or in the URL.",
+  "mcp.notes.perVersionOrigin": "Each version is served on its own origin: localStorage and cookies do not carry over between versions."
 }
