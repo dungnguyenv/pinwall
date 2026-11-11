@@ -1,9 +1,11 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, configure } from '@testing-library/react';
+import { HttpResponse, http } from 'msw';
 import { toast } from 'sonner';
-import { afterAll, afterEach, beforeAll } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach } from 'vitest';
 import i18n from './i18n.ts';
-import { server } from './test/server.ts';
+import { FakeEventSource } from './test/fake-event-source.ts';
+import { API, server } from './test/server.ts';
 import { installMatchMedia, resetViewport } from './test/viewport.ts';
 
 // Every findBy*/waitFor waits up to 10 s instead of Testing Library's 1 s
@@ -59,6 +61,24 @@ if (typeof window.ResizeObserver !== 'function') {
     value: ResizeObserverStub,
   });
 }
+
+// jsdom has no EventSource. Each test gets the fake, with no sources made yet.
+// When a stream fails for good, the live client asks the server with a HEAD of
+// the stream's path whether it still serves this browser; here it does, unless
+// a test answers otherwise.
+beforeEach(() => {
+  FakeEventSource.instances = [];
+  Object.defineProperty(globalThis, 'EventSource', {
+    configurable: true,
+    writable: true,
+    value: FakeEventSource,
+  });
+  const serving = () => new HttpResponse(null, { status: 200 });
+  server.use(
+    http.head(`${API}/artifacts/:id/events`, serving),
+    http.head(`${API}/share/:token/events`, serving),
+  );
+});
 
 // jsdom has no layout and reports window.scrollTo as not implemented; the
 // router's scroll restoration calls it on every navigation.
