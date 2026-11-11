@@ -14,11 +14,15 @@
     "test:integration": "docker compose -f docker-compose.test.yml up -d --wait && PINWALL_TEST_POSTGRES_URL=postgres://pinwall:pinwall@localhost:55432/pinwall PINWALL_TEST_S3_ENDPOINT=http://localhost:59000 PINWALL_TEST_S3_BUCKET=pinwall-test PINWALL_TEST_S3_ACCESS_KEY_ID=pinwall PINWALL_TEST_S3_SECRET_ACCESS_KEY=pinwall-secret pnpm test",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "typecheck": "pnpm -r exec tsc --noEmit"
+    "typecheck": "pnpm -r exec tsc --noEmit && tsc --noEmit -p e2e",
+    "test:e2e": "pnpm --filter @pinwall/web build && playwright test -c e2e/playwright.config.ts"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@biomejs/biome": "^2.6.6",
     "@playwright/test": "^1.65.0",
+    "@types/node": "^24.19.2",
+    "axe-core": "^4.14.0",
     "typescript": "^7.0.2"
   }
 }
