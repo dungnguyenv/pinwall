@@ -1,5 +1,5 @@
 import { sql } from 'kysely';
-import { foldForSearch } from '../lib/search-fold.ts';
+import { cutToUtf8Bytes, foldForSearch, SEARCH_BODY_MAX_BYTES } from '../lib/search-fold.ts';
 import type { DbDialect, DbHandle } from './connect.ts';
 
 /**
@@ -33,11 +33,14 @@ function searchWords(folded: string): string[] {
   return folded.split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 0);
 }
 
-/** Indexes (or re-indexes) one artifact. Text is folded with `foldForSearch` first. */
+/**
+ * Indexes (or re-indexes) one artifact. Text is folded with `foldForSearch` first, and the body
+ * is indexed up to `SEARCH_BODY_MAX_BYTES`, in whole words, on both dialects alike.
+ */
 export async function searchUpsert(h: DbScope, row: SearchDocument): Promise<void> {
   const name = foldForSearch(row.name);
   const tags = foldForSearch(row.tags);
-  const body = foldForSearch(row.body);
+  const body = cutToUtf8Bytes(foldForSearch(row.body), SEARCH_BODY_MAX_BYTES);
 
   if (h.dialect === 'sqlite') {
     // FTS5 tables have no unique keys, so replace the row by hand, atomically.

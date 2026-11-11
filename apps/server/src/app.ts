@@ -3,6 +3,9 @@ import { buildApiRouter } from './api/router.ts';
 import { buildOidcRouter } from './auth/oidc/routes.ts';
 import { resolveAuth } from './auth/resolve.ts';
 import { bearerResolvers } from './auth/resolvers.ts';
+import { type ContentHooks, contentHooks } from './content/hooks.ts';
+import { mountRawLinks } from './content/raw-links.ts';
+import { mountContent } from './content/routes.ts';
 import type { UserRow } from './db/schema.ts';
 import type { AppDeps } from './deps.ts';
 import { errorHandler, notFoundHandler } from './http/errors.ts';
@@ -12,6 +15,7 @@ import { requestId } from './http/request-id.ts';
 import { appSecurityHeaders } from './http/security-headers.ts';
 import { defaultWebDir, mountSpa } from './http/spa.ts';
 import { PAGES_CSS, PAGES_CSS_PATH } from './pages/pages.css.ts';
+import { mountUploadRoute } from './publish/upload-route.ts';
 
 /** Who is making the request, once `resolveAuth` has run. */
 export interface AuthContext {
@@ -67,12 +71,14 @@ function mountHealth(app: Hono<AppEnv>, deps: AppDeps): void {
 }
 
 /**
- * The app origin. Middleware runs in this order: request id, request log, deps injection,
- * security headers; then health checks, the pages stylesheet, the API router behind the CSRF
- * origin check and auth resolution, later milestones' routers, and the SPA last, since it
- * answers every remaining browser GET.
+ * The app origin. Middleware runs in this order: request id, request log, deps injection, the
+ * content router (which answers content requests itself, so they never get app headers or have
+ * their cookies read), security headers; then health checks, the pages stylesheet, the API
+ * router behind the CSRF origin check and auth resolution, later milestones' routers, and the
+ * SPA last, since it answers every remaining browser GET. `opts.contentHooks` replaces the
+ * shipped content hooks (tests).
  */
-export function buildApp(deps: AppDeps): Hono<AppEnv> {
+export function buildApp(deps: AppDeps, opts: { contentHooks?: ContentHooks } = {}): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
   app.use(requestId());
@@ -82,6 +88,7 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
     c.set('auth', null);
     await next();
   });
+  mountContent(app, opts.contentHooks ?? contentHooks);
   app.use(appSecurityHeaders(deps.config));
 
   mountHealth(app, deps);
@@ -99,7 +106,11 @@ export function buildApp(deps: AppDeps): Hono<AppEnv> {
     resolveAuth({ bearer: bearerResolvers, cookies: true }),
   );
   app.route('/api/v1', buildApiRouter());
+  // The upload token is its only credential: no origin check, no cookie or bearer auth.
+  mountUploadRoute(app);
   app.route('/auth/oidc', buildOidcRouter());
+  // `/a/:id/raw` and `/a/:id/v/:n/raw` take a cookie or a bearer token; the SPA owns `/a/:id`.
+  mountRawLinks(app);
 
   mountSpa(app, deps.config.webDir ?? defaultWebDir(), deps.logger);
 

@@ -5,6 +5,7 @@ import type { ColumnType, Selectable } from 'kysely';
  * Timestamps are epoch milliseconds, booleans are 0/1, JSON columns hold text.
  * `search_index` is left out on purpose: its shape differs per dialect, so it is reached only
  * through the raw SQL in `dialect.ts`.
+ * `tombstones` comes from migration `0002_publishing`.
  */
 export interface Database {
   users: UsersTable;
@@ -26,6 +27,7 @@ export interface Database {
   share_links: ShareLinksTable;
   comments: CommentsTable;
   leases: LeasesTable;
+  tombstones: TombstonesTable;
 }
 
 /** Set on insert and never updated: primary keys and creation times. */
@@ -217,6 +219,12 @@ export interface ContentGrantsTable {
   version_id: string;
   mode: ContentGrantMode;
   share_link_id: string | null;
+  /**
+   * The signed-in person the grant was made for (migration `0002_publishing`): revoking their
+   * credentials deletes it, and it stops serving while they have no access. Null for a share
+   * link's guest.
+   */
+  user_id: string | null;
   created_at: Fixed<number>;
   expires_at: number;
 }
@@ -267,6 +275,18 @@ export interface LeasesTable {
   expires_at: number;
 }
 
+/** What a tombstone stands for; its key is the artifact id, the grant token or the share `token_hash`. */
+export type TombstoneKind = 'artifact' | 'content_grant' | 'share_link';
+
+/** Something deleted, kept so its link answers 410 rather than 404. */
+export interface TombstonesTable {
+  kind: Fixed<TombstoneKind>;
+  key: Fixed<string>;
+  deleted_at: number;
+  /** Null keeps the tombstone for good. */
+  expires_at: number | null;
+}
+
 export type UserRow = Selectable<UsersTable>;
 export type PasswordCredentialRow = Selectable<PasswordCredentialsTable>;
 export type PasskeyRow = Selectable<PasskeysTable>;
@@ -286,3 +306,4 @@ export type ContentGrantRow = Selectable<ContentGrantsTable>;
 export type ShareLinkRow = Selectable<ShareLinksTable>;
 export type CommentRow = Selectable<CommentsTable>;
 export type LeaseRow = Selectable<LeasesTable>;
+export type TombstoneRow = Selectable<TombstonesTable>;

@@ -1,5 +1,10 @@
 import { expect, test } from 'vitest';
-import { extractGroups, identityFromClaims, readClaim } from '../../../src/auth/oidc/identity.ts';
+import {
+  extractGroups,
+  identityFromClaims,
+  profileClaimsIn,
+  readClaim,
+} from '../../../src/auth/oidc/identity.ts';
 
 test('reads a top-level claim, then a dotted path', () => {
   expect(readClaim({ groups: ['a'] }, 'groups')).toEqual(['a']);
@@ -141,4 +146,19 @@ test('groups come from the configured claim, including nested and object-valued 
 test('a subject must be a non-empty string', () => {
   expect(() => identityFromClaims({ sub: 42 }, undefined)).toThrow(Error);
   expect(() => identityFromClaims({ sub: '' }, undefined)).toThrow(Error);
+});
+
+test('profile claims count as present only when the answer carries them', () => {
+  expect(profileClaimsIn({ sub: 's' })).toEqual({ email: false, name: false, picture: false });
+  expect(profileClaimsIn({ sub: 's', email: null, name: '  ', picture: null })).toEqual({
+    email: false,
+    name: false,
+    picture: false,
+  });
+  expect(
+    profileClaimsIn({ sub: 's', email: 'not an email', family_name: 'L', picture: 'http://x' }),
+  ).toEqual({ email: true, name: true, picture: true });
+  for (const key of ['name', 'preferred_username', 'given_name', 'family_name']) {
+    expect(profileClaimsIn({ sub: 's', [key]: 'Ada' }).name, key).toBe(true);
+  }
 });

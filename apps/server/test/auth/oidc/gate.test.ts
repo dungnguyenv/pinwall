@@ -235,8 +235,33 @@ describe.each(dialects)('IdP access gate on %s', (dialect) => {
       checked: 1,
       ok: 1,
       removed: 0,
+      signInRequired: 0,
       transient: 0,
     });
+    expect((await me({ bearer: token })).status).toBe(200);
+  });
+
+  test('a refused refresh token ends the session at once; other credentials wait for a sign-in', async () => {
+    await start();
+    const { account: a, sub, user, cookie } = await signIn();
+    const token = await createUserToken(ctx, user.id);
+    await idp.revokeGrants(sub);
+    clock.advance(12 * H);
+
+    const browser = await me({ cookie });
+    expect(browser.status).toBe(401);
+    expect(clearsCookie(browser)).toBe(true);
+    await expectRecheckRequired(await me({ bearer: token }));
+    expect(await row(user.id)).toMatchObject({
+      disabled_at: null,
+      idp_refresh_token: null,
+      idp_checked_at: T,
+    });
+
+    // Signing in again is all it takes: the IdP's fresh answer lets the same token back in.
+    const again = await signInOidcUser(ctx, idp, a);
+    expect(again.user.id).toBe(user.id);
+    expect((await me({ cookie: again.cookie })).status).toBe(200);
     expect((await me({ bearer: token })).status).toBe(200);
   });
 

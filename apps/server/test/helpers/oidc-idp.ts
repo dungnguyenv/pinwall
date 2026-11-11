@@ -344,6 +344,8 @@ export async function startTestIdp(opts: TestIdpOptions = {}): Promise<TestIdp> 
       PINWALL_OIDC_CLIENT_ID: TEST_IDP_CLIENT_ID,
       PINWALL_OIDC_CLIENT_SECRET: TEST_IDP_CLIENT_SECRET,
       PINWALL_OIDC_DISPLAY_NAME: 'Test IdP',
+      // The test IdP listens on http: only.
+      PINWALL_OIDC_ALLOW_HTTP_ISSUER: 'true',
       ...(groupsClaim
         ? {
             PINWALL_OIDC_SCOPES: 'openid email profile offline_access groups',

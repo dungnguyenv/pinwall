@@ -45,6 +45,7 @@ class OidcDiscoveryError extends Error {
 
 const runtimes = new WeakMap<AppDeps, OidcRuntime>();
 
+/** loadConfig allows an http: issuer only with PINWALL_OIDC_ALLOW_HTTP_ISSUER, and warns. */
 const isHttpIssuer = (oidc: OidcConfig) => new URL(oidc.issuer).protocol === 'http:';
 
 async function discover(oidc: OidcConfig): Promise<Configuration> {
@@ -68,13 +69,6 @@ export function oidcRuntime(deps: AppDeps): OidcRuntime {
   if (oidc === null) {
     throw new Error('OIDC is not configured: set PINWALL_OIDC_ISSUER and PINWALL_OIDC_CLIENT_ID');
   }
-  if (isHttpIssuer(oidc)) {
-    deps.logger.warn(
-      { issuer: oidc.issuer },
-      'PINWALL_OIDC_ISSUER uses http: tokens travel unencrypted',
-    );
-  }
-
   let discovered: Promise<Configuration> | undefined;
   const runtime: OidcRuntime = {
     configuration() {

@@ -2,9 +2,17 @@ import { describe, expect, onTestFinished, test } from 'vitest';
 import type { DbHandle } from '../../src/db/connect.ts';
 import { searchDelete, searchQuery, searchUpsert } from '../../src/db/dialect.ts';
 import { migrateToLatest } from '../../src/db/migrate.ts';
+import { SEARCH_BODY_MAX_BYTES } from '../../src/lib/search-fold.ts';
 import { dialects, withDb } from '../helpers/db.ts';
 
 const T = 1_762_000_000_000;
+
+/** The `n`th two-syllable Hangul word; no two `n` below 124 million give the same word. */
+const hangulWord = (n: number) =>
+  String.fromCharCode(0xac00 + Math.floor(n / 11_172), 0xac00 + (n % 11_172));
+
+/** `count` distinct Hangul words, space-separated: three UTF-16 units per word. */
+const hangulWords = (count: number) => Array.from({ length: count }, (_, n) => hangulWord(n));
 
 describe.each(dialects)('%s search', (dialect) => {
   /** A migrated database holding a project and the artifacts `ids` (Postgres search rows need them). */
@@ -177,5 +185,29 @@ describe.each(dialects)('%s search', (dialect) => {
       }),
     ).rejects.toThrow('roll back');
     expect(await searchQuery(h, 'kept', 10)).toEqual(['art_1']);
+  });
+
+  test('200k characters of distinct Korean words are indexed and stay searchable', async () => {
+    const h = await open('art_1');
+    // 66,666 words fill the 200,000-unit text cap; folded to jamo they overflow a tsvector.
+    const words = hangulWords(66_666);
+    await searchUpsert(h, { artifactId: 'art_1', name: '보고서', tags: '', body: words.join(' ') });
+    for (const word of [words[0], words[33_333], words[66_665], '보고서', '보고']) {
+      expect(await searchQuery(h, word ?? '', 10), word).toEqual(['art_1']);
+    }
+    // NFD input folds the same way.
+    expect(await searchQuery(h, (words[12_345] ?? '').normalize('NFD'), 10)).toEqual(['art_1']);
+  });
+
+  test('a body beyond SEARCH_BODY_MAX_BYTES is indexed up to it, in whole words', async () => {
+    const h = await open('art_1');
+    // 7 bytes per word with its space: about 1.4 MB, well past the cap.
+    const words = hangulWords(200_000);
+    await searchUpsert(h, { artifactId: 'art_1', name: '', tags: '', body: words.join(' ') });
+    const kept = Math.floor((SEARCH_BODY_MAX_BYTES + 1) / 7);
+    expect(await searchQuery(h, words[0] ?? '', 10)).toEqual(['art_1']);
+    expect(await searchQuery(h, words[kept - 1] ?? '', 10)).toEqual(['art_1']);
+    expect(await searchQuery(h, words[kept] ?? '', 10)).toEqual([]);
+    expect(await searchQuery(h, words[199_999] ?? '', 10)).toEqual([]);
   });
 });

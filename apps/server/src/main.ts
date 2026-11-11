@@ -9,6 +9,8 @@ import { connectDb } from './db/connect.ts';
 import { migrateToLatest } from './db/migrate.ts';
 import { closeDeps, createDeps } from './deps.ts';
 import { createLogger, type Logger } from './lib/logger.ts';
+import { startPublishing } from './publish/startup.ts';
+import { configureServerForUploads } from './publish/upload-route.ts';
 
 const USAGE = `Usage: pinwall [command]
 
@@ -69,8 +71,16 @@ async function runServer(config: Config, logger: Logger): Promise<void> {
     hostname: config.listen.host,
     port: config.listen.port,
   }) as Server;
+  configureServerForUploads(server, config);
 
   let stopping = false;
+  /** A startup step failed: log it and exit, once, unless a shutdown is already under way. */
+  const cannotStart = (err: unknown) => {
+    if (stopping) return;
+    stopping = true;
+    logger.fatal({ err }, 'Pinwall cannot start');
+    void closeDeps(deps).finally(() => process.exit(1));
+  };
   server.once('listening', () => {
     const { address, port } = server.address() as AddressInfo;
     const { isolation } = config;
@@ -88,19 +98,13 @@ async function runServer(config: Config, logger: Logger): Promise<void> {
       },
       'listening',
     );
-    startAuth(deps).then(
-      (setupUrl) => {
-        // Also as plain text, for someone watching `docker run` rather than reading JSON logs.
-        if (setupUrl !== null) {
-          console.error(`Pinwall setup: open ${setupUrl} to create the owner account`);
-        }
-      },
-      (err: unknown) => {
-        if (stopping) return;
-        logger.fatal({ err }, 'Pinwall cannot start');
-        void closeDeps(deps).finally(() => process.exit(1));
-      },
-    );
+    startAuth(deps).then((setupUrl) => {
+      // Also as plain text, for someone watching `docker run` rather than reading JSON logs.
+      if (setupUrl !== null) {
+        console.error(`Pinwall setup: open ${setupUrl} to create the owner account`);
+      }
+    }, cannotStart);
+    startPublishing(deps).catch(cannotStart);
   });
   server.once('error', (err) => {
     logger.fatal({ err }, 'The server cannot listen');

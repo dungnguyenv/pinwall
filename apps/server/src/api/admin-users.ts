@@ -146,6 +146,7 @@ export function registerAdminUserRoutes(api: OpenAPIHono<AppEnv>): void {
         sessions: result.sessions,
         api_tokens: result.apiTokens,
         oauth_grants: result.oauthGrants,
+        content_grants: result.contentGrants,
       },
       'credentials revoked',
     );

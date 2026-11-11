@@ -130,28 +130,14 @@ test('the runtime needs OIDC to be configured', () => {
   );
 });
 
-test('an http: issuer logs one warning; an https: issuer none', async () => {
-  const insecure = captureLogs();
-  const rt = oidcRuntime({ ...ctx.deps, logger: insecure.logger });
-  await rt.configuration();
-  await rt.configuration();
-  expect(insecure.lines).toEqual([
-    expect.objectContaining({
-      level: 'warn',
-      issuer: idp.issuer,
-      msg: 'PINWALL_OIDC_ISSUER uses http: tokens travel unencrypted',
-    }),
+test('an http: issuer is reached, with the warning left to loadConfig at start', async () => {
+  const logs = captureLogs();
+  const rt = oidcRuntime({ ...ctx.deps, logger: logs.logger });
+  expect((await rt.configuration()).serverMetadata().issuer).toBe(idp.issuer);
+  expect(logs.lines).toEqual([]);
+  expect(ctx.deps.config.warnings).toEqual([
+    expect.stringMatching(/^PINWALL_OIDC_ALLOW_HTTP_ISSUER is set .*forge any identity/),
   ]);
-
-  const secure = captureLogs();
-  const oidc = ctx.deps.config.oidc;
-  if (!oidc) throw new Error('the test context has no OIDC configuration');
-  oidcRuntime({
-    ...ctx.deps,
-    config: { ...ctx.deps.config, oidc: { ...oidc, issuer: 'https://idp.example' } },
-    logger: secure.logger,
-  });
-  expect(secure.lines).toEqual([]);
 });
 
 test('the callback URL is on the public origin', () => {
