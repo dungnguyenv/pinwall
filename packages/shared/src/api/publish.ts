@@ -10,7 +10,7 @@ const LONE_SURROGATE = /\p{Cs}/u;
 const CONTROL = /\p{Cc}/u;
 
 /** Text that is valid Unicode, without lone surrogates. */
-function wellFormed<T extends z.ZodType<string>>(schema: T) {
+export function wellFormed<T extends z.ZodType<string>>(schema: T) {
   return schema.refine((text) => !LONE_SURROGATE.test(text), {
     message: 'Must be valid Unicode text (it holds a lone surrogate)',
   });

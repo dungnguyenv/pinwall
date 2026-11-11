@@ -5,12 +5,15 @@ import { badRequest } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { registerAccountRoutes } from './account.ts';
 import { registerAdminUserRoutes } from './admin-users.ts';
+import { registerArtifactRoutes } from './artifacts.ts';
 import { registerAuthRoutes } from './auth.ts';
 import { registerConfigRoutes } from './config.ts';
 import { registerMeRoutes } from './me.ts';
+import { registerProjectRoutes } from './projects.ts';
 import { registerPublishRoutes } from './publish.ts';
 import { registerSetupRoutes } from './setup.ts';
 import { registerTokenRoutes } from './tokens.ts';
+import { registerVersionRoutes } from './versions.ts';
 
 /**
  * A bare API router: a body or parameter that fails its schema becomes a `bad_request` listing
@@ -64,6 +67,9 @@ export function buildApiRouter(): OpenAPIHono<AppEnv> {
   registerTokenRoutes(api);
   registerAdminUserRoutes(api);
   registerPublishRoutes(api);
+  registerProjectRoutes(api);
+  registerArtifactRoutes(api);
+  registerVersionRoutes(api);
 
   return api;
 }

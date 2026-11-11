@@ -1,4 +1,5 @@
 import type { Transaction } from 'kysely';
+import { z } from 'zod';
 import type { Db } from '../auth/passkeys.ts';
 import { extractVersionText, type VersionMetadata } from '../content/metadata.ts';
 import type { DbDialect } from '../db/connect.ts';
@@ -8,10 +9,12 @@ import type {
   Database,
   ProjectRow,
   UserRow,
+  VersionFileRow,
   VersionRow,
   VersionSource,
 } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
+import { decodeCursor, encodeCursor } from '../lib/cursor.ts';
 import { AppError, conflict, gone, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { newId } from '../lib/ids.ts';
@@ -40,6 +43,11 @@ export interface CommitResult {
   artifact: ArtifactRow;
   version: VersionRow;
 }
+
+/** Where the next page of versions starts: just below number `n`. */
+const VersionCursor = z.object({ n: z.number().int() });
+/** Where the next page of files starts: just after `p` in path order. */
+const FileCursor = z.object({ p: z.string() });
 
 /** Artifact names are cut to this many characters (code points). */
 const NAME_MAX_CHARS = 200;
@@ -380,4 +388,59 @@ function announce(deps: AppDeps, { artifact, version }: CommitResult): void {
     version_id: version.id,
     number: version.number,
   });
+}
+
+/**
+ * One page of the artifact's versions, the newest first, and which of them is current. A missing
+ * artifact answers as `getArtifact` does (404, or 410 when deleted).
+ */
+export async function listVersions(
+  deps: AppDeps,
+  artifactId: string,
+  p: { limit: number; cursor: string | null },
+): Promise<{ items: VersionRow[]; nextCursor: string | null; currentVersionId: string | null }> {
+  const { db } = deps.db;
+  const artifact = await getArtifact(db, artifactId, deps.clock.now());
+  let query = db.selectFrom('versions').selectAll().where('artifact_id', '=', artifact.id);
+  if (p.cursor !== null)
+    query = query.where('number', '<', decodeCursor(p.cursor, VersionCursor).n);
+  const rows = await query
+    .orderBy('number', 'desc')
+    .limit(p.limit + 1)
+    .execute();
+  const items = rows.slice(0, p.limit);
+  const last = items.at(-1);
+  const nextCursor = rows.length > p.limit && last ? encodeCursor({ n: last.number }) : null;
+  return { items, nextCursor, currentVersionId: artifact.current_version_id };
+}
+
+/** One page of a version's files, in path order. */
+export async function listVersionFiles(
+  deps: AppDeps,
+  versionId: string,
+  p: { limit: number; cursor: string | null },
+): Promise<{ items: VersionFileRow[]; nextCursor: string | null }> {
+  let query = deps.db.db
+    .selectFrom('version_files')
+    .selectAll()
+    .where('version_id', '=', versionId);
+  if (p.cursor !== null) query = query.where('path', '>', decodeCursor(p.cursor, FileCursor).p);
+  const rows = await query
+    .orderBy('path', 'asc')
+    .limit(p.limit + 1)
+    .execute();
+  const items = rows.slice(0, p.limit);
+  const last = items.at(-1);
+  const nextCursor = rows.length > p.limit && last ? encodeCursor({ p: last.path }) : null;
+  return { items, nextCursor };
+}
+
+/** The versions with the given ids, by id, in one query. */
+export async function getVersionsById(
+  db: Db,
+  ids: readonly string[],
+): Promise<Map<string, VersionRow>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db.selectFrom('versions').selectAll().where('id', 'in', ids).execute();
+  return new Map(rows.map((row) => [row.id, row]));
 }
