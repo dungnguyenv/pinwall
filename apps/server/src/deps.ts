@@ -13,6 +13,7 @@ import {
   InProcessEventBus,
   InProcessScheduler,
   type LeaseManager,
+  LiveStreams,
   type OneTimeStore,
   type RateLimiter,
   type Scheduler,
@@ -31,6 +32,8 @@ export interface AppDeps {
   rateLimiter: RateLimiter;
   leases: LeaseManager;
   scheduler: Scheduler;
+  /** Open live-update streams, which `closeDeps` ends. */
+  liveStreams: LiveStreams;
   logger: Logger;
   clock: Clock;
 }
@@ -70,6 +73,7 @@ export async function createDeps(
       rateLimiter: overrides.rateLimiter ?? new InMemoryRateLimiter(clock),
       leases,
       scheduler: overrides.scheduler ?? new InProcessScheduler(leases, logger, holder),
+      liveStreams: overrides.liveStreams ?? new LiveStreams(),
       logger,
       clock,
     };
@@ -79,8 +83,12 @@ export async function createDeps(
   }
 }
 
-/** Stops scheduled jobs (they may still need the database), then closes the database. */
+/**
+ * Ends open live-update streams (they hold connections and check access in the database), stops
+ * scheduled jobs (they may still need the database), then closes the database.
+ */
 export async function closeDeps(d: AppDeps): Promise<void> {
+  d.liveStreams.closeAll();
   try {
     await d.scheduler.stop();
   } finally {

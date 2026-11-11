@@ -15,6 +15,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import type { AppEnv } from '../app.ts';
 import { enforceRateLimit, rateLimit } from '../auth/rate-limits.ts';
+import type { AppDeps } from '../deps.ts';
 import {
   addReply,
   type CommentActor,
@@ -29,9 +30,11 @@ import {
   sharedComment,
   sharedThread,
 } from '../domain/comments.ts';
+import { ARTIFACT_TOPIC } from '../domain/search.ts';
 import {
   readUnlockCookie,
   resolveCommentShare,
+  resolveOpenShare,
   resolveShare,
   SHARE_RATES,
   type ShareState,
@@ -39,8 +42,10 @@ import {
   unlockShare,
 } from '../domain/share-access.ts';
 import { clientIp } from '../http/client-ip.ts';
+import { type LiveStreamOptions, liveStream } from '../http/sse.ts';
 import { hashSecret } from '../lib/ids.ts';
 import { jsonBodyLimit } from './body-limit.ts';
+import { EVENT_STREAM_CONTENT } from './events.ts';
 
 const error = (description: string) => ({
   description,
@@ -235,6 +240,21 @@ const guestDeleteRoute = createRoute({
   },
 });
 
+const eventsRoute = createRoute({
+  method: 'get',
+  path: '/share/{token}/events',
+  tags: ['share viewer'],
+  summary: 'Follow the changes a share link shows',
+  description:
+    'The live updates members get, for `EventSource`, kept to what the link shows. A link that follows the current version hears of new and deleted versions; a per-version link only of the deletion of its own version. Comment changes come only when the link allows comments, only for threads written on the version the link shows or an older one, and redacted as the comment routes are. The link and the unlock cookie are checked again at every heartbeat, so the stream ends within 25 seconds of the link being revoked or expiring or of the unlock running out; it also ends after `artifact.deleted`. Needs no account.',
+  request: { params: TokenParam },
+  responses: {
+    200: { description: 'The event stream', content: EVENT_STREAM_CONTENT },
+    ...lockedError,
+    ...linkErrors,
+  },
+});
+
 const noStore = { 'Cache-Control': 'no-store' };
 
 /** The link `token` names, open to this browser's comments. */
@@ -267,12 +287,69 @@ function guestChanger(s: ShareState, guestToken: string | undefined): CommentAct
   return { kind: 'guest', shareLinkId: s.link.id, name: null, guestToken: guestToken ?? null };
 }
 
+/**
+ * The live stream of share link `s`, opened with `token` and `unlockCookie`. `shown`, the number
+ * of the version the link shows, moves with each new version for a link that follows the
+ * current one; threads written on newer versions stay out, and what goes out is redacted as
+ * `sharedThread` has it. The link and the unlock are checked again at every heartbeat.
+ */
+function shareStream(
+  deps: AppDeps,
+  s: ShareState,
+  token: string,
+  unlockCookie: string | undefined,
+): LiveStreamOptions {
+  const followsCurrent = s.link.version_id === null;
+  const comments = s.link.allow_comments === 1;
+  let shown = s.version.number;
+  return {
+    topic: ARTIFACT_TOPIC(s.artifact.id),
+    forward(e) {
+      switch (e.type) {
+        case 'version.published':
+          if (!followsCurrent) return 'skip';
+          shown = Math.max(shown, e.number);
+          return 'send';
+        case 'version.deleted':
+          return followsCurrent || e.number === shown ? 'send' : 'skip';
+        case 'artifact.deleted':
+          return 'send-and-close';
+        case 'comment.deleted':
+          return comments && e.version_number <= shown ? 'send' : 'skip';
+        default:
+          return comments && e.thread.version.number <= shown ? 'send' : 'skip';
+      }
+    },
+    redact(e) {
+      if (e.type === 'comment.deleted') {
+        return { ...e, thread: e.thread === null ? null : sharedThread(e.thread, shown) };
+      }
+      if ('thread' in e) return { ...e, thread: sharedThread(e.thread, shown) };
+      return e;
+    },
+    async stillAllowed() {
+      const current = await resolveOpenShare(deps, token, unlockCookie);
+      // A version published between opening the link and subscribing is caught up with here.
+      if (followsCurrent) shown = Math.max(shown, current.version.number);
+      return true;
+    },
+  };
+}
+
 /** The share viewer's API: authorized by the share token and the unlock cookie, never by an account. */
 export function registerSharePublicRoutes(api: OpenAPIHono<AppEnv>): void {
   api.openapi(infoRoute, async (c) => {
     const { deps } = c.var;
     const s = await resolveShare(deps, c.req.valid('param').token, readUnlockCookie(c));
     return c.json(await shareInfo(deps, s), 200, noStore);
+  });
+
+  api.openapi(eventsRoute, async (c) => {
+    const { deps } = c.var;
+    const { token } = c.req.valid('param');
+    const unlockCookie = readUnlockCookie(c);
+    const s = await resolveOpenShare(deps, token, unlockCookie);
+    return liveStream(c, shareStream(deps, s, token, unlockCookie));
   });
 
   api.openapi(unlockRoute, async (c) => {

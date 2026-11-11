@@ -123,6 +123,8 @@ async function runServer(config: Config, logger: Logger): Promise<void> {
       process.exit(1);
     }, SHUTDOWN_DEADLINE_MS).unref();
     const drain = setTimeout(() => server.closeAllConnections(), DRAIN_MS).unref();
+    // Live streams never finish by themselves: end them now, so `close` need not wait the drain.
+    deps.liveStreams.closeAll();
 
     // `close` stops accepting connections; its callback runs once the open ones are done.
     server.close(() => {

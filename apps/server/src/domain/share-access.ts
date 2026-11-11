@@ -125,17 +125,29 @@ export async function resolveShare(
 }
 
 /**
- * The share link `token` names, for its guests' comments: a link still locked by its password
- * answers 401 (`details.password_required`), one that does not allow comments 403. Otherwise
- * it answers as `resolveShare` does.
+ * The share link `token` names, opened by this browser: a link still locked by its password
+ * answers 401 (`details.password_required`). Otherwise it answers as `resolveShare` does.
  */
-export async function resolveCommentShare(
+export async function resolveOpenShare(
   deps: AppDeps,
   token: string,
   unlockCookie: string | undefined,
 ): Promise<ShareState> {
   const s = await resolveShare(deps, token, unlockCookie);
   if (s.locked) throw passwordRequired();
+  return s;
+}
+
+/**
+ * The share link `token` names, for its guests' comments: one that does not allow comments
+ * answers 403. Otherwise it answers as `resolveOpenShare` does.
+ */
+export async function resolveCommentShare(
+  deps: AppDeps,
+  token: string,
+  unlockCookie: string | undefined,
+): Promise<ShareState> {
+  const s = await resolveOpenShare(deps, token, unlockCookie);
   if (s.link.allow_comments !== 1) throw forbidden(t('share.commentsOff'));
   return s;
 }

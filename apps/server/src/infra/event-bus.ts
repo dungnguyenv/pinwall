@@ -39,6 +39,11 @@ export class InProcessEventBus implements EventBus {
     }
   }
 
+  /** How many subscriptions `topic` has: for diagnostics and tests. */
+  subscriberCount(topic: string): number {
+    return this.topics.get(topic)?.size ?? 0;
+  }
+
   subscribe(topic: string, handler: Handler): () => void {
     const subscription = { handler };
     let subscriptions = this.topics.get(topic);

@@ -43,6 +43,21 @@ describe('InProcessEventBus', () => {
     expect(kept).toHaveBeenCalledTimes(2);
   });
 
+  test('counts the subscriptions of a topic', () => {
+    const bus = new InProcessEventBus();
+    expect(bus.subscriberCount('t')).toBe(0);
+    const first = bus.subscribe('t', () => {});
+    const second = bus.subscribe('t', () => {});
+    bus.subscribe('u', () => {});
+    expect(bus.subscriberCount('t')).toBe(2);
+    first();
+    first();
+    expect(bus.subscriberCount('t')).toBe(1);
+    second();
+    expect(bus.subscriberCount('t')).toBe(0);
+    expect(bus.subscriberCount('u')).toBe(1);
+  });
+
   test('the same handler subscribed twice is called twice, and unsubscribed separately', () => {
     const bus = new InProcessEventBus();
     const handler = vi.fn();

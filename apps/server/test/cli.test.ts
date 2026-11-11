@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, onTestFinished, test } from 'vitest';
 import { connectDb } from '../src/db/connect.ts';
+import { readSse } from './helpers/review.ts';
 
 const serverDir = fileURLToPath(new URL('..', import.meta.url));
 
@@ -138,4 +139,51 @@ test('serve listens, answers health checks and stops cleanly on SIGTERM', async 
   child.kill('SIGTERM');
   expect(await exited).toBe(0);
   expect(logLines(output.stdout)).toContainEqual(expect.objectContaining({ msg: 'stopped' }));
+}, 30_000);
+
+test('serve ends live streams at once on SIGTERM', async () => {
+  const dataDir = await tempDataDir();
+  const origin = 'http://pinwall.example.com';
+  const { child, output, exited } = pinwall([], {
+    PINWALL_DATA_DIR: dataDir,
+    PINWALL_HOST: '127.0.0.1',
+    PINWALL_PORT: '0',
+    PINWALL_PUBLIC_ORIGIN: origin,
+  });
+  const { port } = await waitForLog(child, output, 'listening');
+  const { setup_url } = await waitForLog(child, output, (entry) => 'setup_url' in entry);
+  const api = (path: string, init: { body?: unknown; cookie?: string } = {}) =>
+    fetch(`http://127.0.0.1:${port}/api/v1${path}`, {
+      method: init.body === undefined ? 'GET' : 'POST',
+      headers: {
+        origin,
+        ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(init.cookie === undefined ? {} : { cookie: init.cookie }),
+      },
+      ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+    });
+
+  const token = new URL(String(setup_url)).searchParams.get('token');
+  const owner = await api('/auth/setup', {
+    body: { token, name: 'Ada', password: 'correct horse battery staple' },
+  });
+  expect(owner.status).toBe(201);
+  const cookie = owner.headers.getSetCookie()[0]?.split(';')[0] ?? '';
+  const published = await api('/publish/inline', {
+    cookie,
+    body: { target: {}, files: [{ path: 'index.html', content: '<p>Xin chào</p>' }] },
+  });
+  expect(published.status).toBe(201);
+  const { artifact_id } = (await published.json()) as { artifact_id: string };
+  const res = await api(`/artifacts/${artifact_id}/events`, { cookie });
+  expect(res.status).toBe(200);
+  const stream = readSse(res);
+  expect(await stream.next()).toBe('retry: 5000\n\n');
+
+  // The stream ends at once instead of holding the server open until connections are cut.
+  const stopping = Date.now();
+  child.kill('SIGTERM');
+  expect(await stream.done()).toBe(true);
+  expect(await exited).toBe(0);
+  expect(Date.now() - stopping).toBeLessThan(4_000);
 }, 30_000);

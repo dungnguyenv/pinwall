@@ -11,6 +11,7 @@ import { registerCommentRoutes } from './comments.ts';
 import { registerConfigRoutes } from './config.ts';
 import { registerContentRoutes } from './content.ts';
 import { registerDiffRoutes } from './diff.ts';
+import { registerEventRoutes } from './events.ts';
 import { registerMeRoutes } from './me.ts';
 import { registerProjectRoutes } from './projects.ts';
 import { registerPublishRoutes } from './publish.ts';
@@ -80,6 +81,7 @@ export function buildApiRouter(): OpenAPIHono<AppEnv> {
   registerCommentRoutes(api);
   registerShareRoutes(api);
   registerSharePublicRoutes(api);
+  registerEventRoutes(api);
 
   return api;
 }
