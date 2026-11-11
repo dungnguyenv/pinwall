@@ -233,10 +233,27 @@ test('Revoke now asks, then reports what ended', async () => {
     within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Revoke now' }),
   );
   expect(
-    await screen.findByText('Revoked 2 sessions, 1 API tokens and 1 agent connections.'),
+    await screen.findByText('Revoked 2 sessions, 1 API token and 1 agent connection.'),
   ).toBeInTheDocument();
   expect(calls).toEqual([{ method: 'POST', path: '/admin/users/usr_2/revoke', body: undefined }]);
   await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+});
+
+test('the Revoke now summary uses the singular for one and the plural for the rest', async () => {
+  serveAdminUsers({
+    users: people(),
+    revoked: { sessions: 1, api_tokens: 2, oauth_grants: 0 },
+  });
+  const { user } = renderRoute('/admin/users');
+  const grace = await rowOf('Grace Hopper');
+
+  await user.click(within(grace).getByRole('button', { name: 'Revoke now for Grace Hopper' }));
+  await user.click(
+    within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Revoke now' }),
+  );
+  expect(
+    await screen.findByText('Revoked 1 session, 2 API tokens and 0 agent connections.'),
+  ).toBeInTheDocument();
 });
 
 test('a failed Revoke now keeps the dialog open and says why', async () => {

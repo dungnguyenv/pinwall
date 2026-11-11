@@ -100,9 +100,9 @@ export function UsersPage() {
           const result = await revokeUser.mutateAsync(revoking.item.id);
           toast.success(
             t('web.admin.revoke.done', {
-              sessions: result.sessions,
-              tokens: result.api_tokens,
-              agents: result.oauth_grants,
+              sessions: t('web.admin.revoke.sessions', { count: result.sessions }),
+              tokens: t('web.admin.revoke.tokens', { count: result.api_tokens }),
+              agents: t('web.admin.revoke.agents', { count: result.oauth_grants }),
             }),
           );
           // Revoking yourself ended this session too: there is nobody left to show these pages to.
