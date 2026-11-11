@@ -64,6 +64,27 @@ export function lockArtifact(
 }
 
 /**
+ * The artifact `id`, held until `trx` ends: share-locked on Postgres, so a version or artifact
+ * deletion (which locks it for update) and a write that points at one of its versions (a
+ * comment, a share link) take turns instead of racing on that version. On SQLite a transaction
+ * has the database to itself. A missing artifact answers as `getArtifact` does.
+ */
+export async function holdArtifact(
+  trx: Transaction<Database>,
+  dialect: DbDialect,
+  id: string,
+  now: number,
+): Promise<ArtifactRow> {
+  const row = await trx
+    .selectFrom('artifacts')
+    .selectAll()
+    .where('id', '=', id)
+    .$if(dialect === 'postgres', (qb) => qb.forShare())
+    .executeTakeFirst();
+  return row ?? getArtifact(trx, id, now);
+}
+
+/**
  * Tags as stored: NFC, trimmed, inner whitespace and control characters collapsed to one space,
  * lowercased, without duplicates, sorted. Refuses an empty tag, one longer than
  * `MAX_TAG_LENGTH` characters, and more than `MAX_TAGS` distinct tags.

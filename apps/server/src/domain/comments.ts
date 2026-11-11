@@ -5,15 +5,15 @@ import { z } from 'zod';
 import type { Db } from '../auth/passkeys.ts';
 import { effectiveRole } from '../auth/roles.ts';
 import type { DbDialect } from '../db/connect.ts';
-import type { ArtifactRow, CommentRow, Database, UserRow, VersionRow } from '../db/schema.ts';
+import type { ArtifactRow, CommentRow, Database, UserRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import { decodeCursor, encodeCursor } from '../lib/cursor.ts';
 import { badRequest, forbidden, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { newId } from '../lib/ids.ts';
-import { getArtifact } from './artifacts.ts';
+import { getArtifact, holdArtifact } from './artifacts.ts';
 import { publishLive } from './live.ts';
-import { getCurrentVersion } from './versions.ts';
+import { getCurrentVersion, versionOf } from './versions.ts';
 
 /** Who writes or changes a comment. */
 export type CommentActor = { kind: 'member'; user: UserRow };
@@ -364,27 +364,6 @@ function newComment(
   };
 }
 
-/**
- * The artifact `id`, held until `trx` ends: share-locked on Postgres, so a version or artifact
- * deletion (which locks it for update) and a comment write take turns instead of racing on the
- * version the comment points at. On SQLite a transaction has the database to itself. A missing
- * artifact answers as `getArtifact` does.
- */
-async function holdArtifact(
-  trx: Transaction<Database>,
-  dialect: DbDialect,
-  id: string,
-  now: number,
-): Promise<ArtifactRow> {
-  const row = await trx
-    .selectFrom('artifacts')
-    .selectAll()
-    .where('id', '=', id)
-    .$if(dialect === 'postgres', (qb) => qb.forShare())
-    .executeTakeFirst();
-  return row ?? getArtifact(trx, id, now);
-}
-
 /** The comment `id` and its artifact, held as `holdArtifact` holds it. */
 async function holdComment(
   trx: Transaction<Database>,
@@ -397,18 +376,6 @@ async function holdComment(
   // A deletion the lock waited for may have taken the comment along.
   const comment = dialect === 'postgres' ? await getComment(trx, id) : seen;
   return { comment, artifact };
-}
-
-/** Version `versionId` of `artifact`; 400 when the artifact has no such version. */
-async function versionOf(db: Db, artifact: ArtifactRow, versionId: string): Promise<VersionRow> {
-  const version = await db
-    .selectFrom('versions')
-    .selectAll()
-    .where('id', '=', versionId)
-    .where('artifact_id', '=', artifact.id)
-    .executeTakeFirst();
-  if (version === undefined) throw badRequest(t('version.notInArtifact'), { field: 'version_id' });
-  return version;
 }
 
 async function readThread(db: Db, threadId: string): Promise<CommentThread> {

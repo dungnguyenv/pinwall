@@ -125,5 +125,10 @@
   "comment.editForbidden": "Only the author can edit this comment.",
   "comment.deleteForbidden": "Only the author, the artifact's publisher or an admin can delete this comment.",
   "comment.notThread": "Only the first comment of a thread can be resolved or reopened.",
+  "share.unknown": "This share link does not exist.",
+  "share.passwordTooShort": "Use a password of at least {{min}} characters.",
+  "share.passwordTooLong": "Use a password of at most {{max}} characters.",
+  "share.badExpiry": "Choose an expiry in the future.",
+  "share.revokeForbidden": "Only the link's creator, the artifact's publisher or an admin can revoke it.",
   "version.notInArtifact": "That version does not belong to this artifact."
 }

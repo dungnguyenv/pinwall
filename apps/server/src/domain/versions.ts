@@ -15,7 +15,7 @@ import type {
 } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import { decodeCursor, encodeCursor } from '../lib/cursor.ts';
-import { AppError, conflict, gone, notFound } from '../lib/errors.ts';
+import { AppError, badRequest, conflict, gone, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { newId } from '../lib/ids.ts';
 import { entryKind } from '../publish/paths.ts';
@@ -243,6 +243,22 @@ export async function getCurrentVersion(db: Db, artifact: ArtifactRow): Promise<
       ? undefined
       : await db.selectFrom('versions').selectAll().where('id', '=', id).executeTakeFirst();
   if (version === undefined) throw gone(t('artifact.gone'));
+  return version;
+}
+
+/** Version `versionId` of `artifact`; 400 when the artifact has no such version. */
+export async function versionOf(
+  db: Db,
+  artifact: ArtifactRow,
+  versionId: string,
+): Promise<VersionRow> {
+  const version = await db
+    .selectFrom('versions')
+    .selectAll()
+    .where('id', '=', versionId)
+    .where('artifact_id', '=', artifact.id)
+    .executeTakeFirst();
+  if (version === undefined) throw badRequest(t('version.notInArtifact'), { field: 'version_id' });
   return version;
 }
 
