@@ -11,7 +11,7 @@ import type { ArtifactRow, ContentGrantRow, ShareLinkRow, VersionRow } from '../
 import type { AppDeps } from '../deps.ts';
 import { clientIp } from '../http/client-ip.ts';
 import { deriveKey, safeEqual, verifyPassword } from '../lib/crypto.ts';
-import { AppError, gone, notFound, unauthorized } from '../lib/errors.ts';
+import { AppError, forbidden, gone, notFound, unauthorized } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { hashSecret } from '../lib/ids.ts';
 import { entryKind } from '../publish/paths.ts';
@@ -28,6 +28,7 @@ export const SHARE_RATES: {
   unlockLink: RateRule;
   guestComment: RateRule;
   guestCommentLink: RateRule;
+  guestEdit: RateRule;
 } = {
   /** Opening `/s/<token>`, per client address. */
   open: { name: 'share-open', limit: 120, windowMs: 600_000 },
@@ -39,6 +40,8 @@ export const SHARE_RATES: {
   guestComment: { name: 'share-comment', limit: 10, windowMs: 600_000 },
   /** Guest comments on one link from every address together (link id). */
   guestCommentLink: { name: 'share-comment-link', limit: 200, windowMs: 3_600_000 },
+  /** Guest edits and deletes on one link from one address (`<link id>:<address>`). */
+  guestEdit: { name: 'share-comment-edit', limit: 30, windowMs: 600_000 },
 };
 
 /** The HKDF purpose of the key that signs unlock cookies. */
@@ -116,6 +119,22 @@ export async function resolveShare(
   if (artifact === undefined || version === undefined) throw linkGone('deleted');
   const locked = link.password_hash !== null && checkUnlock(deps, link, unlockCookie) === null;
   return { link, artifact, version, locked };
+}
+
+/**
+ * The share link `token` names, for its guests' comments: a link still locked by its password
+ * answers 401 (`details.password_required`), one that does not allow comments 403. Otherwise
+ * it answers as `resolveShare` does.
+ */
+export async function resolveCommentShare(
+  deps: AppDeps,
+  token: string,
+  unlockCookie: string | undefined,
+): Promise<ShareState> {
+  const s = await resolveShare(deps, token, unlockCookie);
+  if (s.locked) throw passwordRequired();
+  if (s.link.allow_comments !== 1) throw forbidden(t('share.commentsOff'));
+  return s;
 }
 
 /**

@@ -130,6 +130,15 @@ test('comment bodies and guest names are trimmed and bounded', () => {
   expect(GuestName.safeParse('  ').success).toBe(false);
 });
 
+test('comment bodies refuse NUL and guest names refuse control characters', () => {
+  expect(CommentBody.parse('Một\nHai\tBa')).toBe('Một\nHai\tBa');
+  expect(CommentBody.safeParse('Một\u0000Hai').success).toBe(false);
+  for (const name of ['Lan\nAdmin', 'Lan\tB', 'Lan\u0000', 'L\u007fan', 'L\u0085an']) {
+    expect(GuestName.safeParse(name).success).toBe(false);
+  }
+  expect(GuestName.parse(' Nguyễn Văn Lan ')).toBe('Nguyễn Văn Lan');
+});
+
 test('thread queries read their numbers and status from the query string', () => {
   expect(ThreadQuery.parse({ status: 'open', version: '2', limit: '5', cursor: 'abc' })).toEqual({
     status: 'open',

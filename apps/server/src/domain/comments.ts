@@ -10,13 +10,89 @@ import type { AppDeps } from '../deps.ts';
 import { decodeCursor, encodeCursor } from '../lib/cursor.ts';
 import { badRequest, forbidden, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
-import { newId } from '../lib/ids.ts';
+import { hashSecret, newId, newSecret } from '../lib/ids.ts';
 import { getArtifact, holdArtifact } from './artifacts.ts';
 import { publishLive } from './live.ts';
 import { getCurrentVersion, versionOf } from './versions.ts';
 
-/** Who writes or changes a comment. */
-export type CommentActor = { kind: 'member'; user: UserRow };
+/** How long after writing it a guest may still edit or delete a comment. */
+export const GUEST_EDIT_WINDOW_MS = 900_000;
+/** The request header that carries a guest's edit token; never `Authorization`. */
+export const GUEST_TOKEN_HEADER = 'x-pinwall-guest-token';
+
+/**
+ * Who writes or changes a comment: a member, or a guest of share link `shareLinkId`. A guest
+ * writes with a `name` and changes a comment with the `guestToken` it got for it.
+ */
+export type CommentActor =
+  | { kind: 'member'; user: UserRow }
+  | { kind: 'guest'; shareLinkId: string; name: string | null; guestToken: string | null };
+
+type GuestActor = Extract<CommentActor, { kind: 'guest' }>;
+
+/** What a guest edit token stands for, kept under the token's hash. */
+interface GuestTokenEntry {
+  comment_id: string;
+  share_link_id: string;
+}
+
+function guestTokenKey(token: string): string {
+  return `guest-comment:${hashSecret(token)}`;
+}
+
+/**
+ * A new token that lets the guest who wrote comment `commentId` through link `shareLinkId`
+ * change it for `GUEST_EDIT_WINDOW_MS`. Only its hash is kept; the token is shown once.
+ */
+export async function issueGuestToken(
+  deps: AppDeps,
+  commentId: string,
+  shareLinkId: string,
+): Promise<string> {
+  const token = newSecret();
+  const entry: GuestTokenEntry = { comment_id: commentId, share_link_id: shareLinkId };
+  await deps.oneTime.put(guestTokenKey(token), entry, GUEST_EDIT_WINDOW_MS);
+  return token;
+}
+
+/**
+ * Whether guest `actor` may edit or delete `c`: its token was issued for `c` through the link
+ * the guest is using now, and `c` is younger than `GUEST_EDIT_WINDOW_MS`.
+ */
+export async function guestMayChange(
+  deps: AppDeps,
+  actor: GuestActor,
+  c: CommentRow,
+): Promise<boolean> {
+  if (actor.guestToken === null) return false;
+  if (deps.clock.now() >= c.created_at + GUEST_EDIT_WINDOW_MS) return false;
+  const entry = await deps.oneTime.peek<GuestTokenEntry>(guestTokenKey(actor.guestToken));
+  return entry !== null && entry.comment_id === c.id && entry.share_link_id === actor.shareLinkId;
+}
+
+/** What the viewers of a share link may see: one artifact, up to the version the link shows. */
+export interface ShareScope {
+  artifactId: string;
+  maxVersionNumber: number;
+}
+
+/**
+ * The comment `id` if the viewers of a share link see it: on the link's artifact and written on
+ * a version numbered up to the one the link shows. Any other answers 404 like a missing one, so
+ * a link never confirms a comment it does not show.
+ */
+export async function getSharedComment(db: Db, scope: ShareScope, id: string): Promise<CommentRow> {
+  const row = await db
+    .selectFrom('comments')
+    .innerJoin('versions as written', 'written.id', 'comments.version_id')
+    .selectAll('comments')
+    .where('comments.id', '=', id)
+    .where('comments.artifact_id', '=', scope.artifactId)
+    .where('written.number', '<=', scope.maxVersionNumber)
+    .executeTakeFirst();
+  if (row === undefined) throw notFound(t('comment.notFound'));
+  return row;
+}
 
 /** Which threads `listThreads` returns, a page at a time. */
 export interface ThreadFilter {
@@ -182,7 +258,10 @@ export async function addReply(
   return { thread, comment: commentIn(thread, id) };
 }
 
-/** Replaces the text of a comment; only its author may. Sets `edited_at`. */
+/**
+ * Replaces the text of a comment; only its author may: the member who wrote it, or the guest
+ * with its token within `GUEST_EDIT_WINDOW_MS`. Sets `edited_at`.
+ */
 export async function editComment(
   deps: AppDeps,
   actor: CommentActor,
@@ -193,7 +272,11 @@ export async function editComment(
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const { comment } = await holdComment(trx, dialect, commentId, now);
-    if (comment.author_user_id !== actor.user.id) throw forbidden(t('comment.editForbidden'));
+    if (actor.kind === 'guest') {
+      if (!(await guestMayChange(deps, actor, comment))) throw forbidden(t('comment.guestWindow'));
+    } else if (comment.author_user_id !== actor.user.id) {
+      throw forbidden(t('comment.editForbidden'));
+    }
     await trx
       .updateTable('comments')
       .set({ body, updated_at: now, edited_at: now })
@@ -206,8 +289,9 @@ export async function editComment(
 }
 
 /**
- * Deletes a comment; its author, the artifact's publisher or an admin may. Deleting a thread's
- * first comment deletes the thread with its replies.
+ * Deletes a comment; its author, the artifact's publisher or an admin may, and a guest with its
+ * token within `GUEST_EDIT_WINDOW_MS` (the token then ends). Deleting a thread's first comment
+ * deletes the thread with its replies.
  */
 export async function deleteComment(
   deps: AppDeps,
@@ -218,7 +302,11 @@ export async function deleteComment(
   const outcome = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const { comment, artifact } = await holdComment(trx, dialect, commentId, now);
-    if (!canDeleteComment(actor, comment, artifact)) throw forbidden(t('comment.deleteForbidden'));
+    if (actor.kind === 'guest') {
+      if (!(await guestMayChange(deps, actor, comment))) throw forbidden(t('comment.guestWindow'));
+    } else if (!canDeleteComment(actor.user, comment, artifact)) {
+      throw forbidden(t('comment.deleteForbidden'));
+    }
     const version = await trx
       .selectFrom('versions')
       .select('number')
@@ -230,6 +318,9 @@ export async function deleteComment(
     return { comment, versionNumber: version.number, thread };
   });
   const { comment } = outcome;
+  if (actor.kind === 'guest' && actor.guestToken !== null) {
+    await deps.oneTime.delete(guestTokenKey(actor.guestToken));
+  }
   publishLive(deps, {
     type: 'comment.deleted',
     artifact_id: comment.artifact_id,
@@ -321,13 +412,8 @@ export async function countOpenThreads(
   return new Map(rows.map((row) => [row.artifact_id, Number(row.count)]));
 }
 
-/** Whether `actor` may delete `comment`: its author, the artifact's publisher, or an admin. */
-function canDeleteComment(
-  actor: CommentActor,
-  comment: CommentRow,
-  artifact: ArtifactRow,
-): boolean {
-  const { user } = actor;
+/** Whether member `user` may delete `comment`: its author, the artifact's publisher, or an admin. */
+function canDeleteComment(user: UserRow, comment: CommentRow, artifact: ArtifactRow): boolean {
   return (
     comment.author_user_id === user.id ||
     artifact.created_by === user.id ||
@@ -338,6 +424,15 @@ function canDeleteComment(
 /** Only a thread's first comment carries its status. */
 function assertThread(comment: CommentRow): void {
   if (comment.parent_id !== null) throw badRequest(t('comment.notThread'));
+}
+
+/** Who a new comment is by: a member's id, or a guest's name and the link they wrote through. */
+function authorColumns(actor: CommentActor) {
+  if (actor.kind === 'member') {
+    return { author_user_id: actor.user.id, guest_name: null, share_link_id: null };
+  }
+  if (actor.name === null) throw new Error('A guest writes a comment under a name');
+  return { author_user_id: null, guest_name: actor.name, share_link_id: actor.shareLinkId };
 }
 
 /** The columns every new comment shares, root or reply. */
@@ -351,9 +446,7 @@ function newComment(
   return {
     artifact_id: artifactId,
     version_id: versionId,
-    author_user_id: actor.user.id,
-    guest_name: null,
-    share_link_id: null,
+    ...authorColumns(actor),
     body,
     resolved_in_version_id: null,
     resolved_by: null,

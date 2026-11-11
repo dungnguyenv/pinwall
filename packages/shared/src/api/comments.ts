@@ -2,12 +2,31 @@ import { z } from 'zod';
 import { Anchor } from '../protocol.ts';
 import { page, Timestamp } from './common.ts';
 
-/** The text of a comment, trimmed: 1 to 10,000 characters. */
-export const CommentBody = z.string().trim().min(1).max(10_000);
+/** C0 controls, DEL and C1 controls (Unicode's `Cc`). */
+const CONTROL = /\p{Cc}/u;
+
+/**
+ * The text of a comment, trimmed: 1 to 10,000 characters, without NUL (Postgres cannot store
+ * one). Line breaks and tabs are text like any other.
+ */
+export const CommentBody = z
+  .string()
+  .trim()
+  .min(1)
+  .max(10_000)
+  .refine((text) => !text.includes('\u0000'), { message: 'Must not contain NUL characters' });
 export type CommentBody = z.infer<typeof CommentBody>;
 
-/** The name a share-link guest signs a comment with, trimmed: 1 to 60 characters. */
-export const GuestName = z.string().trim().min(1).max(60);
+/**
+ * The name a share-link guest signs a comment with, trimmed: 1 to 60 characters on one line, no
+ * control characters.
+ */
+export const GuestName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(60)
+  .refine((name) => !CONTROL.test(name), { message: 'Must not contain control characters' });
 export type GuestName = z.infer<typeof GuestName>;
 
 /** A version named by id and number. */
