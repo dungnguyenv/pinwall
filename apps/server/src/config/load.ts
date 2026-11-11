@@ -404,6 +404,7 @@ export function loadConfig(
         scopes,
         displayName: r.read('PINWALL_OIDC_DISPLAY_NAME', text) ?? 'Single sign-on',
         extraAuthParams: r.read('PINWALL_OIDC_EXTRA_AUTH_PARAMS', custom(parseAuthParams)) ?? {},
+        allowHttpIssuer,
         ...(rolesClaim === undefined ? {} : { rolesClaim }),
         adminGroups: parseList(r.raw('PINWALL_OIDC_ADMIN_GROUPS')),
         memberGroups: parseList(r.raw('PINWALL_OIDC_MEMBER_GROUPS')),

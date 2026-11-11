@@ -463,6 +463,7 @@ describe('proxy, secret key and access', () => {
       scopes: ['openid', 'groups'],
       displayName: 'Company SSO',
       extraAuthParams: { access_type: 'offline', prompt: 'consent' },
+      allowHttpIssuer: false,
       rolesClaim: 'groups',
       adminGroups: [],
       memberGroups: ['staff'],
@@ -513,7 +514,10 @@ describe('proxy, secret key and access', () => {
     ]);
 
     const allowed = loadConfig({ ...plain, PINWALL_OIDC_ALLOW_HTTP_ISSUER: 'true' });
-    expect(allowed.oidc?.issuer).toBe('http://idp.internal:8081/realms/x');
+    expect(allowed.oidc).toMatchObject({
+      issuer: 'http://idp.internal:8081/realms/x',
+      allowHttpIssuer: true,
+    });
     expect(allowed.warnings).toEqual([
       expect.stringMatching(/PINWALL_OIDC_ALLOW_HTTP_ISSUER.*forge/),
     ]);
@@ -524,7 +528,7 @@ describe('proxy, secret key and access', () => {
       PINWALL_OIDC_CLIENT_ID: 'c',
       PINWALL_OIDC_ALLOW_HTTP_ISSUER: 'true',
     });
-    expect(secure.oidc?.issuer).toBe('https://idp.example');
+    expect(secure.oidc).toMatchObject({ issuer: 'https://idp.example', allowHttpIssuer: true });
     expect(secure.warnings).toEqual([]);
   });
 

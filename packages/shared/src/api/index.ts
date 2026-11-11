@@ -1,5 +1,6 @@
 export * from './account.ts';
 export * from './admin.ts';
+export * from './admin-config.ts';
 export * from './artifacts.ts';
 export * from './auth.ts';
 export * from './comments.ts';
