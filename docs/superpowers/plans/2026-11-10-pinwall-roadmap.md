@@ -127,7 +127,8 @@ pinwall/
 | `PINWALL_OIDC_ROLES_CLAIM` | — | Claim holding groups/roles (string, array, or object keys). |
 | `PINWALL_OIDC_ADMIN_GROUPS`, `PINWALL_OIDC_MEMBER_GROUPS` | — | Comma lists. |
 | `PINWALL_ADMIN_EMAILS`, `PINWALL_MEMBER_EMAILS`, `PINWALL_MEMBER_DOMAINS` | — | Comma lists; verified emails only. If no member group/email/domain is set, every IdP identity is a member. |
-| `PINWALL_ACCESS_RECHECK_INTERVAL` | `12h` | Must be ≤ `24h`. |
+| `PINWALL_OIDC_ALLOW_HTTP_ISSUER` | `false` | Allow an `http:` issuer (tests, in-cluster IdPs); logs a warning. |
+| `PINWALL_ACCESS_RECHECK_INTERVAL` | `12h` | Between `5m` and `24h`. |
 | `PINWALL_MAX_UPLOAD_BYTES` | `95000000` | One request. |
 | `PINWALL_MAX_INLINE_BYTES` | `2000000` | MCP inline publish total. |
 | `PINWALL_MAX_FILE_BYTES` | `50000000` | One file inside a version. |
