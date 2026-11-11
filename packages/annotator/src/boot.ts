@@ -1,7 +1,8 @@
 /**
  * The annotator of one frame: it tells the viewer which page the frame shows, turns clicks and
  * selections into anchors in comment mode, and draws the pins the viewer sends. Every frame of a
- * review grant runs its own annotator and talks to `window.top` (the viewer) directly.
+ * review grant runs its own annotator and talks to `window.top` (the viewer) directly. It hears
+ * the viewer only once it has posted `ready`, and draws only the anchors of its own page.
  */
 import {
   ANNOTATOR_GLOBAL,
@@ -60,8 +61,6 @@ const NAVIGATION_CHECK_MS = 1000;
 const LAYOUT_DELAY_MS = 50;
 /** A clicked box covering this much of the viewport is "the page": the click becomes a point. */
 const PAGE_SIZED = 0.8;
-/** Viewer messages kept while the DOM loads. */
-const MAX_QUEUED = 100;
 
 /** 16 hex characters from the platform's random source. */
 function newFrameId(win: Win): string {
@@ -116,7 +115,13 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
 
   let mode: 'browse' | 'comment' = 'browse';
   let overlay: Overlay | null = null;
-  let queue: ViewerToPageMessage[] | null = [];
+  /** The DOM is loaded: the overlay exists and `ready` went out if there was a page to name. */
+  let domReady = false;
+  /**
+   * `ready` was posted. Viewer messages before it are dropped: the viewer answers `ready`, so an
+   * earlier one was meant for the document this window showed before, or for another frame.
+   */
+  let announced = false;
   let anchors: ShowAnchors = [];
   let results: Result[] = [];
   let unfound = false;
@@ -230,8 +235,11 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
     const next = pageOf(now, base);
     if (next === page) return;
     page = next;
-    if (queue !== null) return; // Not ready yet: `ready` will name the page.
-    if (next !== null) post({ pinwall: 1, type: 'navigated', page: next, frameId });
+    if (!domReady) return; // `ready` will name the page.
+    if (next !== null) {
+      post({ pinwall: 1, type: announced ? 'navigated' : 'ready', page: next, frameId });
+      announced = true;
+    }
     applyAnchors();
   };
 
@@ -321,26 +329,27 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
   };
 
   const onReady = () => {
-    if (queue === null) return;
+    if (domReady) return;
+    domReady = true;
     overlay = createOverlay(doc, (id) => post({ pinwall: 1, type: 'pin-clicked', id }));
     overlay.layout();
     if (typeof w.ResizeObserver === 'function' && doc.documentElement) {
       resizeObserver = new w.ResizeObserver(guard(scheduleLayout));
       resizeObserver.observe(doc.documentElement);
     }
-    if (page !== null) post({ pinwall: 1, type: 'ready', page, frameId });
-    const pending = queue;
-    queue = null;
-    for (const msg of pending) guard(handle)(msg);
+    if (page !== null) {
+      post({ pinwall: 1, type: 'ready', page, frameId });
+      announced = true;
+    }
   };
 
+  // Messages before `ready` still stop at the annotator: the page never sees viewer messages.
   removers.push(
     onViewerMessage(
       w,
       top,
       (msg) => {
-        if (queue === null) handle(msg);
-        else if (queue.push(msg) > MAX_QUEUED) queue.shift();
+        if (announced) handle(msg);
       },
       events,
     ),
@@ -379,7 +388,9 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
       resizeObserver?.disconnect();
       overlay?.destroy();
       overlay = null;
-      queue = null;
+      // Nothing is set up or heard after this, even if a listener could not be removed.
+      domReady = true;
+      announced = false;
       Reflect.deleteProperty(w, ANNOTATOR_GLOBAL);
     },
   };

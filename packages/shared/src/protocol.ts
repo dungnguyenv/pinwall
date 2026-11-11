@@ -9,8 +9,14 @@
  *   `window.top` and that pass `ViewerToPageMessage`.
  * - The viewer accepts a message only when `event.source` is its review frame's window or a frame
  *   inside it, and only when it passes `PageToViewerMessage`. Every message carries `pinwall: 1`.
- * - Each frame of a review grant posts `ready` once its DOM is loaded (DOMContentLoaded). On every
- *   `ready` the viewer sends `set-mode` and `show-anchors` to all frames under its review frame.
+ * - Each frame of a review grant posts `ready` once its DOM is loaded (DOMContentLoaded). The
+ *   viewer binds that `frameId` to the message's `event.source`, and sends `set-mode`,
+ *   `show-anchors` and `focus-anchor` only to frame windows that posted a valid `ready`; each
+ *   frame gets only the anchors of the page it named in `ready` or its latest `navigated`. Frames
+ *   that never post `ready` (third-party embeds, CSP-blocked frames) receive nothing. Any frame
+ *   under the review frame can still post a `ready` naming a page and so learn that page's quotes.
+ * - An annotator ignores viewer messages that arrive before it has posted `ready`, and draws only
+ *   the anchors of its own page.
  * - Each annotator keeps the anchors whose `page` is its own page and always answers with
  *   `anchors-placed`, listing every anchor it kept and `via`, how it placed it: by its quote, its
  *   DOM path, or its stored position. `found` is true for a point anchor, for a text anchor placed
@@ -18,8 +24,9 @@
  *   its DOM path only while that element's text still holds the quote (whitespace and Unicode
  *   normalized); otherwise the pin sits at the element or the position, and `found` is false.
  * - A frame that has not posted `ready` within 3 seconds of its `load` event has no annotator
- *   (its own Content-Security-Policy may block the script); the viewer places point comments for
- *   it on its own overlay.
+ *   (its own Content-Security-Policy may block the script). For the top content frame the viewer
+ *   places point comments on its own overlay; a nested frame without an annotator cannot be
+ *   commented on in v1.
  * - The viewer sends anchors, pin numbers and resolved flags to pages, never comment bodies.
  *
  * The schemas use only the functional API that `zod` and `zod/mini` share (`z.optional(s)`,

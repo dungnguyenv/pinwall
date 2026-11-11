@@ -11,6 +11,7 @@ import {
   click,
   elementAt,
   mouseUp,
+  pinButtons,
   pointAt,
   quoteAnchor,
   SCRIPT_SRC,
@@ -265,24 +266,67 @@ test('browse mode leaves clicks alone', () => {
   expect(sent('anchor-picked')).toEqual([]);
 });
 
-test('messages that arrive before the DOM is ready wait for it', () => {
+/** Makes the document look as if it were still loading, until the test finishes. */
+function stillLoading(): void {
   Object.defineProperty(document, 'readyState', { configurable: true, get: () => 'loading' });
   onTestFinished(() => {
     Reflect.deleteProperty(document, 'readyState');
   });
-  start();
-  setMode('comment');
-  showAnchors([{ id: 'c1', number: 1, anchor: quoteAnchor('beta gamma') }]);
-  expect(sent('ready')).toEqual([]);
-  expect(sent('anchors-placed')).toEqual([]);
-  expect(document.querySelector('pinwall-overlay')).toBeNull();
+}
 
+function domLoaded(): void {
   Reflect.deleteProperty(document, 'readyState');
   document.dispatchEvent(new Event('DOMContentLoaded'));
+}
+
+test('viewer messages that arrive before ready are dropped, and still hidden from the page', () => {
+  stillLoading();
+  start();
+  const seen: unknown[] = [];
+  const listener = (event: MessageEvent) => seen.push(event.data);
+  window.addEventListener('message', listener);
+  onTestFinished(() => window.removeEventListener('message', listener));
+  // Meant for the document this window showed before, or sent by a frame that is not the viewer.
+  setMode('comment');
+  showAnchors([{ id: 'c1', number: 1, anchor: quoteAnchor('beta gamma') }]);
+  send({ pinwall: 1, type: 'focus-anchor', id: 'c1' });
+  expect(sent('ready')).toEqual([]);
+  expect(document.querySelector('pinwall-overlay')).toBeNull();
+
+  domLoaded();
   expect(sent('ready')).toHaveLength(1);
+  expect(sent('anchors-placed')).toEqual([]);
+  expect(pinButtons()).toEqual([]);
+  expect(click(el('#p1')).defaultPrevented).toBe(false);
+  expect(sent('anchor-picked')).toEqual([]);
+  expect(seen).toEqual([]);
+
+  // After ready, the viewer is heard.
+  setMode('comment');
+  showAnchors([{ id: 'c1', number: 1, anchor: quoteAnchor('beta gamma') }]);
   expect(sent('anchors-placed')).toMatchObject([{ results: [{ id: 'c1', found: true }] }]);
   click(el('#p1'));
   expect(sent('anchor-picked')).toHaveLength(1);
+});
+
+test('a frame that shows no page of the grant stays deaf until it posts ready', () => {
+  stillLoading();
+  const { frameId } = start();
+  history.pushState(null, '', '/elsewhere/page.html');
+  window.dispatchEvent(new PopStateEvent('popstate'));
+  domLoaded();
+  expect(sent('ready')).toEqual([]);
+  setMode('comment');
+  expect(click(el('#p1')).defaultPrevented).toBe(false);
+
+  // Back on a page of the grant: it announces that page, then listens.
+  history.pushState(null, '', '/c/tok/back.html');
+  window.dispatchEvent(new PopStateEvent('popstate'));
+  expect(sent('ready')).toEqual([{ pinwall: 1, type: 'ready', page: 'back.html', frameId }]);
+  expect(sent('navigated')).toEqual([]);
+  setMode('comment');
+  expect(click(el('#p1')).defaultPrevented).toBe(true);
+  expect(sent('anchor-picked')).toMatchObject([{ anchor: { page: 'back.html' } }]);
 });
 
 test('a same-document navigation posts navigated and re-applies anchors', () => {
@@ -300,6 +344,8 @@ test('a same-document navigation posts navigated and re-applies anchors', () => 
     results: [{ id: 'c9', found: true, via: 'position' }],
     frameId,
   });
+  // Only the anchors of the page it now shows are drawn.
+  expect(pinButtons().map((pin) => pin.getAttribute('data-pin-id'))).toEqual(['c9']);
   // A fragment change is not another page.
   history.pushState(null, '', '/c/tok/b.html#bottom');
   window.dispatchEvent(new PopStateEvent('popstate'));
