@@ -1,10 +1,16 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { toast } from 'sonner';
 import { afterAll, afterEach, beforeAll } from 'vitest';
 import i18n from './i18n.ts';
 import { server } from './test/server.ts';
 import { installMatchMedia, resetViewport } from './test/viewport.ts';
+
+// Every findBy*/waitFor waits up to 10 s instead of Testing Library's 1 s
+// default, which a busy machine (all packages testing at once) can exceed.
+// Kept below the 15 s test timeout so a wait that never succeeds fails with
+// its own assertion message instead of a bare timeout.
+configure({ asyncUtilTimeout: 10_000 });
 
 // The network is mocked at the boundary. A request no handler takes errors
 // (it never reaches the network) and fails the test that sent it, even when

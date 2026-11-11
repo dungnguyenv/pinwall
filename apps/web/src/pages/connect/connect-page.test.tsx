@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, expect, onTestFinished, test, vi } from 'vitest';
 import { serveSidebar } from '../../test/library.ts';
 import { renderRoute } from '../../test/render.tsx';
@@ -35,7 +35,7 @@ test('the page shows each client with copyable snippets', async () => {
   expect(
     await screen.findByRole('heading', { level: 1, name: 'Connect an agent' }),
   ).toBeInTheDocument();
-  expect(document.title).toBe('Connect an agent · Pinwall');
+  await waitFor(() => expect(document.title).toBe('Connect an agent · Pinwall'));
 
   const clients = screen.getByRole('tablist', { name: 'Agent' });
   expect(

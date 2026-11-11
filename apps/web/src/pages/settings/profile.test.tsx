@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { delay, HttpResponse, http } from 'msw';
 import { beforeEach, expect, test } from 'vitest';
 import { qk } from '../../api/keys.ts';
@@ -21,7 +21,7 @@ test('/settings opens the profile', async () => {
   expect(await screen.findByRole('textbox', { name: 'Name' })).toBeInTheDocument();
   expect(router.state.location.pathname).toBe('/settings/profile');
   expect(screen.getByRole('heading', { level: 1, name: 'Settings' })).toBeInTheDocument();
-  expect(document.title).toBe('Profile · Pinwall');
+  await waitFor(() => expect(document.title).toBe('Profile · Pinwall'));
   const links = within(settingsNav()).getAllByRole('link');
   expect(links.map((link) => link.textContent)).toEqual(['Profile', 'Security', 'API tokens']);
   expect(within(settingsNav()).getByRole('link', { name: 'Profile' })).toHaveAttribute(
