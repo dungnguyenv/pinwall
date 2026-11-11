@@ -474,9 +474,10 @@ describe.each(dialects)('live updates on %s', (dialect) => {
       thread: { ...thread, replies: Array.from({ length: 10 }, () => replyOf(thread)) },
     };
     const size = Buffer.byteLength(`event: ${big.type}\ndata: ${JSON.stringify(big)}\n\n`);
-    // The stream holds 64 KiB, then lets a reader fall 1 MiB behind on top.
+    // The stream holds 64 KiB, then lets a reader fall 1 MiB behind on top. What it already
+    // holds is measured before each message, so the message that crosses the line still goes in.
     const room = 65_536 + SSE_MAX_BUFFERED_BYTES - Buffer.byteLength(RETRY);
-    const fits = Math.floor(room / size);
+    const fits = Math.floor(room / size) + 1;
 
     // In process nobody reads, so the count is exact.
     const r = await ctx.request(memberPath(), { headers: { cookie: m.cookie } });
@@ -502,6 +503,32 @@ describe.each(dialects)('live updates on %s', (dialect) => {
     };
     await expect(drain()).rejects.toThrow();
     expect(bus().subscriberCount(topic)).toBe(0);
+  });
+
+  test('a reader that keeps up is never cut off for one large event', async () => {
+    const unsubscribed = watchUnsubscribes();
+    const warn = vi.spyOn(ctx.deps.logger, 'warn');
+    const thread = await postThread(ctx, m.cookie, id, { body: 'x'.repeat(10_000) });
+    /** A valid event bigger than everything a stream lets a reader fall behind by. */
+    const huge: LiveEvent = {
+      type: 'comment.updated',
+      artifact_id: id,
+      thread: { ...thread, replies: Array.from({ length: 120 }, () => replyOf(thread)) },
+    };
+    const text = `event: ${huge.type}\ndata: ${JSON.stringify(huge)}\n\n`;
+    expect(Buffer.byteLength(text)).toBeGreaterThan(65_536 + SSE_MAX_BUFFERED_BYTES);
+
+    const s = await stream(memberPath(), { cookie: m.cookie });
+    // Two at once: the second waits in the stream while the first is written to the socket.
+    ctx.deps.events.publish(topic, huge);
+    ctx.deps.events.publish(topic, huge);
+    expect(await s.next()).toBe(text);
+    expect(await s.next()).toBe(text);
+    // The stream goes on.
+    const v2 = await publishVersion(v1, '<p>hai</p>');
+    expect(await s.next()).toBe(published(id, v2));
+    expect(unsubscribed).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
   });
 
   test('events that fail LiveEvent are dropped', async () => {

@@ -9,7 +9,11 @@ import { AppError } from '../lib/errors.ts';
  * drop an idle connection. Access is checked again at each one.
  */
 export const SSE_HEARTBEAT_MS = 25_000;
-/** How far, in bytes past what the stream holds, a reader may fall behind before it is cut off. */
+/**
+ * How far, in bytes past what the stream holds, a reader may fall behind before it is cut off.
+ * It is measured before each message goes in, so one message of any size always fits: a reader
+ * that keeps up is never cut off for a single large event.
+ */
 export const SSE_MAX_BUFFERED_BYTES = 1_048_576;
 export const SSE_HEADERS: Record<string, string> = {
   'Content-Type': 'text/event-stream; charset=utf-8',
@@ -48,7 +52,8 @@ function nodeResponseOf(c: Context<AppEnv>): { destroy(): void } | undefined {
  * `event: <type>` and `data: <json>`; every `SSE_HEARTBEAT_MS` a `: ping` comment goes out and
  * `o.stillAllowed` is asked again. The stream ends, unsubscribing and stopping its timer, when
  * an event says so, access is gone, the client goes away, the server shuts down (`closeDeps`),
- * or the reader falls more than `SSE_MAX_BUFFERED_BYTES` behind, which also cuts its connection.
+ * or the reader is more than `SSE_MAX_BUFFERED_BYTES` behind when a message is to go out, which
+ * also cuts its connection.
  */
 export function liveStream(c: Context<AppEnv>, o: LiveStreamOptions): Response {
   // Hono answers HEAD with the GET handler and drops the body unread, so a stream made for one
@@ -91,11 +96,15 @@ export function liveStream(c: Context<AppEnv>, o: LiveStreamOptions): Response {
 
   function send(text: string): void {
     if (closed) return;
-    controller.enqueue(encoder.encode(text));
+    // What is still queued from earlier messages, not this one: the adapter takes the next chunk
+    // only once the socket drained the last, so a message as large as the budget may wait here
+    // while its reader is keeping up.
     if ((controller.desiredSize ?? 0) < -SSE_MAX_BUFFERED_BYTES) {
       logger.warn({ topic: o.topic }, 'live stream reader fell behind; cut off');
       close('cut');
+      return;
     }
+    controller.enqueue(encoder.encode(text));
   }
 
   function onEvent(raw: PinwallEvent): void {
