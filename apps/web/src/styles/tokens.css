@@ -10,6 +10,9 @@
  * at least 4.5:1 on canvas, sidebar, surface, surface-muted, selected and on
  * their own -soft background, in both themes. fg-subtle is for placeholders and
  * decorative icons only. Each avatar-N-fg reaches 4.5:1 on its avatar-N.
+ * border-strong, the edge of inputs and outlined buttons, reaches 3:1 on canvas,
+ * sidebar, surface and surface-muted (WCAG 1.4.11); border stays a decorative
+ * hairline.
  */
 
 :root {
@@ -21,7 +24,7 @@
   --pw-surface-muted: #f4f4f4;
   --pw-selected: #ececec;
   --pw-border: #e6e6e6;
-  --pw-border-strong: #d4d4d4;
+  --pw-border-strong: #878787;
 
   --pw-fg: #0d0d0d;
   --pw-fg-muted: #5e5e5e;
@@ -73,7 +76,7 @@
     --pw-surface-muted: #2a2a2e;
     --pw-selected: #313135;
     --pw-border: #2f2f33;
-    --pw-border-strong: #46464c;
+    --pw-border-strong: #777780;
 
     --pw-fg: #ececec;
     --pw-fg-muted: #a6a6ad;
