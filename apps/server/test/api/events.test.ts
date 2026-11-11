@@ -5,11 +5,16 @@ import { sessionCookieName } from '../../src/auth/session-cookie.ts';
 import { createSession, deleteUserSessions } from '../../src/auth/sessions.ts';
 import type { UserRow, VersionRow } from '../../src/db/schema.ts';
 import { deleteArtifact, deleteVersion } from '../../src/domain/deletion.ts';
+import { SHARE_LINK_TOPIC } from '../../src/domain/live.ts';
 import { ARTIFACT_TOPIC } from '../../src/domain/search.ts';
-import { UNLOCK_MAX_MS } from '../../src/domain/share-access.ts';
+import { SHARE_RATES, UNLOCK_MAX_MS } from '../../src/domain/share-access.ts';
 import { createShareLink, revokeShareLink } from '../../src/domain/shares.ts';
 import { restoreVersion } from '../../src/domain/versions.ts';
-import { SSE_HEARTBEAT_MS, SSE_MAX_BUFFERED_BYTES } from '../../src/http/sse.ts';
+import {
+  LIVE_STREAM_LIMITS,
+  SSE_HEARTBEAT_MS,
+  SSE_MAX_BUFFERED_BYTES,
+} from '../../src/http/sse.ts';
 import type { InProcessEventBus } from '../../src/infra/event-bus.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
@@ -59,16 +64,26 @@ describe.each(dialects)('live updates on %s', (dialect) => {
   let v1: VersionRow;
   let topic: string;
 
-  beforeEach(async () => {
+  /** A server with one artifact of one version, published by `m`. */
+  async function start(env: Record<string, string> = {}): Promise<void> {
     clock = new FixedClock(T);
-    ctx = await createTestContext({ dialect, clock });
+    ctx = await createTestContext({ dialect, clock, env });
     server = await listen(ctx.app, ctx.deps.config);
     m = await createSignedInUser(ctx, { kind: 'oidc', name: 'Linh' });
     const first = await publishFiles(ctx, m.user, { 'index.html': '<p>một</p>' });
     id = first.artifact.id;
     v1 = first.version;
     topic = ARTIFACT_TOPIC(id);
-  });
+  }
+
+  /** Starts again with `env`, as a server behind a proxy, say. */
+  async function restart(env: Record<string, string>): Promise<void> {
+    await server.close();
+    await ctx.close();
+    await start(env);
+  }
+
+  beforeEach(() => start());
 
   afterEach(async () => {
     vi.useRealTimers();
@@ -445,6 +460,57 @@ describe.each(dialects)('live updates on %s', (dialect) => {
     expect(bus().subscriberCount(topic)).toBe(0);
   });
 
+  test('revoking a link ends its streams at once, without waiting for a heartbeat', async () => {
+    // No heartbeat runs in this test: only the revoke can end the stream.
+    fakeHeartbeat();
+    const link = await share();
+    const other = await share();
+    const revoked = await stream(sharePath(link.token));
+    const kept = await stream(sharePath(other.token));
+    const member = await stream(memberPath(), { cookie: m.cookie });
+    expect(bus().subscriberCount(topic)).toBe(3);
+
+    await revokeShareLink(ctx.deps, m.user, link.linkId);
+    expect(await revoked.done()).toBe(true);
+    expect(bus().subscriberCount(topic)).toBe(2);
+    expect(bus().subscriberCount(SHARE_LINK_TOPIC(link.linkId))).toBe(0);
+    // Other links and members go on.
+    const thread = await postThread(ctx, m.cookie, id);
+    for (const s of [kept, member]) {
+      expect(eventOf(await s.next())).toMatchObject({ thread: { id: thread.id } });
+    }
+  });
+
+  test('a link ends its streams when it expires', async () => {
+    // Real time: the clock stays put, so only the expiry timer can end the stream.
+    const soon = await share({ expiresAt: clock.now() + 1500 });
+    const later = await share({ expiresAt: clock.now() + 60 * 86_400_000 });
+    const expiring = await stream(sharePath(soon.token));
+    // Longer than a timer can wait at once: it must not fire early.
+    const lasting = await stream(sharePath(later.token));
+    expect(await expiring.done(STAYS_OPEN_MS)).toBe(false);
+    expect(await expiring.done()).toBe(true);
+    expect(await lasting.done(STAYS_OPEN_MS)).toBe(false);
+    expect(bus().subscriberCount(topic)).toBe(1);
+  });
+
+  test('a per-version link ends its streams when its version is deleted', async () => {
+    fakeHeartbeat();
+    const v2 = await publishVersion(v1, '<p>hai</p>');
+    const pinned = await share({ versionId: v1.id });
+    const follows = await share();
+    const p = await stream(sharePath(pinned.token));
+    const f = await stream(sharePath(follows.token));
+    await deleteVersion(ctx.deps, memberAuth(), id, 1);
+    const deleted = `event: version.deleted\ndata: ${JSON.stringify({ type: 'version.deleted', artifact_id: id, number: 1 })}\n\n`;
+    expect(await p.next()).toBe(deleted);
+    expect(await p.done()).toBe(true);
+    // A link that follows the current version still works.
+    expect(await f.next()).toBe(deleted);
+    expect(await f.done(STAYS_OPEN_MS)).toBe(false);
+    expect(v2.number).toBe(2);
+  });
+
   test('a locked share stream is refused', async () => {
     const locked = await share({ password: PW });
     const r = await open(sharePath(locked.token));
@@ -474,9 +540,10 @@ describe.each(dialects)('live updates on %s', (dialect) => {
       thread: { ...thread, replies: Array.from({ length: 10 }, () => replyOf(thread)) },
     };
     const size = Buffer.byteLength(`event: ${big.type}\ndata: ${JSON.stringify(big)}\n\n`);
-    // The stream holds 64 KiB, then lets a reader fall 1 MiB behind on top.
+    // The stream holds 64 KiB, then lets a reader fall 1 MiB behind on top. What it already
+    // holds is measured before each message, so the message that crosses the line still goes in.
     const room = 65_536 + SSE_MAX_BUFFERED_BYTES - Buffer.byteLength(RETRY);
-    const fits = Math.floor(room / size);
+    const fits = Math.floor(room / size) + 1;
 
     // In process nobody reads, so the count is exact.
     const r = await ctx.request(memberPath(), { headers: { cookie: m.cookie } });
@@ -502,6 +569,125 @@ describe.each(dialects)('live updates on %s', (dialect) => {
     };
     await expect(drain()).rejects.toThrow();
     expect(bus().subscriberCount(topic)).toBe(0);
+  });
+
+  test('a reader that keeps up is never cut off for one large event', async () => {
+    const unsubscribed = watchUnsubscribes();
+    const warn = vi.spyOn(ctx.deps.logger, 'warn');
+    const thread = await postThread(ctx, m.cookie, id, { body: 'x'.repeat(10_000) });
+    /** A valid event bigger than everything a stream lets a reader fall behind by. */
+    const huge: LiveEvent = {
+      type: 'comment.updated',
+      artifact_id: id,
+      thread: { ...thread, replies: Array.from({ length: 120 }, () => replyOf(thread)) },
+    };
+    const text = `event: ${huge.type}\ndata: ${JSON.stringify(huge)}\n\n`;
+    expect(Buffer.byteLength(text)).toBeGreaterThan(65_536 + SSE_MAX_BUFFERED_BYTES);
+
+    const s = await stream(memberPath(), { cookie: m.cookie });
+    // Two at once: the second waits in the stream while the first is written to the socket.
+    ctx.deps.events.publish(topic, huge);
+    ctx.deps.events.publish(topic, huge);
+    expect(await s.next()).toBe(text);
+    expect(await s.next()).toBe(text);
+    // The stream goes on.
+    const v2 = await publishVersion(v1, '<p>hai</p>');
+    expect(await s.next()).toBe(published(id, v2));
+    expect(unsubscribed).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  /** The answer to a stream that would be one too many. */
+  const tooMany = { error: { code: 'rate_limited', message: t('live.tooManyStreams') } };
+
+  /** Headers of a request through a trusted proxy, from client address `ip`. */
+  const from = (ip: string, cookie?: string): Record<string, string> => ({
+    'x-forwarded-for': ip,
+    ...(cookie === undefined ? {} : { cookie }),
+  });
+
+  /** Opens `path` in process with `headers`, expecting `status`. */
+  async function opened(path: string, headers: Record<string, string>, status = 200) {
+    const r = await ctx.request(path, { headers });
+    expect(r.status, `${path} from ${JSON.stringify(headers)}`).toBe(status);
+    return r;
+  }
+
+  async function refused(path: string, headers: Record<string, string>): Promise<void> {
+    const r = await opened(path, headers, 429);
+    expect(r.headers.get('cache-control')).toBe('no-store');
+    expect(r.headers.get('retry-after')).toBeNull();
+    expect(await r.json()).toEqual(tooMany);
+  }
+
+  test('a browser session holds at most 10 streams at once', async () => {
+    const { perSession } = LIVE_STREAM_LIMITS;
+    expect(perSession).toBe(10);
+    const streams: Response[] = [];
+    for (let i = 0; i < perSession; i++) {
+      streams.push(await opened(memberPath(), { cookie: m.cookie }));
+    }
+    await refused(memberPath(), { cookie: m.cookie });
+    expect(ctx.deps.liveStreams.size).toBe(perSession);
+    // Another session of the same member has places of its own.
+    const other = await opened(memberPath(), { cookie: await newSession(m.user) });
+    // A stream that ends gives its place back.
+    await streams[0]?.body?.cancel();
+    await vi.waitFor(() => expect(ctx.deps.liveStreams.size).toBe(perSession));
+    streams[0] = await opened(memberPath(), { cookie: m.cookie });
+    for (const r of [...streams, other]) await r.body?.cancel();
+    await vi.waitFor(() => expect(ctx.deps.liveStreams.size).toBe(0));
+  });
+
+  test('a client address holds at most 20 streams at once, member and share streams together', async () => {
+    await restart({ PINWALL_TRUST_PROXY: 'true' });
+    const { perAddress } = LIVE_STREAM_LIMITS;
+    expect(perAddress).toBe(20);
+    const a = '198.51.100.1';
+    const { token } = await share();
+    for (let i = 0; i < 5; i++) await opened(memberPath(), from(a, m.cookie));
+    for (let i = 5; i < perAddress; i++) await opened(sharePath(token), from(a));
+    await refused(sharePath(token), from(a));
+    await refused(memberPath(), from(a, await newSession(m.user)));
+    // Another address still opens both.
+    await opened(sharePath(token), from('198.51.100.2'));
+    await opened(memberPath(), from('198.51.100.2', await newSession(m.user)));
+    expect(ctx.deps.liveStreams.size).toBe(perAddress + 2);
+  });
+
+  test('a share link holds at most 50 streams at once', async () => {
+    await restart({ PINWALL_TRUST_PROXY: 'true' });
+    const { perShareLink } = LIVE_STREAM_LIMITS;
+    expect(perShareLink).toBe(50);
+    const link = await share();
+    for (let i = 0; i < perShareLink; i++)
+      await opened(sharePath(link.token), from(`198.51.100.${i}`));
+    await refused(sharePath(link.token), from('203.0.113.1'));
+    // Another link of the artifact, and its members, still open from there.
+    await opened(sharePath((await share()).token), from('203.0.113.1'));
+    await opened(memberPath(), from('203.0.113.1', m.cookie));
+  });
+
+  test('opening share streams is rate limited per address', async () => {
+    await restart({ PINWALL_TRUST_PROXY: 'true' });
+    const { token } = await share();
+    const { limit, windowMs } = SHARE_RATES.events;
+    const a = '203.0.113.1';
+    for (let i = 0; i < limit; i++) {
+      const r = await opened(sharePath(token), from(a));
+      await r.body?.cancel();
+      await vi.waitFor(() => expect(ctx.deps.liveStreams.size).toBe(0));
+    }
+    const limited = await opened(sharePath(token), from(a), 429);
+    expect(limited.headers.get('retry-after')).toBe(String(windowMs / 1000));
+    expect(await limited.json()).toMatchObject({ error: { code: 'rate_limited' } });
+    // Guessing tokens counts too; another address still opens; the window ends.
+    expect((await ctx.request(sharePath('x'.repeat(43)), { headers: from(a) })).status).toBe(429);
+    await opened(sharePath(token), from('203.0.113.2'));
+    // Members' streams are not limited by it.
+    await opened(memberPath(), from(a, m.cookie));
+    clock.advance(windowMs);
+    await opened(sharePath(token), from(a));
   });
 
   test('events that fail LiveEvent are dropped', async () => {

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Annotator test viewer</title>
+    <style>
+      body { margin: 0; font: 14px/1.4 sans-serif; }
+      iframe { display: block; width: 100%; height: 640px; border: 0; }
+    </style>
+  </head>
+  <body>
+    <iframe
+      id="content"
+      title="Reviewed artifact"
+      src="__CONTENT_URL__"
+      sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-pointer-lock allow-presentation"
+    ></iframe>
+    <script>
+      (() => {
+        const frame = document.getElementById('content');
+
+        // True when `source` is the content frame's window or one of its descendants.
+        const isInsideContent = (source) => {
+          for (let w = source; w !== null; w = w.parent) {
+            if (w === frame.contentWindow) return true;
+            if (w === w.parent) return false;
+          }
+          return false;
+        };
+
+        // Posts `msg` to `win` and, one level at a time, to every frame below it.
+        const postDown = (win, msg) => {
+          win.postMessage(msg, '*');
+          for (let i = 0; i < win.frames.length; i++) postDown(win.frames[i], msg);
+        };
+
+        const received = [];
+        window.addEventListener('message', (event) => {
+          if (event.source !== null && isInsideContent(event.source)) received.push(event.data);
+        });
+
+        window.__pinwallTest = {
+          received,
+          broadcast: (msg) => postDown(frame.contentWindow, msg),
+        };
+      })();
+    </script>
+  </body>
+</html>

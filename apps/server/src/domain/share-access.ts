@@ -2,19 +2,28 @@ import { createHmac } from 'node:crypto';
 import type { ShareInfo } from '@pinwall/shared';
 import type { Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
+import type { Transaction } from 'kysely';
 import type { AppEnv } from '../app.ts';
 import { normalizePassword } from '../auth/password.ts';
 import { enforceRateLimit, type RateRule } from '../auth/rate-limits.ts';
 import type { Config } from '../config/types.ts';
 import { contentUrl, createGrant, type GrantMode } from '../content/grants.ts';
-import type { ArtifactRow, ContentGrantRow, ShareLinkRow, VersionRow } from '../db/schema.ts';
+import type { DbDialect } from '../db/connect.ts';
+import type {
+  ArtifactRow,
+  ContentGrantRow,
+  Database,
+  ShareLinkRow,
+  VersionRow,
+} from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import { clientIp } from '../http/client-ip.ts';
 import { deriveKey, safeEqual, verifyPassword } from '../lib/crypto.ts';
-import { AppError, forbidden, gone, notFound, unauthorized } from '../lib/errors.ts';
+import { AppError, conflict, forbidden, gone, notFound, unauthorized } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { hashSecret } from '../lib/ids.ts';
 import { entryKind } from '../publish/paths.ts';
+import { shareOriginalUrl } from './shares.ts';
 import { isTombstoned } from './tombstones.ts';
 
 /** An unlock lasts at most a day, and never past the link's own expiry. */
@@ -30,6 +39,7 @@ export const SHARE_RATES: {
   guestComment: RateRule;
   guestCommentLink: RateRule;
   guestEdit: RateRule;
+  events: RateRule;
 } = {
   /** Opening `/s/<token>`, per client address. */
   open: { name: 'share-open', limit: 120, windowMs: 600_000 },
@@ -45,6 +55,8 @@ export const SHARE_RATES: {
   guestCommentLink: { name: 'share-comment-link', limit: 200, windowMs: 3_600_000 },
   /** Guest edits and deletes on one link from one address (`<link id>:<address>`). */
   guestEdit: { name: 'share-comment-edit', limit: 30, windowMs: 600_000 },
+  /** Opening a share link's live stream, per client address. */
+  events: { name: 'share-events', limit: 60, windowMs: 60_000 },
 };
 
 /** The HKDF purpose of the key that signs unlock cookies. */
@@ -150,6 +162,53 @@ export async function resolveCommentShare(
   const s = await resolveOpenShare(deps, token, unlockCookie);
   if (s.link.allow_comments !== 1) throw forbidden(t('share.commentsOff'));
   return s;
+}
+
+/**
+ * The share link `linkId` a guest writes a comment through, read again in the write's
+ * transaction once the artifact is held, and share-locked on Postgres (the order `shareGrant`,
+ * revokes and deletions lock in). A revoke, expiry or deletion that landed after the request
+ * resolved the link refuses the write (410, `details.reason` as `resolveShare` gives it), and
+ * one that comes later waits for the write; a link closed to comments answers 403.
+ */
+export async function holdCommentLink(
+  trx: Transaction<Database>,
+  dialect: DbDialect,
+  linkId: string,
+  now: number,
+): Promise<ShareLinkRow> {
+  const link = await trx
+    .selectFrom('share_links')
+    .selectAll()
+    .where('id', '=', linkId)
+    .$if(dialect === 'postgres', (qb) => qb.forShare())
+    .executeTakeFirst();
+  // A per-version link goes with its version, and every link with its artifact.
+  if (link === undefined) throw linkGone('deleted');
+  assertOpen(link, now);
+  if (link.allow_comments !== 1) throw forbidden(t('share.commentsOff'));
+  return link;
+}
+
+/**
+ * Version `versionId` of `artifact`, which guest link `link` showed when the request resolved
+ * it. Gone since: a link that follows the current version still works, so the page is only out
+ * of date (409); a per-version link went with it (410).
+ */
+export async function sharedVersion(
+  trx: Transaction<Database>,
+  artifact: ArtifactRow,
+  link: ShareLinkRow,
+  versionId: string,
+): Promise<VersionRow> {
+  const version = await trx
+    .selectFrom('versions')
+    .selectAll()
+    .where('id', '=', versionId)
+    .where('artifact_id', '=', artifact.id)
+    .executeTakeFirst();
+  if (version !== undefined) return version;
+  throw link.version_id === null ? conflict(t('share.versionGone')) : linkGone('deleted');
 }
 
 /**
@@ -310,11 +369,12 @@ export async function touchShareLink(deps: AppDeps, link: ShareLinkRow): Promise
 }
 
 /**
- * What the share viewer shows for `s`: the artifact's name, the version and how the link
- * follows it, and a new grant to its content, `review` when the link allows comments (the
- * viewer then pins them on the page) and `raw` otherwise. A locked link answers 401.
+ * What the share viewer shows for `s`, opened with `token`: the artifact's name, the version and
+ * how the link follows it, a new grant to its content, `review` when the link allows comments
+ * (the viewer then pins them on the page) and `raw` otherwise, and the URL of "Open original",
+ * which makes its raw grant only when followed. A locked link answers 401.
  */
-export async function shareInfo(deps: AppDeps, s: ShareState): Promise<ShareInfo> {
+export async function shareInfo(deps: AppDeps, s: ShareState, token: string): Promise<ShareInfo> {
   const allowComments = s.link.allow_comments === 1;
   const mode: GrantMode = allowComments ? 'review' : 'raw';
   const grant = await shareGrant(deps, s, mode);
@@ -325,6 +385,7 @@ export async function shareInfo(deps: AppDeps, s: ShareState): Promise<ShareInfo
     follows_current: s.link.version_id === null,
     allow_comments: allowComments,
     expires_at: s.link.expires_at,
+    original_url: shareOriginalUrl(deps.config, token),
     content: {
       url: contentUrl(deps.config, grant.token),
       mode,

@@ -14,6 +14,7 @@ import { badRequest, forbidden, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { hashSecret, newId, newSecret } from '../lib/ids.ts';
 import { getArtifact, holdArtifact } from './artifacts.ts';
+import { endShareLinkStreams } from './live.ts';
 import { addTombstones } from './tombstones.ts';
 import { versionOf } from './versions.ts';
 
@@ -44,6 +45,11 @@ const LinkCursor = z.object({ c: z.number().int(), i: z.string() });
 /** The page a share link opens: `/s/<token>` on the public origin. */
 export function shareUrl(config: Config, token: string): string {
   return publicUrl(config, `/s/${token}`);
+}
+
+/** The share viewer's "Open original": `/s/<token>/original`, a redirect to a new raw grant. */
+export function shareOriginalUrl(config: Config, token: string): string {
+  return publicUrl(config, `/s/${token}/original`);
 }
 
 /**
@@ -197,8 +203,8 @@ export async function toShareLinks(
 /**
  * Revokes the share link `linkId`; its creator, the artifact's publisher or an admin may. In one
  * transaction it marks the link revoked and ends the content grants made from it, so what it
- * opened stops being served at once (those grants answer 410). Revoking a revoked link changes
- * nothing.
+ * opened stops being served at once (those grants answer 410); once that has committed, the
+ * link's live streams end too. Revoking a revoked link changes nothing.
  */
 export async function revokeShareLink(
   deps: AppDeps,
@@ -223,6 +229,7 @@ export async function revokeShareLink(
       .execute();
     await endGrantsOf(trx, link.id, now);
   });
+  endShareLinkStreams(deps, linkId);
 }
 
 /** `revoked` once revoked, else `expired` from `expires_at` on, else `active`. */

@@ -1,7 +1,8 @@
 /**
  * The annotator of one frame: it tells the viewer which page the frame shows, turns clicks and
  * selections into anchors in comment mode, and draws the pins the viewer sends. Every frame of a
- * review grant runs its own annotator and talks to `window.top` (the viewer) directly. The top
+ * review grant runs its own annotator and talks to `window.top` (the viewer) directly. It hears
+ * the viewer only once it has posted `ready`, and draws only the anchors of its own page. The top
  * content frame (the one the viewer embeds) also reports and follows the viewer's scrolling.
  */
 import {
@@ -26,13 +27,14 @@ import {
   getRangeAt,
   getSelection,
   isCollapsed,
+  isTrusted,
   preventDefault,
   rangeCount,
   removeListener,
   stopImmediatePropagation,
   windowListeners,
 } from './pristine.ts';
-import { placeAnchor } from './reattach.ts';
+import { type Placement, placeAnchor } from './reattach.ts';
 import { scrollFraction, scrollToFraction } from './scroll.ts';
 import { buildTextIndex, type TextIndex } from './text-index.ts';
 
@@ -56,7 +58,7 @@ export interface Annotator {
 }
 
 type ShowAnchors = Extract<ViewerToPageMessage, { type: 'show-anchors' }>['anchors'];
-type Result = { id: string; found: boolean };
+type Result = { id: string; found: boolean; via: Placement['via'] };
 type Win = Window & typeof globalThis;
 
 /** Unfound anchors are placed again this long after `show-anchors` (pages that render late). */
@@ -67,8 +69,6 @@ const NAVIGATION_CHECK_MS = 1000;
 const FRAME_DELAY_MS = 50;
 /** A clicked box covering this much of the viewport is "the page": the click becomes a point. */
 const PAGE_SIZED = 0.8;
-/** Viewer messages kept while the DOM loads. */
-const MAX_QUEUED = 100;
 
 /** 16 hex characters from the platform's random source. */
 function newFrameId(win: Win): string {
@@ -84,12 +84,15 @@ function newFrameId(win: Win): string {
 }
 
 function sameResults(a: readonly Result[], b: readonly Result[]): boolean {
-  return a.length === b.length && a.every((r, i) => r.id === b[i]?.id && r.found === b[i]?.found);
+  return (
+    a.length === b.length &&
+    a.every((r, i) => r.id === b[i]?.id && r.found === b[i]?.found && r.via === b[i]?.via)
+  );
 }
 
 /** An index with no text: for anchors without a quote, and pages whose text cannot be read. */
 function emptyIndex(doc: Document): TextIndex {
-  return { text: '', toOffset: () => 0, toRange: () => createRange(doc) };
+  return { text: '', complete: false, toOffset: () => 0, toRange: () => createRange(doc) };
 }
 
 /**
@@ -121,7 +124,13 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
 
   let mode: 'browse' | 'comment' = 'browse';
   let overlay: Overlay | null = null;
-  let queue: ViewerToPageMessage[] | null = [];
+  /** The DOM is loaded: the overlay exists and `ready` went out if there was a page to name. */
+  let domReady = false;
+  /**
+   * `ready` was posted. Viewer messages before it are dropped: the viewer answers `ready`, so an
+   * earlier one was meant for the document this window showed before, or for another frame.
+   */
+  let announced = false;
   let anchors: ShowAnchors = [];
   let results: Result[] = [];
   let unfound = false;
@@ -201,7 +210,11 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
       anchor,
       placement: placeAnchor(doc, anchor.kind === 'text' ? textIndex() : none, anchor),
     }));
-    const next = pins.map((pin) => ({ id: pin.id, found: pin.placement.found }));
+    const next = pins.map(({ id, placement }) => ({
+      id,
+      found: placement.found,
+      via: placement.via,
+    }));
     unfound = next.some((r) => !r.found);
     const changed = !sameResults(next, results);
     results = next;
@@ -254,8 +267,11 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
     const next = pageOf(now, base);
     if (next === page) return;
     page = next;
-    if (queue !== null) return; // Not ready yet: `ready` will name the page.
-    if (next !== null) post({ pinwall: 1, type: 'navigated', page: next, frameId });
+    if (!domReady) return; // `ready` will name the page.
+    if (next !== null) {
+      post({ pinwall: 1, type: announced ? 'navigated' : 'ready', page: next, frameId });
+      announced = true;
+    }
     applyAnchors();
   };
 
@@ -299,13 +315,18 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
     return pointAnchor(ctx, event.clientX, event.clientY);
   };
 
+  /**
+   * In comment mode every click is kept from the page, but only the user's own make an anchor:
+   * pages click themselves (carousels, `el.click()` to open a file input), and such a click must
+   * not replace the spot the reviewer is commenting on.
+   */
   const onClick = (event: MouseEvent) => {
     if (mode !== 'comment') return;
     const target = eventTarget(event);
     if (isOverlay(target)) return;
     preventDefault(event);
     stopImmediatePropagation(event);
-    if (!swallowClick) pick(clickAnchor(event, target), event);
+    if (!swallowClick && isTrusted(event)) pick(clickAnchor(event, target), event);
   };
 
   /** Middle clicks would open links in a new tab: comment mode keeps them from the page too. */
@@ -317,6 +338,7 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
 
   const onMouseUp = (event: MouseEvent) => {
     if (mode !== 'comment' || page === null || isOverlay(eventTarget(event))) return;
+    if (!isTrusted(event)) return;
     const selection = getSelection(doc);
     if (selection === null || isCollapsed(selection) || rangeCount(selection) === 0) return;
     const anchor = textAnchor({ doc, page }, getRangeAt(selection, 0));
@@ -348,26 +370,27 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
   };
 
   const onReady = () => {
-    if (queue === null) return;
+    if (domReady) return;
+    domReady = true;
     overlay = createOverlay(doc, (id) => post({ pinwall: 1, type: 'pin-clicked', id }));
     overlay.layout();
     if (typeof w.ResizeObserver === 'function' && doc.documentElement) {
       resizeObserver = new w.ResizeObserver(guard(scheduleLayout));
       resizeObserver.observe(doc.documentElement);
     }
-    if (page !== null) post({ pinwall: 1, type: 'ready', page, frameId });
-    const pending = queue;
-    queue = null;
-    for (const msg of pending) guard(handle)(msg);
+    if (page !== null) {
+      post({ pinwall: 1, type: 'ready', page, frameId });
+      announced = true;
+    }
   };
 
+  // Messages before `ready` still stop at the annotator: the page never sees viewer messages.
   removers.push(
     onViewerMessage(
       w,
       top,
       (msg) => {
-        if (queue === null) handle(msg);
-        else if (queue.push(msg) > MAX_QUEUED) queue.shift();
+        if (announced) handle(msg);
       },
       events,
     ),
@@ -406,7 +429,9 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
       resizeObserver?.disconnect();
       overlay?.destroy();
       overlay = null;
-      queue = null;
+      // Nothing is set up or heard after this, even if a listener could not be removed.
+      domReady = true;
+      announced = false;
       Reflect.deleteProperty(w, ANNOTATOR_GLOBAL);
     },
   };

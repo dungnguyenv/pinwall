@@ -9,7 +9,7 @@ import { hasAccess } from '../auth/roles.ts';
 import type { AppDeps } from '../deps.ts';
 import { getArtifact } from '../domain/artifacts.ts';
 import { ARTIFACT_TOPIC } from '../domain/search.ts';
-import { liveStream } from '../http/sse.ts';
+import { LIVE_STREAM_LIMITS, liveStream } from '../http/sse.ts';
 import { IdParam } from './pagination.ts';
 
 const error = (description: string) => ({
@@ -34,7 +34,7 @@ const eventsRoute = createRoute({
   tags: ['live updates'],
   summary: 'Follow the changes to an artifact',
   description:
-    'A stream of new and deleted versions and comment changes, for `EventSource`. Browser sessions only: API tokens get 403. Access is checked again at every heartbeat, so the stream ends within 25 seconds of the session ending or access being taken away; it also ends after `artifact.deleted`. After a reconnect, read the threads again: events sent while disconnected are not replayed.',
+    'A stream of new and deleted versions and comment changes, for `EventSource`. Browser sessions only: API tokens get 403. Access is checked again at every heartbeat, so the stream ends within 25 seconds of the session ending or access being taken away; it also ends after `artifact.deleted`. After a reconnect, read the threads again: events sent while disconnected are not replayed. A session may hold 10 streams at once, and a client address 20 (member and share streams together).',
   middleware: [requireSession] as MiddlewareHandler<AppEnv>[],
   security: [{ session: [] }],
   request: { params: IdParam },
@@ -44,6 +44,9 @@ const eventsRoute = createRoute({
     403: error('A bearer token was used; live updates need a browser session (`forbidden`)'),
     404: error('The artifact does not exist (`not_found`)'),
     410: error('The artifact was deleted (`gone`)'),
+    429: error(
+      'This session, or this address, already holds as many live streams as it may (`rate_limited`)',
+    ),
   },
 });
 
@@ -89,10 +92,15 @@ export function registerEventRoutes(api: OpenAPIHono<AppEnv>): void {
     const { deps } = c.var;
     const auth = authOf(c);
     const artifact = await getArtifact(deps.db.db, c.req.valid('param').id, deps.clock.now());
+    const { sessionId } = auth;
     return liveStream(c, {
       topic: ARTIFACT_TOPIC(artifact.id),
       forward: (e) => (e.type === 'artifact.deleted' ? 'send-and-close' : 'send'),
       stillAllowed: () => memberStillAllowed(deps, auth, artifact.id),
+      quotas:
+        sessionId === undefined
+          ? []
+          : [{ key: `session:${sessionId}`, limit: LIVE_STREAM_LIMITS.perSession }],
     });
   });
 }

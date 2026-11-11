@@ -190,7 +190,8 @@ App origin (`PINWALL_PUBLIC_ORIGIN`):
 | `POST /upload/:token` | one-time upload URL; no cookies, no bearer | M4 |
 | `GET /a/:artifactId/raw`, `GET /a/:artifactId/v/:n/raw` | members: redirect to a fresh raw content grant | M4 |
 | `GET /s/:shareToken` | share link: revoked/expired/deleted → HTML 410 page; password-protected and locked, or comments allowed → SPA route `/s/:token`; otherwise 302 to a fresh raw grant (byte-for-byte) | M5 (pages in M8) |
-| `GET /api/v1/share/:token`, `POST …/unlock`, `GET`/`POST …/comments`, `POST …/comments/:id/replies`, `PATCH`/`DELETE …/comments/:id`, `GET …/events` | share-viewer API, authorized by the share token plus the unlock cookie: share info (artifact name, version number, kind, `allow_comments`, content grant), password unlock, guest comments (`X-Pinwall-Guest-Token` for edits within 15 min), SSE | M5 (pages in M8) |
+| `GET /s/:shareToken/original` | the share viewer's "Open original": the same checks as `/s/:shareToken`; locked → 302 to `/s/:shareToken`; otherwise 302 to a fresh raw grant (byte-for-byte), whether or not the link allows comments | M5 (button in M8) |
+| `GET /api/v1/share/:token`, `POST …/unlock`, `GET`/`POST …/comments`, `POST …/comments/:id/replies`, `PATCH`/`DELETE …/comments/:id`, `GET …/events` | share-viewer API, authorized by the share token plus the unlock cookie: share info (artifact name, version number, kind, `allow_comments`, content grant, `original_url`), password unlock, guest comments (`X-Pinwall-Guest-Token` for edits within 15 min), SSE | M5 (pages in M8) |
 | `GET /c/:contentToken/*` | content, single-domain mode only (404 in content-domain mode) | M4 |
 | everything else (`GET`, `Accept: text/html`) | SPA `index.html`: `/`, `/projects/:id`, `/a/:id`, `/a/:id/v/:n`, `/a/:id/compare`, `/search`, `/settings/*`, `/admin/*`, `/signin`, `/setup`, `/oauth/consent`, `/connect`, `/s/:token` (viewer) | M7/M8 |
 
@@ -239,6 +240,8 @@ type Anchor = {
 
 Contract (M5 builds the annotator, M8 the viewer): the annotator defines one global, `window.__pinwallAnnotator`, and acts only on messages whose `event.source === window.top`; both sides validate with the zod schemas in `@pinwall/shared/protocol`. Each frame posts `ready` at DOMContentLoaded. On every `ready` the viewer sends `set-mode` and `show-anchors` to all descendant frames; each annotator keeps the anchors whose `page` is its own and always answers `anchors-placed`. `found` is true when a text or element anchor re-attached by quote or DOM path (and always for point anchors). A frame with no `ready` within 3 s of its `load` event has no annotator (for example, CSP-blocked) and gets point comments on the viewer's overlay. Only the top content frame (`window.parent === window.top`) posts `scrolled` and obeys `scroll-to`.
 
+**Delivery rules (M5 review):** the viewer sends `show-anchors`, `focus-anchor` and `set-mode` only to frame windows that posted a valid `ready` (keyed by `event.source` → `frameId`), and each frame receives only the anchors of its own `page`; frames that never post `ready` (third-party embeds, CSP-blocked frames) receive nothing. `anchors-placed` results may carry `via: 'quote' | 'dom' | 'position'`; a text anchor is `found` via the DOM path only if the element still contains its quote. The overlay point-comment fallback applies to the top content frame only; nested frames whose own CSP blocks the annotator cannot be commented on in v1.
+
 ## MCP tools (M6)
 
 `whoami`, `list_projects`, `get_project` (includes agent instructions), `create_project`, `list_artifacts`, `search_artifacts`, `get_artifact` (versions and links), `create_publish_session`, `publish_inline`, `list_comments`, `reply_to_comment`, `resolve_comment`, `create_share_link`, `list_share_links`, `revoke_share_link`. M6 fixes schemas; `skills/pinwall/SKILL.md` documents them.
@@ -253,7 +256,7 @@ Contract (M5 builds the annotator, M8 the viewer): the annotator defines one glo
 | M2 | Owner account, sessions, API tokens | `…-m2-identity.md` | M1 | done |
 | M3 | OIDC, roles, access re-check | `…-m3-oidc.md` | M2 | done |
 | M4 | Publishing and content serving | `…-m4a-publishing-core.md` (Tasks 1–6), `…-m4b-publishing-http.md` (Tasks 7–13) | M2 | done |
-| M5 | Comments, sharing, live updates, annotator | `…-m5-review-server.md` | M4 | |
+| M5 | Comments, sharing, live updates, annotator | `…-m5-review-server.md` | M4 | done |
 | M6 | MCP, OAuth authorization server, agent skill | `…-m6-mcp.md` | M3, M5 | |
 | M7 | Web app: shell, library, accounts, admin | `…-m7a-web-shell.md` (Tasks 1–7), `…-m7b-web-accounts-admin.md` (Tasks 8–12) | M3, M4 | done (m7-web, merge pending) |
 | M8 | Web app: review, compare, comments, sharing | `…-m8a-web-review.md` (Tasks 1–7), `…-m8b-web-share-compare.md` (Tasks 8–11) | M5, M7 | |

@@ -12,6 +12,14 @@ import {
   start,
   useRuntime,
 } from './helpers/runtime.ts';
+import { asUser } from './helpers/user-events.ts';
+
+// jsdom makes no trusted input events: the user's are the ones the helpers mark (user-events.ts).
+vi.mock('../src/pristine.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/pristine.ts')>();
+  const { isUserEvent } = await import('./helpers/user-events.ts');
+  return { ...actual, isTrusted: isUserEvent };
+});
 
 useRuntime();
 
@@ -50,7 +58,9 @@ test('picks carry the pick point', async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
   document.getSelection()?.addRange(rangeOf('beta gamma'));
   el('#p1').dispatchEvent(
-    new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: 200, clientY: 90 }),
+    asUser(
+      new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: 200, clientY: 90 }),
+    ),
   );
   expect(sent('anchor-picked')[1]).toMatchObject({
     anchor: { kind: 'text', quote: { exact: 'beta gamma' } },

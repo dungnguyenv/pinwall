@@ -2,8 +2,10 @@ import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { type Kysely, sql } from 'kysely';
 import pg from 'pg';
 import { connectDb, type DbDialect, type DbHandle } from '../../src/db/connect.ts';
+import type { Database } from '../../src/db/schema.ts';
 
 const postgresUrl = process.env.PINWALL_TEST_POSTGRES_URL;
 
@@ -85,4 +87,27 @@ function withCleanup(handle: DbHandle, cleanup: () => Promise<unknown>): DbHandl
       return closing;
     },
   };
+}
+
+/**
+ * Resolves once another connection of `db`'s Postgres database waits on a row lock, or once
+ * `settled` has (the work did not wait, which the caller's test then reports). At most 5 s.
+ */
+export async function untilWaitingOnALock(
+  db: Kysely<Database>,
+  settled: Promise<unknown>,
+): Promise<void> {
+  let done = false;
+  void settled.then(() => {
+    done = true;
+  });
+  const deadline = Date.now() + 5000;
+  while (!done && Date.now() < deadline) {
+    const { rows } = await sql<{ n: number }>`
+      select count(*)::int as n from pg_stat_activity
+      where datname = current_database() and wait_event_type = 'Lock'
+    `.execute(db);
+    if ((rows[0]?.n ?? 0) > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }

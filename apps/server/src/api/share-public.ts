@@ -30,6 +30,7 @@ import {
   sharedComment,
   sharedThread,
 } from '../domain/comments.ts';
+import { SHARE_LINK_TOPIC } from '../domain/live.ts';
 import { ARTIFACT_TOPIC } from '../domain/search.ts';
 import {
   readUnlockCookie,
@@ -42,7 +43,7 @@ import {
   unlockShare,
 } from '../domain/share-access.ts';
 import { clientIp } from '../http/client-ip.ts';
-import { type LiveStreamOptions, liveStream } from '../http/sse.ts';
+import { LIVE_STREAM_LIMITS, type LiveStreamOptions, liveStream } from '../http/sse.ts';
 import { hashSecret } from '../lib/ids.ts';
 import { jsonBodyLimit } from './body-limit.ts';
 import { EVENT_STREAM_CONTENT } from './events.ts';
@@ -98,7 +99,7 @@ const infoRoute = createRoute({
   tags: ['share viewer'],
   summary: 'Open a share link',
   description:
-    'What the share viewer shows: the artifact name, the version and a new content URL to it, `review` when the link allows comments and `raw` otherwise. Needs no account; a link with a password needs the unlock cookie set by `POST /share/{token}/unlock`. Opens are limited per link from each address.',
+    'What the share viewer shows: the artifact name, the version and a new content URL to it, `review` when the link allows comments and `raw` otherwise, and `original_url` (`/s/{token}/original`), which redirects to a new raw grant: the stored bytes, unchanged, for "Open original". Needs no account; a link with a password needs the unlock cookie set by `POST /share/{token}/unlock`. Opens are limited per link from each address.',
   middleware: [rateLimit(SHARE_RATES.info, shareInfoRateKey)] as MiddlewareHandler<AppEnv>[],
   request: { params: TokenParam },
   responses: {
@@ -177,6 +178,9 @@ const guestThreadRoute = createRoute({
       content: { 'application/json': { schema: GuestCreated } },
     },
     ...guestWriteErrors,
+    409: error(
+      'The version the link showed was deleted while the comment was sent; reload to see the current one (`conflict`)',
+    ),
   },
 });
 
@@ -246,12 +250,16 @@ const eventsRoute = createRoute({
   tags: ['share viewer'],
   summary: 'Follow the changes a share link shows',
   description:
-    'The live updates members get, for `EventSource`, kept to what the link shows. A link that follows the current version hears of new and deleted versions; a per-version link only of the deletion of its own version. Comment changes come only when the link allows comments, only for threads written on the version the link shows or an older one, and redacted as the comment routes are. The link and the unlock cookie are checked again at every heartbeat, so the stream ends within 25 seconds of the link being revoked or expiring or of the unlock running out; it also ends after `artifact.deleted`. Needs no account.',
+    'The live updates members get, for `EventSource`, kept to what the link shows. A link that follows the current version hears of new and deleted versions; a per-version link only of the deletion of its own version. Comment changes come only when the link allows comments, only for threads written on the version the link shows or an older one, and redacted as the comment routes are. The stream ends at once when the link is revoked or expires, after `artifact.deleted`, and for a per-version link after the `version.deleted` of its version; the link and the unlock cookie are also checked again at every heartbeat, so it ends within 25 seconds of the unlock running out. Needs no account. Opens are limited per address; a link may have 50 streams open at once, and a client address 20.',
+  middleware: [rateLimit(SHARE_RATES.events)] as MiddlewareHandler<AppEnv>[],
   request: { params: TokenParam },
   responses: {
     200: { description: 'The event stream', content: EVENT_STREAM_CONTENT },
     ...lockedError,
     ...linkErrors,
+    429: error(
+      'Too many opens from this address (`rate_limited`, `details.retry_after_seconds`), or this link or this address already holds as many live streams as it may (`rate_limited`)',
+    ),
   },
 });
 
@@ -291,7 +299,8 @@ function guestChanger(s: ShareState, guestToken: string | undefined): CommentAct
  * The live stream of share link `s`, opened with `token` and `unlockCookie`. `shown`, the number
  * of the version the link shows, moves with each new version for a link that follows the
  * current one; threads written on newer versions stay out, and what goes out is redacted as
- * `sharedThread` has it. The link and the unlock are checked again at every heartbeat.
+ * `sharedThread` has it. The stream ends at once when the link is revoked (`SHARE_LINK_TOPIC`),
+ * expires, or loses its version; the link and the unlock are checked again at every heartbeat.
  */
 function shareStream(
   deps: AppDeps,
@@ -304,6 +313,10 @@ function shareStream(
   let shown = s.version.number;
   return {
     topic: ARTIFACT_TOPIC(s.artifact.id),
+    // A revoke ends the stream at once, and so does the link's expiry.
+    endTopic: SHARE_LINK_TOPIC(s.link.id),
+    endsAt: s.link.expires_at,
+    quotas: [{ key: `share-link:${s.link.id}`, limit: LIVE_STREAM_LIMITS.perShareLink }],
     forward(e) {
       switch (e.type) {
         case 'version.published':
@@ -311,7 +324,9 @@ function shareStream(
           shown = Math.max(shown, e.number);
           return 'send';
         case 'version.deleted':
-          return followsCurrent || e.number === shown ? 'send' : 'skip';
+          if (followsCurrent) return 'send';
+          // A per-version link goes with its version.
+          return e.number === shown ? 'send-and-close' : 'skip';
         case 'artifact.deleted':
           return 'send-and-close';
         case 'comment.deleted':
@@ -340,8 +355,9 @@ function shareStream(
 export function registerSharePublicRoutes(api: OpenAPIHono<AppEnv>): void {
   api.openapi(infoRoute, async (c) => {
     const { deps } = c.var;
-    const s = await resolveShare(deps, c.req.valid('param').token, readUnlockCookie(c));
-    return c.json(await shareInfo(deps, s), 200, noStore);
+    const { token } = c.req.valid('param');
+    const s = await resolveShare(deps, token, readUnlockCookie(c));
+    return c.json(await shareInfo(deps, s, token), 200, noStore);
   });
 
   api.openapi(eventsRoute, async (c) => {

@@ -9,6 +9,8 @@ import { createRange, setEnd, setStart } from './pristine.ts';
 export interface TextIndex {
   /** The data of every indexed text node, in document order, with nothing between them. */
   text: string;
+  /** False when a limit stopped the walk before its end: more text may follow. */
+  complete: boolean;
   /**
    * The offset in `text` of a DOM boundary point. A point in an indexed text node maps into it;
    * any other point (an element boundary, a comment, a script) maps to the first indexed text at
@@ -70,31 +72,42 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
- * Indexes the text nodes under `doc.body` in document order, skipping the contents of `script`,
- * `style`, `noscript` and `template`, and stopping at `limits`.
+ * Indexes the text nodes under `root` (`doc.body` by default) in document order, skipping the
+ * contents of `script`, `style`, `noscript` and `template`, and stopping at `limits`.
  */
 export function buildTextIndex(
   doc: Document,
   limits: Readonly<TextIndexLimits> = TEXT_INDEX_LIMITS,
+  root: Node | null = doc.body,
 ): TextIndex {
   const nodes: Text[] = [];
   const starts: number[] = [];
   const chunks: string[] = [];
   let length = 0;
-  const body = doc.body;
-  if (body) {
+  let complete = true;
+  if (root) {
     const deadline = Date.now() + limits.budgetMs;
     let visits = 0;
-    let node: Node | null = body.firstChild;
-    while (node && length < limits.maxChars && visits < limits.maxNodes) {
+    let node: Node | null = root.firstChild;
+    while (node) {
+      if (length >= limits.maxChars || visits >= limits.maxNodes) {
+        complete = false;
+        break;
+      }
       visits++;
-      if ((visits & 1023) === 0 && Date.now() >= deadline) break;
+      if ((visits & 1023) === 0 && Date.now() >= deadline) {
+        complete = false;
+        break;
+      }
       let descend = false;
       if (node.nodeType === TEXT_NODE) {
         const data = (node as Text).data;
         if (data.length > 0) {
-          const piece =
-            data.length > limits.maxChars - length ? data.slice(0, limits.maxChars - length) : data;
+          let piece = data;
+          if (data.length > limits.maxChars - length) {
+            piece = data.slice(0, limits.maxChars - length);
+            complete = false;
+          }
           nodes.push(node as Text);
           starts.push(length);
           chunks.push(piece);
@@ -103,7 +116,7 @@ export function buildTextIndex(
       } else if (node.nodeType === ELEMENT_NODE) {
         descend = !SKIPPED.has((node as Element).localName);
       }
-      node = nextNode(node, body, descend);
+      node = nextNode(node, root, descend);
     }
   }
   const text = chunks.join('');
@@ -127,6 +140,7 @@ export function buildTextIndex(
 
   return {
     text,
+    complete,
     toOffset(node, offset) {
       const slot = slots.get(node);
       if (slot !== undefined) {

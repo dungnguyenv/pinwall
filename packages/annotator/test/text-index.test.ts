@@ -52,6 +52,16 @@ test('offsets and ranges map between the DOM and the text', () => {
   ]).toEqual([childOf(first), 0, childOf(second), 5]);
 });
 
+test('the index says whether it read all the text, and can read one element only', () => {
+  document.body.innerHTML = '<p>0123456789</p><p id="b">abc<script>x</script><i>def</i></p>';
+  expect(buildTextIndex(document).complete).toBe(true);
+  expect(buildTextIndex(document, { ...TEXT_INDEX_LIMITS, maxChars: 15 }).complete).toBe(false);
+  expect(buildTextIndex(document, { ...TEXT_INDEX_LIMITS, maxChars: 16 }).complete).toBe(true);
+  expect(buildTextIndex(document, { ...TEXT_INDEX_LIMITS, maxNodes: 2 }).complete).toBe(false);
+  const own = buildTextIndex(document, TEXT_INDEX_LIMITS, el('#b'));
+  expect([own.text, own.complete]).toEqual(['abcdef', true]);
+});
+
 test('an empty page has an empty index', () => {
   document.body.innerHTML = '<div><img alt=""></div>';
   const index = buildTextIndex(document);

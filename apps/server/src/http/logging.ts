@@ -3,15 +3,19 @@ import type { Config } from '../config/types.ts';
 import type { Logger } from '../lib/logger.ts';
 import { clientIp } from './client-ip.ts';
 
-/** Path segments that are bearer secrets: whoever reads the log could use them. */
-const SECRET_SEGMENT = /^\/(c|s|upload)\/[^/]+/;
+/**
+ * Path segments that are secrets: whoever reads the log could use them. Content grants (`/c/`),
+ * share links (`/s/` and the share viewer's API) and upload URLs carry a bearer token; the
+ * consent page's API carries the id of a pending OAuth authorization.
+ */
+const SECRET_SEGMENT = /^\/(c|s|upload|api\/v1\/share|api\/v1\/oauth\/requests)\/[^/]+/;
 
 /** Probes hit these every few seconds; they are logged only at debug level. */
 const PROBES = new Set(['/healthz', '/readyz']);
 
 /**
  * The path as it may appear in a log: no query string (setup tokens, OAuth codes) and no
- * content, share or upload token.
+ * content, share or upload token or consent request id.
  */
 export function loggablePath(path: string): string {
   return path.replace(SECRET_SEGMENT, '/$1/:token');

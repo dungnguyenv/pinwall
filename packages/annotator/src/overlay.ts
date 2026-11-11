@@ -1,8 +1,10 @@
 /**
  * The pins, highlights and hover outline the annotator draws over a page. Everything lives in the
- * open shadow root of one `<pinwall-overlay>` element appended to `<html>`: absolutely positioned
- * and zero-sized, so it never moves page content, and styled only from inside its shadow tree
- * plus `!important` inline declarations on the host, so page CSS cannot hide or restyle it.
+ * open shadow root of one `<pinwall-overlay>` element appended to `<html>`: absolutely positioned,
+ * so it never moves page content, and styled only from inside its shadow tree plus `!important`
+ * inline declarations on the host, so page CSS cannot hide or restyle it. The host is sized to the
+ * document's scroll size, measured while the host is collapsed, and clips what it holds to that
+ * box: what it draws for text or elements that inner scrollers hide never grows the page.
  * Page nodes are never moved, wrapped or restyled; pins follow them by measuring.
  */
 import type { Anchor } from '@pinwall/shared/protocol';
@@ -25,9 +27,15 @@ export interface Overlay {
   readonly host: HTMLElement;
   /** Replaces every pin, then lays them out. */
   setPins(pins: PinSpec[]): void;
-  /** Measures again and moves pins and highlights; puts the host back if the page removed it. */
+  /**
+   * Measures the document again and moves pins and highlights, cut to the document; puts the host
+   * back if the page removed it.
+   */
   layout(): void;
-  /** Outlines `el` (what a click would pick in comment mode), or nothing. */
+  /**
+   * Outlines `el` (what a click would pick in comment mode), or nothing; the outline is cut to
+   * the document as the last `layout` measured it.
+   */
   hover(el: Element | null): void;
   /** Scrolls the pin of thread `id` into view and marks it for a moment. False for no such pin. */
   focus(id: string): boolean;
@@ -53,7 +61,9 @@ const HOST_STYLE: readonly (readonly [string, string])[] = [
   ['top', '0'],
   ['width', '0'],
   ['height', '0'],
-  ['overflow', 'visible'],
+  // `clip` where the browser has it, else `hidden`: an invalid value leaves the one before it.
+  ['overflow', 'hidden'],
+  ['overflow', 'clip'],
   ['z-index', '2147483647'],
   ['pointer-events', 'none'],
 ];
@@ -88,6 +98,24 @@ interface Pin {
   spec: PinSpec;
   button: HTMLElement;
   marks: HTMLElement[];
+}
+
+/** A rectangle in document pixels. */
+interface Box {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/** What `layout` measured for one pin, before it writes anything. */
+interface Drawing {
+  pin: Pin;
+  /** The anchor's document point. */
+  point: DocPoint;
+  kind: 'mark' | 'outline';
+  /** Highlight or outline boxes, already cut to the document. */
+  boxes: Box[];
 }
 
 function finite(value: number): number {
@@ -200,13 +228,38 @@ export function createOverlay(doc: Document, onPinClick: (id: string) => void): 
 
   const scroll = (): DocPoint => ({ x: finite(win?.scrollX ?? 0), y: finite(win?.scrollY ?? 0) });
 
+  /** The host's document origin: non-zero when the page positions or offsets <html>. */
+  let origin: DocPoint = { x: 0, y: 0 };
+  /** The part of the document the overlay draws in, as the last `layout` measured it. */
+  let area: Box = { left: 0, top: 0, right: 0, bottom: 0 };
+
+  const sizeHost = (width: number, height: number) => {
+    host.style.setProperty('width', `${finite(width)}px`, 'important');
+    host.style.setProperty('height', `${finite(height)}px`, 'important');
+  };
+
   /** The document point of a client rect's top-left corner. */
   const toDoc = (rect: DOMRect, at: DocPoint): DocPoint => ({
     x: rect.left + at.x,
     y: rect.top + at.y,
   });
 
-  const setMarks = (pin: Pin, boxes: DOMRect[], at: DocPoint, origin: DocPoint, kind: string) => {
+  /** Client rect `rect` as a document box cut to `area`; null when nothing of it is left. */
+  const visible = (rect: DOMRect, at: DocPoint): Box | null => {
+    const left = Math.max(area.left, rect.left + at.x);
+    const top = Math.max(area.top, rect.top + at.y);
+    const right = Math.min(area.right, rect.right + at.x);
+    const bottom = Math.min(area.bottom, rect.bottom + at.y);
+    return right > left && bottom > top ? { left, top, right, bottom } : null;
+  };
+
+  const visibleAll = (rects: DOMRect[], at: DocPoint): Box[] =>
+    rects.flatMap((rect) => visible(rect, at) ?? []);
+
+  const placeBox = (el: HTMLElement, box: Box) =>
+    place(el, box.left - origin.x, box.top - origin.y, box.right - box.left, box.bottom - box.top);
+
+  const setMarks = (pin: Pin, boxes: Box[], kind: string) => {
     while (pin.marks.length > boxes.length) pin.marks.pop()?.remove();
     while (pin.marks.length < boxes.length) {
       const mark = doc.createElement('div');
@@ -217,40 +270,39 @@ export function createOverlay(doc: Document, onPinClick: (id: string) => void): 
     boxes.forEach((box, i) => {
       const mark = pin.marks[i] as HTMLElement;
       mark.className = kind;
-      const corner = toDoc(box, at);
-      place(mark, corner.x - origin.x, corner.y - origin.y, box.width, box.height);
+      placeBox(mark, box);
     });
   };
 
-  /** Where a pin's anchor is, in document pixels, drawing its highlight on the way. */
-  const anchorPoint = (pin: Pin, at: DocPoint, origin: DocPoint): DocPoint => {
+  /** Where a pin's anchor is and what to draw for it, measured without writing anything. */
+  const measure = (pin: Pin, at: DocPoint, size: { width: number; height: number }): Drawing => {
     const { placement, anchor } = pin.spec;
+    const stored = { x: anchor.position.x * size.width, y: anchor.position.y * size.height };
     if (placement.via === 'quote') {
       const rects = rangeRects(placement.range);
-      setMarks(pin, rects, at, origin, 'mark');
       const first = rects[0];
-      if (first) return toDoc(first, at);
-    } else if (placement.via === 'dom' && placement.element.isConnected) {
+      const point = first ? toDoc(first, at) : stored;
+      return { pin, point, kind: 'mark', boxes: visibleAll(rects, at) };
+    }
+    if (placement.via === 'dom' && placement.element.isConnected) {
       const rect = boundingRect(placement.element);
       if (rect && !isEmpty(rect)) {
-        setMarks(pin, [rect], at, origin, 'outline');
-        return toDoc(rect, at);
+        return { pin, point: toDoc(rect, at), kind: 'outline', boxes: visibleAll([rect], at) };
       }
-      setMarks(pin, [], at, origin, 'outline');
-    } else {
-      setMarks(pin, [], at, origin, 'mark');
     }
-    return fromFraction(doc, anchor.position);
+    return { pin, point: stored, kind: 'mark', boxes: [] };
   };
 
-  const drawHover = (at: DocPoint, origin: DocPoint) => {
-    const rect = hovered?.isConnected ? boundingRect(hovered) : undefined;
-    if (!rect || isEmpty(rect)) {
+  const hoveredRect = (): DOMRect | undefined =>
+    hovered?.isConnected ? boundingRect(hovered) : undefined;
+
+  const drawHover = (rect: DOMRect | undefined, at: DocPoint) => {
+    const box = rect && !isEmpty(rect) ? visible(rect, at) : null;
+    if (box === null) {
       hoverBox.removeAttribute('data-on');
       return;
     }
-    const corner = toDoc(rect, at);
-    place(hoverBox, corner.x - origin.x, corner.y - origin.y, rect.width, rect.height);
+    placeBox(hoverBox, box);
     hoverBox.setAttribute('data-on', '');
   };
 
@@ -258,18 +310,30 @@ export function createOverlay(doc: Document, onPinClick: (id: string) => void): 
     if (destroyed) return;
     const root = doc.documentElement;
     if (!host.isConnected && root) root.appendChild(host);
-    const at = scroll();
-    // The host's own document origin: non-zero when the page positions or offsets <html>.
-    const hostRect = boundingRect(host);
-    const origin = hostRect ? toDoc(hostRect, at) : { x: 0, y: 0 };
+    // Measure the document with the host collapsed, so nothing drawn counts in its size.
+    sizeHost(0, 0);
     const size = docSize(doc);
-    for (const pin of pins.values()) {
-      const point = anchorPoint(pin, at, origin);
-      const x = clamp(point.x - PIN_OFFSET - PIN_SIZE / 2, 0, size.width - PIN_SIZE);
-      const y = clamp(point.y - PIN_OFFSET - PIN_SIZE / 2, 0, size.height - PIN_SIZE);
+    const at = scroll();
+    const hostRect = boundingRect(host);
+    origin = hostRect ? toDoc(hostRect, at) : { x: 0, y: 0 };
+    area = {
+      left: Math.max(0, origin.x),
+      top: Math.max(0, origin.y),
+      right: size.width,
+      bottom: size.height,
+    };
+    const drawings = Array.from(pins.values(), (pin) => measure(pin, at, size));
+    const hoverRect = hoveredRect();
+
+    // Every read is done: the writes below force no layout in between.
+    sizeHost(Math.max(0, area.right - origin.x), Math.max(0, area.bottom - origin.y));
+    for (const { pin, point, kind, boxes } of drawings) {
+      setMarks(pin, boxes, kind);
+      const x = clamp(point.x - PIN_OFFSET - PIN_SIZE / 2, area.left, area.right - PIN_SIZE);
+      const y = clamp(point.y - PIN_OFFSET - PIN_SIZE / 2, area.top, area.bottom - PIN_SIZE);
       place(pin.button, x - origin.x, y - origin.y);
     }
-    drawHover(at, origin);
+    drawHover(hoverRect, at);
   };
 
   const makeButton = (spec: PinSpec): HTMLElement => {
@@ -343,9 +407,7 @@ export function createOverlay(doc: Document, onPinClick: (id: string) => void): 
     hover(el) {
       hovered = el;
       if (destroyed) return;
-      const at = scroll();
-      const hostRect = boundingRect(host);
-      drawHover(at, hostRect ? toDoc(hostRect, at) : { x: 0, y: 0 });
+      drawHover(hoveredRect(), scroll());
     },
     focus(id) {
       const pin = pins.get(id);
