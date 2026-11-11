@@ -30,6 +30,9 @@ const DRIVE_LETTER = /^[A-Za-z]:/;
 const LONE_SURROGATE = /\p{Cs}/u;
 const LONE_SURROGATES = /\p{Cs}/gu;
 
+/** C0 controls, DEL and C1 controls (Unicode's `Cc`): a latin1 zip name can hold any of them. */
+const CONTROL = /\p{Cc}/u;
+
 /** Checked in this order; the first one present wins. */
 const ENTRY_NAMES = ['index.html', 'index.md', 'README.md'] as const;
 
@@ -67,7 +70,7 @@ export function normalizeEntryPath(raw: string): { path: string } | { skip: 'jun
   if (LONE_SURROGATE.test(path)) {
     throw rejectPath(path.replace(LONE_SURROGATES, '\uFFFD'), 'encoding');
   }
-  if (hasControlCharacter(path)) throw rejectPath(path, 'control');
+  if (CONTROL.test(path)) throw rejectPath(path, 'control');
   if (path.includes('\\')) throw rejectPath(path, 'backslash');
   if (path.startsWith('/') || DRIVE_LETTER.test(path)) throw rejectPath(path, 'absolute');
 
@@ -128,15 +131,6 @@ export function chooseEntry(paths: readonly string[]): { entryPath: string; kind
 /** The kind of a version that opens on `entryPath`: `markdown` when it ends in `.md`. */
 export function entryKind(entryPath: string): ArtifactKind {
   return entryPath.toLowerCase().endsWith('.md') ? 'markdown' : 'html';
-}
-
-/** C0 controls (U+0000–U+001F) and DEL. */
-function hasControlCharacter(text: string): boolean {
-  for (let i = 0; i < text.length; i += 1) {
-    const code = text.charCodeAt(i);
-    if (code < 0x20 || code === 0x7f) return true;
-  }
-  return false;
 }
 
 /**

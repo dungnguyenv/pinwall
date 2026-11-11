@@ -11,7 +11,7 @@ import {
   sniffArchive,
 } from '../../src/publish/archive.ts';
 import { IngestBudget } from '../../src/publish/limits.ts';
-import { rejectPath } from '../../src/publish/paths.ts';
+import { normalizeEntryPath, rejectPath } from '../../src/publish/paths.ts';
 import { readZipDirectory } from '../../src/publish/zip.ts';
 import { makeTar, makeZip } from '../helpers/archives.ts';
 
@@ -256,6 +256,19 @@ test('zip names are UTF-8, or latin1 when they are not valid UTF-8', async () =>
     [nfd, 'nfd'],
     ['café.txt', 'latin1'],
   ]);
+});
+
+test('a non-UTF-8 zip name that decodes to a C1 control is refused by the path rules', async () => {
+  const zip = makeZip([{ name: 'a_b.html', body: 'x' }]);
+  zip[(zipLayout(zip).central[0] ?? 0) + 46 + 1] = 0x85; // NEL in latin1, invalid alone in UTF-8
+  const [entry] = readZipDirectory(zip);
+  expect(entry?.name).toBe('a\u0085b.html');
+  expect(() => normalizeEntryPath(entry?.name ?? '')).toThrow(
+    expect.objectContaining({
+      status: 400,
+      details: expect.objectContaining({ reason: 'control' }),
+    }),
+  );
 });
 
 test.each([0, 6] as const)('zip entries at level %i round-trip', async (level) => {

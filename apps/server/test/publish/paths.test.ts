@@ -26,6 +26,9 @@ test.each([
   ['a\u0000b', 'control'],
   ['a\nb', 'control'],
   ['a\u007fb', 'control'],
+  ['a\u0080b', 'control'],
+  ['a\u0085b', 'control'],
+  ['a\u009fb', 'control'],
   ['a\ud800.html', 'encoding'],
   ['a\udfff.html', 'encoding'],
   ['a//b', 'empty_segment'],
@@ -40,6 +43,12 @@ test.each([
       details: expect.objectContaining({ reason }),
     }),
   );
+});
+
+test('characters next to the control ranges are allowed', () => {
+  for (const name of ['a b', 'a~b', 'a\u00a0b', 'café', 'a\u00ffb']) {
+    expect(normalizeEntryPath(`${name}.html`)).toEqual({ path: `${name}.html` });
+  }
 });
 
 test('a lone surrogate is refused, a pair is a character like any other', () => {
