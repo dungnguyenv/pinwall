@@ -105,6 +105,21 @@ describe.each(dialects)('the CSRF origin check on %s', (dialect) => {
     expect(await r.json()).toEqual({ via: 'oauth' });
   });
 
+  test('only a Bearer Authorization header skips the check', async () => {
+    // Browsers attach Basic credentials by themselves, like cookies, so Basic gets no exemption.
+    const basic = { authorization: `Basic ${btoa('user:pass')}` };
+    await expectRefused(await signOut({ origin: EVIL, headers: basic }), EVIL);
+    await expectRefused(await signOut({ origin: null, headers: basic }), null);
+    expect(await sessionCount()).toBe(1);
+
+    // The scheme is case-insensitive; a Bearer request is not checked, and is then judged by
+    // its token alone.
+    for (const authorization of ['Bearer nope', 'bearer nope', 'BEARER nope']) {
+      const r = await signOut({ origin: EVIL, headers: { authorization } });
+      expect(r.status, authorization).toBe(401);
+    }
+  });
+
   test('origin mismatch names the expected origin', async () => {
     const r = await ctx.request(
       '/api/v1/auth/sign-out',
