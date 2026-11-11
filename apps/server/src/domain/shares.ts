@@ -46,6 +46,11 @@ export function shareUrl(config: Config, token: string): string {
   return publicUrl(config, `/s/${token}`);
 }
 
+/** The share viewer's "Open original": `/s/<token>/original`, a redirect to a new raw grant. */
+export function shareOriginalUrl(config: Config, token: string): string {
+  return publicUrl(config, `/s/${token}/original`);
+}
+
 /**
  * A share-link password someone is choosing, normalized and ready to hash. Its length is counted
  * in code points after normalization, as account passwords are.

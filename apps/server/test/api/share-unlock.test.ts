@@ -9,7 +9,7 @@ import {
   type ShareState,
   shareGrant,
 } from '../../src/domain/share-access.ts';
-import { createShareLink, revokeShareLink } from '../../src/domain/shares.ts';
+import { createShareLink, revokeShareLink, shareUrl } from '../../src/domain/shares.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { hashSecret } from '../../src/lib/ids.ts';
@@ -270,6 +270,8 @@ describe.each(dialects)('the share viewer API on %s', (dialect) => {
       follows_current: true,
       allow_comments: true,
       expires_at: null,
+      // "Open original": the stored bytes through a raw grant of its own, made only on a click.
+      original_url: `${shareUrl(ctx.deps.config, discussed.token)}/original`,
       content: {
         url: contentUrl(ctx.deps.config, grant?.token ?? ''),
         mode: 'review',
@@ -292,8 +294,11 @@ describe.each(dialects)('the share viewer API on %s', (dialect) => {
       follows_current: false,
       allow_comments: false,
       expires_at: expiresAt,
+      original_url: `${shareUrl(ctx.deps.config, plain.token)}/original`,
       content: { mode: 'raw', expires_at: expiresAt },
     });
+    // Share info makes the frame's grant only.
+    expect(await grantsOf(plain.linkId)).toHaveLength(1);
   });
 
   test('opening share info is rate limited per link and address', async () => {

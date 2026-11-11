@@ -190,7 +190,8 @@ App origin (`PINWALL_PUBLIC_ORIGIN`):
 | `POST /upload/:token` | one-time upload URL; no cookies, no bearer | M4 |
 | `GET /a/:artifactId/raw`, `GET /a/:artifactId/v/:n/raw` | members: redirect to a fresh raw content grant | M4 |
 | `GET /s/:shareToken` | share link: revoked/expired/deleted → HTML 410 page; password-protected and locked, or comments allowed → SPA route `/s/:token`; otherwise 302 to a fresh raw grant (byte-for-byte) | M5 (pages in M8) |
-| `GET /api/v1/share/:token`, `POST …/unlock`, `GET`/`POST …/comments`, `POST …/comments/:id/replies`, `PATCH`/`DELETE …/comments/:id`, `GET …/events` | share-viewer API, authorized by the share token plus the unlock cookie: share info (artifact name, version number, kind, `allow_comments`, content grant), password unlock, guest comments (`X-Pinwall-Guest-Token` for edits within 15 min), SSE | M5 (pages in M8) |
+| `GET /s/:shareToken/original` | the share viewer's "Open original": the same checks as `/s/:shareToken`; locked → 302 to `/s/:shareToken`; otherwise 302 to a fresh raw grant (byte-for-byte), whether or not the link allows comments | M5 (button in M8) |
+| `GET /api/v1/share/:token`, `POST …/unlock`, `GET`/`POST …/comments`, `POST …/comments/:id/replies`, `PATCH`/`DELETE …/comments/:id`, `GET …/events` | share-viewer API, authorized by the share token plus the unlock cookie: share info (artifact name, version number, kind, `allow_comments`, content grant, `original_url`), password unlock, guest comments (`X-Pinwall-Guest-Token` for edits within 15 min), SSE | M5 (pages in M8) |
 | `GET /c/:contentToken/*` | content, single-domain mode only (404 in content-domain mode) | M4 |
 | everything else (`GET`, `Accept: text/html`) | SPA `index.html`: `/`, `/projects/:id`, `/a/:id`, `/a/:id/v/:n`, `/a/:id/compare`, `/search`, `/settings/*`, `/admin/*`, `/signin`, `/setup`, `/oauth/consent`, `/connect`, `/s/:token` (viewer) | M7/M8 |
 

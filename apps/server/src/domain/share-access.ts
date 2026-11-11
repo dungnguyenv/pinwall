@@ -15,6 +15,7 @@ import { AppError, forbidden, gone, notFound, unauthorized } from '../lib/errors
 import { t } from '../lib/i18n.ts';
 import { hashSecret } from '../lib/ids.ts';
 import { entryKind } from '../publish/paths.ts';
+import { shareOriginalUrl } from './shares.ts';
 import { isTombstoned } from './tombstones.ts';
 
 /** An unlock lasts at most a day, and never past the link's own expiry. */
@@ -310,11 +311,12 @@ export async function touchShareLink(deps: AppDeps, link: ShareLinkRow): Promise
 }
 
 /**
- * What the share viewer shows for `s`: the artifact's name, the version and how the link
- * follows it, and a new grant to its content, `review` when the link allows comments (the
- * viewer then pins them on the page) and `raw` otherwise. A locked link answers 401.
+ * What the share viewer shows for `s`, opened with `token`: the artifact's name, the version and
+ * how the link follows it, a new grant to its content, `review` when the link allows comments
+ * (the viewer then pins them on the page) and `raw` otherwise, and the URL of "Open original",
+ * which makes its raw grant only when followed. A locked link answers 401.
  */
-export async function shareInfo(deps: AppDeps, s: ShareState): Promise<ShareInfo> {
+export async function shareInfo(deps: AppDeps, s: ShareState, token: string): Promise<ShareInfo> {
   const allowComments = s.link.allow_comments === 1;
   const mode: GrantMode = allowComments ? 'review' : 'raw';
   const grant = await shareGrant(deps, s, mode);
@@ -325,6 +327,7 @@ export async function shareInfo(deps: AppDeps, s: ShareState): Promise<ShareInfo
     follows_current: s.link.version_id === null,
     allow_comments: allowComments,
     expires_at: s.link.expires_at,
+    original_url: shareOriginalUrl(deps.config, token),
     content: {
       url: contentUrl(deps.config, grant.token),
       mode,

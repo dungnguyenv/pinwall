@@ -98,7 +98,7 @@ const infoRoute = createRoute({
   tags: ['share viewer'],
   summary: 'Open a share link',
   description:
-    'What the share viewer shows: the artifact name, the version and a new content URL to it, `review` when the link allows comments and `raw` otherwise. Needs no account; a link with a password needs the unlock cookie set by `POST /share/{token}/unlock`. Opens are limited per link from each address.',
+    'What the share viewer shows: the artifact name, the version and a new content URL to it, `review` when the link allows comments and `raw` otherwise, and `original_url` (`/s/{token}/original`), which redirects to a new raw grant: the stored bytes, unchanged, for "Open original". Needs no account; a link with a password needs the unlock cookie set by `POST /share/{token}/unlock`. Opens are limited per link from each address.',
   middleware: [rateLimit(SHARE_RATES.info, shareInfoRateKey)] as MiddlewareHandler<AppEnv>[],
   request: { params: TokenParam },
   responses: {
@@ -340,8 +340,9 @@ function shareStream(
 export function registerSharePublicRoutes(api: OpenAPIHono<AppEnv>): void {
   api.openapi(infoRoute, async (c) => {
     const { deps } = c.var;
-    const s = await resolveShare(deps, c.req.valid('param').token, readUnlockCookie(c));
-    return c.json(await shareInfo(deps, s), 200, noStore);
+    const { token } = c.req.valid('param');
+    const s = await resolveShare(deps, token, readUnlockCookie(c));
+    return c.json(await shareInfo(deps, s, token), 200, noStore);
   });
 
   api.openapi(eventsRoute, async (c) => {

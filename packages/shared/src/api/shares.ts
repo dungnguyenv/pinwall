@@ -56,7 +56,11 @@ export type CreateShareLinkRequest = z.infer<typeof CreateShareLinkRequest>;
 export const CreatedShareLink = z.object({ link: ShareLink, token: z.string(), url: z.string() });
 export type CreatedShareLink = z.infer<typeof CreatedShareLink>;
 
-/** What a share-link viewer is shown: the artifact, the version, and a grant to its content. */
+/**
+ * What a share-link viewer is shown: the artifact, the version, and a grant to its content.
+ * `original_url` is the viewer's "Open original": it redirects to a new raw grant, so the stored
+ * bytes are one click away even when `content` is a review grant with the annotator.
+ */
 export const ShareInfo = z.object({
   artifact_name: z.string(),
   kind: z.enum(['html', 'markdown']),
@@ -64,6 +68,7 @@ export const ShareInfo = z.object({
   follows_current: z.boolean(),
   allow_comments: z.boolean(),
   expires_at: Timestamp.nullable(),
+  original_url: z.string(),
   content: ContentGrant,
 });
 export type ShareInfo = z.infer<typeof ShareInfo>;

@@ -6,16 +6,22 @@ import type { AuthContext } from '../../src/app.ts';
 import { contentUrl } from '../../src/content/grants.ts';
 import type { UserRow } from '../../src/db/schema.ts';
 import { deleteArtifact, deleteVersion } from '../../src/domain/deletion.ts';
-import { createShareLink, revokeShareLink } from '../../src/domain/shares.ts';
+import { createShareLink, revokeShareLink, shareUrl } from '../../src/domain/shares.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
-import { createSignedInUser } from '../helpers/auth.ts';
+import { apiInit, createSignedInUser } from '../helpers/auth.ts';
 import { CONTENT_ENV } from '../helpers/content.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { publishFiles } from '../helpers/publish.ts';
 
 const T = Date.UTC(2026, 10, 11);
 const SPA = '<!doctype html><title>SPA</title>';
+const PW = 'Mật khẩu 1';
+/** A page with a BOM and CRLF line ends: any transform on the way would show. */
+const HTML = Buffer.concat([
+  Buffer.from([0xef, 0xbb, 0xbf]),
+  Buffer.from('<!doctype html>\r\n<html><head><title>Giá</title></head><body>x</body></html>\r\n'),
+]);
 
 interface LinkOptions {
   versionId: string | null;
@@ -76,6 +82,10 @@ describe.each([
 
   const open = (token: string, headers: Record<string, string> = {}) =>
     ctx.request(`/s/${token}`, { headers });
+
+  /** `GET /s/<token>/original`, the share viewer's "Open original". */
+  const openOriginal = (token: string, headers: Record<string, string> = {}) =>
+    ctx.request(`/s/${token}/original`, { headers });
 
   const grantsOf = (linkId: string) =>
     ctx.deps.db.db
@@ -180,8 +190,14 @@ describe.each([
       ['nonsense', 404, 'share.notFound.title', 'share.notFound.message'],
     ];
     for (const [token, status, title, message] of cases) {
-      for (const accept of ['text/html', 'application/json', '*/*']) {
-        const r = await open(token, { accept });
+      for (const [accept, go] of [
+        ['text/html', open],
+        ['application/json', open],
+        ['*/*', open],
+        ['text/html', openOriginal],
+        ['application/json', openOriginal],
+      ] as const) {
+        const r = await go(token, { accept });
         expect(r.status, `${title} with ${accept}`).toBe(status);
         expect(r.headers.get('content-type')).toBe('text/html; charset=UTF-8');
         expect(r.headers.get('cache-control')).toBe('no-store');
@@ -218,8 +234,72 @@ describe.each([
     expect(r.headers.get('retry-after')).toBe('600');
     // Unknown links count too: guessing is limited as much as opening.
     expect((await open('nonsense')).status).toBe(429);
+    // "Open original" is an open as well.
+    expect((await openOriginal(token)).status).toBe(429);
     clock.advance(600_000);
     expect((await open(token)).status).toBe(302);
+  });
+
+  test('/s/:token/original redirects a link with comments to a fresh raw grant, byte-for-byte', async () => {
+    const { artifact, version } = await publish({ 'index.html': HTML });
+    const { linkId, token } = await share(artifact.id, { allowComments: true });
+
+    const r = await openOriginal(token, { accept: 'text/html' });
+    expect(r.status).toBe(302);
+    expect(r.headers.get('cache-control')).toBe('no-store');
+    const [grant] = await grantsOf(linkId);
+    expect(grant).toMatchObject({
+      mode: 'raw',
+      share_link_id: linkId,
+      user_id: null,
+      version_id: version.id,
+    });
+    expect(r.headers.get('location')).toBe(contentUrl(ctx.deps.config, grant?.token ?? ''));
+    const content = await ctx.request(r.headers.get('location') ?? '');
+    expect(content.status).toBe(200);
+    const body = Buffer.from(await content.arrayBuffer());
+    expect(body.equals(HTML)).toBe(true);
+    expect(body.toString()).not.toContain('data-pinwall-annotator');
+
+    // One grant per open, as for `/s/:token`.
+    clock.advance(1000);
+    const again = await openOriginal(token);
+    const grants = await grantsOf(linkId);
+    expect(grants).toHaveLength(2);
+    expect(again.headers.get('location')).toBe(contentUrl(ctx.deps.config, grants[1]?.token ?? ''));
+  });
+
+  test('/s/:token/original of a locked link goes to the password page until it is unlocked', async () => {
+    const { artifact } = await publish({ 'index.html': HTML });
+    const { linkId, token } = await share(artifact.id, { password: PW, allowComments: true });
+
+    const locked = await openOriginal(token, { accept: 'text/html' });
+    expect(locked.status).toBe(302);
+    expect(locked.headers.get('cache-control')).toBe('no-store');
+    expect(locked.headers.get('location')).toBe(shareUrl(ctx.deps.config, token));
+    expect(await grantsOf(linkId)).toEqual([]);
+    // A cookie that is not this link's unlock changes nothing.
+    const wrong = await openOriginal(token, { cookie: 'pinwall_share=v1.1.x' });
+    expect(wrong.headers.get('location')).toBe(shareUrl(ctx.deps.config, token));
+    expect(await grantsOf(linkId)).toEqual([]);
+
+    const unlocked = await ctx.request(
+      `/api/v1/share/${token}/unlock`,
+      apiInit(ctx, { method: 'POST', body: { password: PW } }),
+    );
+    expect(unlocked.status).toBe(204);
+    // The cookie set for `/s/<token>` is sent for `/s/<token>/original` too (RFC 6265 path-match).
+    const forPage = unlocked.headers.getSetCookie().find((c) => c.includes(`Path=/s/${token}`));
+    const cookie = forPage?.split(';')[0] ?? '';
+    const r = await openOriginal(token, { cookie });
+    expect(r.status).toBe(302);
+    const [grant] = await grantsOf(linkId);
+    expect(grant).toMatchObject({ mode: 'raw', share_link_id: linkId });
+    expect(r.headers.get('location')).toBe(contentUrl(ctx.deps.config, grant?.token ?? ''));
+    const body = Buffer.from(
+      await (await ctx.request(r.headers.get('location') ?? '')).arrayBuffer(),
+    );
+    expect(body.equals(HTML)).toBe(true);
   });
 
   test('last use is recorded at most once a minute', async () => {
