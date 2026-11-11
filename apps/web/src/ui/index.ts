@@ -24,6 +24,7 @@ export { Field, type FieldControlProps } from './field.tsx';
 export { IconButton, type IconButtonProps } from './icon-button.tsx';
 export { Input } from './input.tsx';
 export { ariaKeyShortcuts, formatShortcut, isApplePlatform, Kbd } from './kbd.tsx';
+export { Logo, PIN_MARK_PATHS, PIN_MARK_VIEWBOX, PinMark } from './logo.tsx';
 export { Select } from './select.tsx';
 export { LoadingRegion, Skeleton } from './skeleton.tsx';
 export { Spinner } from './spinner.tsx';

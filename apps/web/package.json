@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "icons": "node scripts/render-icons.ts",
     "test": "vitest run"
   },
   "dependencies": {
