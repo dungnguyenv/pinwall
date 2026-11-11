@@ -4,6 +4,7 @@ import { publicUrl } from '../http/public-url.ts';
 import { badRequest } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { registerAccountRoutes } from './account.ts';
+import { registerAdminUserRoutes } from './admin-users.ts';
 import { registerAuthRoutes } from './auth.ts';
 import { registerConfigRoutes } from './config.ts';
 import { registerMeRoutes } from './me.ts';
@@ -60,6 +61,7 @@ export function buildApiRouter(): OpenAPIHono<AppEnv> {
   registerAuthRoutes(api);
   registerSetupRoutes(api);
   registerTokenRoutes(api);
+  registerAdminUserRoutes(api);
 
   return api;
 }

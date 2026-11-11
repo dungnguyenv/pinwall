@@ -15,6 +15,7 @@ import {
   PasswordSignInRequest,
   page,
   RenamePasskeyRequest,
+  SetRoleRequest,
   SetupPasskeyOptionsRequest,
   SetupRequest,
   SetupTokenRequest,
@@ -156,4 +157,13 @@ test('profile, password and passkey requests keep their limits', () => {
   expect(AddPasskeyRequest.safeParse(ceremony).success).toBe(true);
   expect(AddPasskeyRequest.safeParse({ ...ceremony, name: 'Phone' }).success).toBe(true);
   expect(AddPasskeyRequest.safeParse({ ceremony_id: 'c' }).success).toBe(false);
+});
+
+test('SetRoleRequest takes a role, blocked or null to clear', () => {
+  for (const role_override of ['admin', 'member', 'blocked', null]) {
+    expect(SetRoleRequest.parse({ role_override })).toEqual({ role_override });
+  }
+  for (const body of [{ role_override: 'owner' }, { role_override: '' }, {}]) {
+    expect(SetRoleRequest.safeParse(body).success, JSON.stringify(body)).toBe(false);
+  }
 });

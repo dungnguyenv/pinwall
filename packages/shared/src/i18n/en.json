@@ -33,5 +33,7 @@
   "auth.lastCredential": "You cannot remove your last way to sign in. Add a passkey or a password first.",
   "auth.passkey.numberedName": "Passkey {{number}}",
   "auth.passkeyNotFound": "This passkey does not exist, or it is not yours.",
-  "auth.passkeyDuplicate": "This passkey is already registered."
+  "auth.passkeyDuplicate": "This passkey is already registered.",
+  "auth.ownRole": "You cannot change your own role.",
+  "auth.userNotFound": "This user does not exist."
 }
