@@ -68,6 +68,7 @@
   "publish.session.expired": "This upload URL has expired. Ask for a new one with the create_publish_session tool or POST /api/v1/publish-sessions.",
   "publish.session.unknown": "This upload URL is not valid.",
   "publish.upload.form": "Send multipart/form-data with a target field and at least one file.",
+  "publish.upload.archiveAlone": "An archive sent first without a path is unpacked, so it must be the only file. Send a path field before each file to publish archives as files.",
   "publish.upload.idle": "The upload sent no data for {{seconds}} seconds, so Pinwall stopped waiting. Run the same command again before the upload URL expires.",
   "content.notFound.title": "Not found",
   "content.notFound.message": "This file is not part of the artifact.",

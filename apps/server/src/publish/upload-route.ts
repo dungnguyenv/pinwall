@@ -75,7 +75,7 @@ function uploadIdle(ms: number): AppError {
 }
 
 /** `Content-Length` as a number, or null when it is absent or not a plain byte count. */
-function declaredLength(header: string | undefined): number | null {
+export function declaredLength(header: string | undefined): number | null {
   if (header === undefined || !/^\d+$/.test(header)) return null;
   const length = Number(header);
   return Number.isSafeInteger(length) ? length : null;

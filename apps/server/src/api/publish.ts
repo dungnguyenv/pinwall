@@ -18,18 +18,21 @@ import type { PublishTarget } from '../domain/versions.ts';
 import { badRequest } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import {
-  ingestFiles,
+  countRequestBytes,
+  type FileSink,
   ingestInline,
-  ingestUpload,
+  ingestStreamed,
   type PublishOptions,
   type PublishOutcome,
 } from '../publish/ingest.ts';
-import { limitExceeded } from '../publish/limits.ts';
+import { IngestBudget, limitExceeded } from '../publish/limits.ts';
 import {
   createPublishSession,
   PUBLISH_SESSION_RATE,
   toPublishResult,
 } from '../publish/sessions.ts';
+import { type FormPart, readUploadForm, uploadFormError } from '../publish/upload-form.ts';
+import { declaredLength } from '../publish/upload-route.ts';
 import { jsonBodyLimit } from './body-limit.ts';
 
 const error = (description: string) => ({
@@ -97,17 +100,6 @@ const inlineBodyLimit: MiddlewareHandler<AppEnv> = (c, next) => {
   })(c, next);
 };
 
-/** A web upload is one request, held to `PINWALL_MAX_UPLOAD_BYTES` like any other. */
-const uploadBodyLimit: MiddlewareHandler<AppEnv> = (c, next) => {
-  const max = c.var.deps.config.limits.maxUploadBytes;
-  return bodyLimit({
-    maxSize: max,
-    onError: () => {
-      throw limitExceeded('max_upload_bytes', max);
-    },
-  })(c, next);
-};
-
 const createSessionRoute = createRoute({
   method: 'post',
   path: '/publish-sessions',
@@ -159,8 +151,8 @@ const uploadRoute = createRoute({
   tags: ['publishing'],
   summary: 'Publish files uploaded from a browser',
   description:
-    'A `multipart/form-data` body: a `target` field (the JSON of a publish target), an optional `message`, then the files as `file` parts. To publish a folder, put a `path` field before each `file` part with its path in the folder; without `path` fields each part is stored under its filename. A single `.zip`, `.tar`, `.tgz` or `.tar.gz` part without a `path` is unpacked.',
-  middleware: [requireAuth, uploadBodyLimit] as MiddlewareHandler<AppEnv>[],
+    'A `multipart/form-data` body, read while it streams: a `target` field (the JSON of a publish target) and an optional `message` first, then the files as `file` parts. To publish a folder, put a `path` field before each `file` part with its path in the folder; without `path` fields each part is stored under its filename. A `.zip`, `.tar`, `.tgz` or `.tar.gz` part sent first and without a `path` is unpacked, and must then be the only file. Every file part counts toward `PINWALL_MAX_FILES`, and the upload stops at the part that crosses a limit.',
+  middleware: [requireAuth] as MiddlewareHandler<AppEnv>[],
   security,
   request: {
     body: {
@@ -184,7 +176,9 @@ const uploadRoute = createRoute({
   },
   responses: {
     201: created('The new version', PublishResult),
-    400: error('Not a form with a target and files, or a refused path'),
+    400: error(
+      'Not a form with a target and then files, a refused path, or an archive sent with other files',
+    ),
     ...authErrors,
     ...targetErrors,
     413: error('Over a publishing limit (`payload_too_large`)'),
@@ -192,7 +186,7 @@ const uploadRoute = createRoute({
   },
 });
 
-/** Parts named like an archive; such a part alone, without a `path`, is unpacked. */
+/** Parts named like an archive: one sent first and without a `path` is unpacked. */
 const ARCHIVE_NAME = /\.(zip|tar|tgz|tar\.gz)$/i;
 
 /** The form fields besides the files. */
@@ -201,42 +195,92 @@ const UploadFields = z.object({
   message: CreatePublishSessionRequest.shape.message,
 });
 
-const formError = () => badRequest(t('publish.upload.form'));
+type FilePart = Extract<FormPart, { kind: 'file' }>;
 
-interface UploadForm {
+/** A web upload's form up to its first file. */
+interface FormHead {
   fields: z.infer<typeof UploadFields>;
-  /** Paths from `path` fields, matched to the files by order; empty when none were sent. */
-  paths: string[];
-  files: File[];
+  /** The `path` sent before the first file; null when the form sends none. */
+  path: string | null;
+  file: FilePart;
 }
 
-/** Reads the multipart body: `target`, `message`, then `path` and `file` parts in order. */
-async function readUploadForm(c: Context<AppEnv>): Promise<UploadForm> {
-  const type = c.req.header('content-type') ?? '';
-  if (!/^multipart\/form-data\s*;/i.test(type)) throw formError();
-  let form: FormData;
-  try {
-    form = await c.req.raw.formData();
-  } catch {
-    throw formError();
+/**
+ * Publishes a web upload while its form streams in (the route's description gives the form).
+ * Every limit counts as the parts arrive: the request's size, the number of file parts
+ * (`PINWALL_MAX_FILES`, whatever their names, junk included) and each file's size, so a refused
+ * upload stops at the part that crossed one and keeps nothing it stored. Only the file being
+ * stored is held in memory.
+ */
+async function publishWebUpload(
+  c: Context<AppEnv>,
+  opts: Omit<PublishOptions, 'message'>,
+): Promise<PublishOutcome> {
+  const { deps } = c.var;
+  const { limits } = deps.config;
+  const raw = c.req.raw.body === null ? Readable.from([]) : Readable.fromWeb(c.req.raw.body);
+  const declared = declaredLength(c.req.header('content-length'));
+  if (declared !== null && declared > limits.maxUploadBytes) {
+    raw.destroy();
+    throw limitExceeded('max_upload_bytes', limits.maxUploadBytes);
   }
+  const budget = new IngestBudget(limits);
+  const form = readUploadForm(countRequestBytes(raw, budget), c.req.header('content-type') ?? '');
+  let files = 0;
+  const next = async (): Promise<FormPart | null> => {
+    const part = await form.next();
+    if (part?.kind === 'file') {
+      files += 1;
+      if (files > limits.maxFiles) throw limitExceeded('max_files', limits.maxFiles);
+    }
+    return part;
+  };
 
+  let head: FormHead;
+  try {
+    head = await readFormHead(next);
+  } catch (error) {
+    form.destroy();
+    throw error;
+  }
+  return ingestStreamed(
+    deps,
+    toPublishTarget(head.fields.target),
+    { ...opts, message: messageOf(head.fields.message) },
+    budget,
+    () => form.destroy(),
+    (sink) => storeFormFiles(head, next, sink),
+  );
+}
+
+/** Reads the fields that come before the first file, and that file. */
+async function readFormHead(next: () => Promise<FormPart | null>): Promise<FormHead> {
   let target: string | null = null;
   let message: string | undefined;
-  const paths: string[] = [];
-  const files: File[] = [];
-  for (const [name, value] of form.entries()) {
-    if (typeof value === 'string') {
-      if (name === 'target') target = value;
-      else if (name === 'message') message = value;
-      else if (name === 'path') paths.push(value);
-    } else if (name === 'file') {
-      files.push(value);
+  let path: string | null = null;
+  for (;;) {
+    const part = await next();
+    if (part === null) throw uploadFormError();
+    if (part.kind === 'field') {
+      if (part.name === 'target') target = part.value;
+      else if (part.name === 'message') message = part.value;
+      else if (part.name === 'path') {
+        if (path !== null) throw uploadFormError();
+        path = part.value;
+      }
+    } else if (part.name !== 'file') {
+      part.body.resume();
+    } else {
+      if (target === null) throw uploadFormError();
+      return { fields: parseUploadFields(target, message), path, file: part };
     }
   }
-  if (target === null || files.length === 0) throw formError();
-  if (paths.length > 0 && paths.length !== files.length) throw formError();
+}
 
+function parseUploadFields(
+  target: string,
+  message: string | undefined,
+): z.infer<typeof UploadFields> {
   let targetJson: unknown;
   try {
     targetJson = JSON.parse(target);
@@ -254,40 +298,41 @@ async function readUploadForm(c: Context<AppEnv>): Promise<UploadForm> {
       })),
     });
   }
-  return { fields: parsed.data, paths, files };
+  return parsed.data;
 }
 
-/** Publishes a web upload: one archive part is unpacked, anything else is a set of files. */
-async function publishForm(
-  c: Context<AppEnv>,
-  form: UploadForm,
-  opts: PublishOptions,
-): Promise<PublishOutcome> {
-  const { deps } = c.var;
-  const target = toPublishTarget(form.fields.target);
-  const [only] = form.files;
-  if (only !== undefined && form.files.length === 1 && form.paths.length === 0) {
-    if (ARCHIVE_NAME.test(only.name)) {
-      return ingestUpload(
-        deps,
-        target,
-        {
-          body: Readable.fromWeb(only.stream()),
-          contentType: null,
-          contentLength: only.size,
-          filename: null,
-        },
-        opts,
-      );
+/**
+ * Stores the first file, then each later one as it arrives. With `path` fields, every file needs
+ * one right before it; without, each is stored under its filename. A first file named like an
+ * archive, without a `path`, is unpacked instead, and no other file may follow it.
+ */
+async function storeFormFiles(
+  head: FormHead,
+  next: () => Promise<FormPart | null>,
+  sink: FileSink,
+): Promise<void> {
+  const unpack = head.path === null && ARCHIVE_NAME.test(head.file.filename);
+  if (unpack) await sink.archive(head.file.body);
+  else await sink.file(head.path ?? head.file.filename, head.file.body);
+
+  let path: string | null = null;
+  for (let part = await next(); part !== null; part = await next()) {
+    if (part.kind === 'field') {
+      // The fields that describe the publish come first; only paths may follow.
+      if (part.name === 'target' || part.name === 'message') throw uploadFormError();
+      if (part.name !== 'path') continue;
+      if (head.path === null || path !== null) throw uploadFormError();
+      path = part.value;
+    } else if (part.name !== 'file') {
+      part.body.resume();
+    } else {
+      if (unpack) throw badRequest(t('publish.upload.archiveAlone'));
+      if (head.path !== null && path === null) throw uploadFormError();
+      await sink.file(path ?? part.filename, part.body);
+      path = null;
     }
   }
-  const set = await Promise.all(
-    form.files.map(async (file, i) => ({
-      path: form.paths[i] ?? file.name,
-      data: Buffer.from(await file.arrayBuffer()),
-    })),
-  );
-  return ingestFiles(deps, target, set, opts);
+  if (path !== null) throw uploadFormError();
 }
 
 const noStore = { 'Cache-Control': 'no-store' };
@@ -317,12 +362,7 @@ export function registerPublishRoutes(api: OpenAPIHono<AppEnv>): void {
   });
 
   api.openapi(uploadRoute, async (c) => {
-    const form = await readUploadForm(c);
-    const outcome = await publishForm(c, form, {
-      actor: authOf(c).user,
-      source: 'web',
-      message: messageOf(form.fields.message),
-    });
+    const outcome = await publishWebUpload(c, { actor: authOf(c).user, source: 'web' });
     return c.json(toPublishResult(c.var.deps.config, outcome), 201, noStore);
   });
 }

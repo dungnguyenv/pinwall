@@ -202,6 +202,9 @@ importers:
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3
+      busboy:
+        specifier: ^1.6.0
+        version: 1.6.0
       diff:
         specifier: ^9.0.0
         version: 9.0.0
@@ -248,6 +251,9 @@ importers:
       '@types/better-sqlite3':
         specifier: ^9.6.0
         version: 9.6.0
+      '@types/busboy':
+        specifier: ^1.5.5
+        version: 1.5.5
       '@types/markdown-it':
         specifier: ^14.2.0
         version: 14.2.0
@@ -1824,6 +1830,9 @@ packages:
   '@types/better-sqlite3@9.6.0':
     resolution: {integrity: sha512-ZEEwBSgMu7GYJOynoagg5X9JbxfL6dTJDsgViJIqh67jV44kyOr9RXfmFjLK5rzC4MWssP06t9hu/JwGDnUbCg==}
 
+  '@types/busboy@1.5.5':
+    resolution: {integrity: sha512-IwqrfVFxWa23c4WeE7uZswssCqGfvnl5Q7b1pdshbT3HaQDa3UIbJx5BAxtcj9nZYX9tVDArM9TUv9SpvORbpQ==}
+
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
 
@@ -2133,6 +2142,10 @@ packages:
 
   bowser@2.15.0:
     resolution: {integrity: sha512-xic6KSZglg/I4ymp45fdM4GWfYpBK79Fxd/TOvJktlaPgQqqDxvmGwOPZl2V0dyeS3Lj5c180bLhXF43iyAjZQ==}
+
+  busboy@1.6.0:
+    resolution: {integrity: sha512-8SFQbg/0hQ9xy3UNTB0YEnsNBbWfhf7RtnzpL7TkBiTBRfrQ9Fxcnz7VJsleJpyp6rVLvXiuORqjlHi5q+PYuA==}
+    engines: {node: '>=10.16.0'}
 
   bytes@3.1.2:
     resolution: {integrity: sha512-/Nf7TyzTx6S3yRJObOAV7956r8cr2+Oj8AC5dt8wSP3BQAoeX58NoHyCU8P8zGkNXStjTSi6fzO6F0pBdcYbEg==}
@@ -3068,6 +3081,10 @@ packages:
 
   std-env@4.3.0:
     resolution: {integrity: sha512-OtU/EgQ1kIm5KwqQpBC6ZEMXrZRui11w8zgfTWp8cdO9B8OaPsbA8bTHO2P+HNo1VlUTGMVBwPhydu6poeXiag==}
+
+  streamsearch@1.1.0:
+    resolution: {integrity: sha512-Mcc5wHehp9aXz1ax6bZUyY5afg9u2rv5cqQI3mRrYkGC8rW2hM02jWuwjtL++LS5qinSyhj2QfLyNsuc+VsExg==}
+    engines: {node: '>=10.0.0'}
 
   streamx@2.28.1:
     resolution: {integrity: sha512-zEzXb0s5Cds7tqMH6rhZ05lcJydCWiQPEwiNngVqzsxCc962vLY4Uw+mW7od8kDH258k2Uz/JrOkdIAAhSh9VA==}
@@ -4822,6 +4839,10 @@ snapshots:
     dependencies:
       '@types/node': 26.6.6
 
+  '@types/busboy@1.5.5':
+    dependencies:
+      '@types/node': 24.19.2
+
   '@types/chai@5.2.3':
     dependencies:
       '@types/deep-eql': 4.0.2
@@ -5064,6 +5085,10 @@ snapshots:
       - supports-color
 
   bowser@2.15.0: {}
+
+  busboy@1.6.0:
+    dependencies:
+      streamsearch: 1.1.0
 
   bytes@3.1.2: {}
 
@@ -6024,6 +6049,8 @@ snapshots:
   statuses@2.0.2: {}
 
   std-env@4.3.0: {}
+
+  streamsearch@1.1.0: {}
 
   streamx@2.28.1:
     dependencies:
