@@ -37,7 +37,33 @@ test('health probes are logged at debug level only', async () => {
 test('tokens in paths never reach the log', () => {
   expect(loggablePath('/c/abc123/index.html')).toBe('/c/:token/index.html');
   expect(loggablePath('/s/share-secret')).toBe('/s/:token');
+  expect(loggablePath('/s/share-secret/original')).toBe('/s/:token/original');
   expect(loggablePath('/upload/upload-secret')).toBe('/upload/:token');
+  // The share viewer's API carries the share token too.
+  expect(loggablePath('/api/v1/share/share-secret')).toBe('/api/v1/share/:token');
+  expect(loggablePath('/api/v1/share/share-secret/unlock')).toBe('/api/v1/share/:token/unlock');
+  expect(loggablePath('/api/v1/share/share-secret/comments/cmt_1')).toBe(
+    '/api/v1/share/:token/comments/cmt_1',
+  );
+  expect(loggablePath('/api/v1/share/share-secret/events')).toBe('/api/v1/share/:token/events');
+  // Member routes hold ids, not secrets.
+  expect(loggablePath('/api/v1/share-links/shr_1')).toBe('/api/v1/share-links/shr_1');
+  expect(loggablePath('/api/v1/artifacts/art_1/share-links')).toBe(
+    '/api/v1/artifacts/art_1/share-links',
+  );
   expect(loggablePath('/a/art_1/raw')).toBe('/a/art_1/raw');
   expect(loggablePath('/settings/tokens')).toBe('/settings/tokens');
+});
+
+test('a share viewer request is logged without its token', async () => {
+  const info = vi.spyOn(ctx.deps.logger, 'info');
+  const secret = 'S'.repeat(43);
+  for (const path of [`/api/v1/share/${secret}`, `/api/v1/share/${secret}/events`]) {
+    await ctx.request(path);
+  }
+  expect(info.mock.calls.map(([line]) => (line as { path: string }).path)).toEqual([
+    '/api/v1/share/:token',
+    '/api/v1/share/:token/events',
+  ]);
+  expect(JSON.stringify(info.mock.calls)).not.toContain(secret);
 });

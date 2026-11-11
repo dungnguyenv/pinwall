@@ -3,8 +3,11 @@ import type { Config } from '../config/types.ts';
 import type { Logger } from '../lib/logger.ts';
 import { clientIp } from './client-ip.ts';
 
-/** Path segments that are bearer secrets: whoever reads the log could use them. */
-const SECRET_SEGMENT = /^\/(c|s|upload)\/[^/]+/;
+/**
+ * Path segments that are bearer secrets: whoever reads the log could use them. Content grants
+ * (`/c/`), share links (`/s/` and the share viewer's API) and upload URLs carry one.
+ */
+const SECRET_SEGMENT = /^\/(c|s|upload|api\/v1\/share)\/[^/]+/;
 
 /** Probes hit these every few seconds; they are logged only at debug level. */
 const PROBES = new Set(['/healthz', '/readyz']);
