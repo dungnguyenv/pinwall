@@ -78,6 +78,93 @@ test('the token secret is shown once', async () => {
   expect(screen.queryByDisplayValue(NEW_TOKEN_SECRET)).not.toBeInTheDocument();
 });
 
+test('the create dialog cannot be closed while the token is created, nor once its secret shows', async () => {
+  serveAccount();
+  // The server holds the request until the test lets it go.
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  server.use(
+    http.post(`${API}/me/tokens`, async () => {
+      await gate;
+      return HttpResponse.json(
+        { token: fxToken({ id: 'tok_9', name: 'slow' }), secret: NEW_TOKEN_SECRET },
+        { status: 201 },
+      );
+    }),
+  );
+  const { user } = renderRoute('/settings/tokens');
+  const dialog = await openCreate(user);
+  await user.type(dialog.getByRole('textbox', { name: 'Name' }), 'slow');
+  await user.click(dialog.getByRole('button', { name: 'Create token' }));
+
+  // The request is in flight: Cancel, the close button, Escape and a click beside the
+  // dialog would each close it on a token whose secret nobody would then see.
+  // (While it works the button's name has "Loading" in front of it.)
+  await waitFor(() =>
+    expect(dialog.getByRole('button', { name: /Create token/ })).toHaveAttribute(
+      'aria-busy',
+      'true',
+    ),
+  );
+  expect(dialog.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+  expect(dialog.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+  await user.keyboard('{Escape}');
+  await user.click(
+    screen.getByRole('dialog', { name: 'Create an API token' }).parentElement as HTMLElement,
+  );
+  await user.click(dialog.getByRole('button', { name: 'Cancel' }));
+  expect(screen.getByRole('dialog', { name: 'Create an API token' })).toBeInTheDocument();
+
+  // The secret then appears in that same dialog.
+  release();
+  const result = within(await screen.findByRole('dialog', { name: 'Token created' }));
+  expect(result.getByLabelText('Your token')).toHaveValue(NEW_TOKEN_SECRET);
+
+  // With the secret on screen, only Done closes it.
+  expect(result.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+  await user.keyboard('{Escape}');
+  await user.click(
+    screen.getByRole('dialog', { name: 'Token created' }).parentElement as HTMLElement,
+  );
+  expect(screen.getByRole('dialog', { name: 'Token created' })).toBeInTheDocument();
+  await user.click(result.getByRole('button', { name: 'Done' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+});
+
+test('the create dialog closes with Cancel, the close button or Escape before anything is sent', async () => {
+  const { calls } = serveAccount();
+  const { user } = renderRoute('/settings/tokens');
+
+  let dialog = await openCreate(user);
+  await user.click(dialog.getByRole('button', { name: 'Close' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+  dialog = await openCreate(user);
+  await user.click(dialog.getByRole('button', { name: 'Cancel' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+  await openCreate(user);
+  await user.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  expect(calls).toEqual([]);
+});
+
+test('a refused create leaves the dialog closable again', async () => {
+  serveAccount();
+  server.use(http.post(`${API}/me/tokens`, () => apiError(409, 'conflict', 'Over the limit.')));
+  const { user } = renderRoute('/settings/tokens');
+  const dialog = await openCreate(user);
+  await user.type(dialog.getByRole('textbox', { name: 'Name' }), 'x');
+  await user.click(dialog.getByRole('button', { name: 'Create token' }));
+  expect(await dialog.findByText('Over the limit.')).toBeInTheDocument();
+
+  expect(dialog.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+  await user.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+});
+
 test('a token without expiry sends null', async () => {
   const { calls } = serveAccount();
   const { user } = renderRoute('/settings/tokens');

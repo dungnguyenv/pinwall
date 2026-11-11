@@ -188,11 +188,12 @@ test('dialog closes on a backdrop click by default', async () => {
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 });
 
-test('a dialog that refuses dismissal ignores Escape and the backdrop', async () => {
+test('a dialog that refuses dismissal ignores Escape and the backdrop, and has no close button', async () => {
   const user = userEvent.setup();
   render(<DialogHarness dismissible={false} />);
   await user.click(screen.getByRole('button', { name: 'Rename' }));
   const dialog = await screen.findByRole('dialog', { name: 'Rename project' });
+  expect(within(dialog).queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
 
   await user.keyboard('{Escape}');
   await user.click(backdropOf(dialog));

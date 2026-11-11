@@ -78,9 +78,10 @@ export function Dialog({
   footer?: ReactNode;
   children?: ReactNode;
   /**
-   * `false` keeps the dialog open on Escape and on a click beside it, so only
-   * its own buttons close it. For steps whose content is lost once closed,
-   * such as a secret shown once.
+   * `false` keeps the dialog open on Escape, on a click beside it and on its
+   * close button (which is then not shown), so only the buttons passed in
+   * `footer` or `children` close it. For steps whose content is lost once
+   * closed, such as a secret shown once, and for work that is in flight.
    */
   dismissible?: boolean;
   /**
@@ -141,15 +142,17 @@ export function Dialog({
             ) : null}
             {footer ? <div className={FOOTER_CLASS}>{footer}</div> : null}
             {/* Last in the DOM so opening focuses the content, not the close button. */}
-            <RadixDialog.Close asChild>
-              <IconButton
-                label={t('web.common.close')}
-                icon={<X />}
-                size="sm"
-                tooltip={false}
-                className="absolute top-4 right-4 text-fg-muted hover:text-fg"
-              />
-            </RadixDialog.Close>
+            {dismissible ? (
+              <RadixDialog.Close asChild>
+                <IconButton
+                  label={t('web.common.close')}
+                  icon={<X />}
+                  size="sm"
+                  tooltip={false}
+                  className="absolute top-4 right-4 text-fg-muted hover:text-fg"
+                />
+              </RadixDialog.Close>
+            ) : null}
           </RadixDialog.Content>
         </RadixDialog.Overlay>
       </RadixDialog.Portal>

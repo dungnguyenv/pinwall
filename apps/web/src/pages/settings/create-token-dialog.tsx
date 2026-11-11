@@ -95,12 +95,15 @@ export function CreateTokenDialog({
     }
   };
 
+  // While the request runs, closing would leave a token nobody holds the secret of; once the
+  // secret shows, closing drops it for good. Both wait for the button made for it: Done.
+  const locked = pending || created !== null;
+
   return (
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      // Closing drops the secret for good, so it takes Done or the close button.
-      dismissible={created === null}
+      dismissible={!locked}
       title={t(created ? 'web.tokens.createdTitle' : 'web.tokens.createTitle')}
       description={
         created
@@ -115,7 +118,7 @@ export function CreateTokenDialog({
           <Button onClick={() => onOpenChange(false)}>{t('web.tokens.done')}</Button>
         ) : (
           <>
-            <Button variant="secondary" onClick={() => onOpenChange(false)}>
+            <Button variant="secondary" disabled={pending} onClick={() => onOpenChange(false)}>
               {t('web.common.cancel')}
             </Button>
             <Button type="submit" form={formId} loading={pending}>
