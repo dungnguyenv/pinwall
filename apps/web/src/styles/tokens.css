@@ -1,0 +1,141 @@
+/*
+ * Pinwall design tokens.
+ *
+ * Every --pw-* variable is a color. The light values come first; the dark block
+ * below redefines every one of them, and index.css maps each to a Tailwind
+ * color (--pw-canvas -> bg-canvas, text-canvas, ...). Non-color tokens (motion,
+ * layout) follow in their own blocks and use plain names.
+ *
+ * Contrast (WCAG 2.1 AA): fg, fg-muted, accent-text and every status color reach
+ * at least 4.5:1 on canvas, sidebar, surface, surface-muted, selected and on
+ * their own -soft background, in both themes. fg-subtle is for placeholders and
+ * decorative icons only. Each avatar-N-fg reaches 4.5:1 on its avatar-N.
+ * border-strong, the edge of inputs and outlined buttons, reaches 3:1 on canvas,
+ * sidebar, surface and surface-muted (WCAG 1.4.11); border stays a decorative
+ * hairline.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --pw-canvas: #ffffff;
+  --pw-sidebar: #f9f9f9;
+  --pw-surface: #ffffff;
+  --pw-surface-muted: #f4f4f4;
+  --pw-selected: #ececec;
+  --pw-border: #e6e6e6;
+  --pw-border-strong: #878787;
+
+  --pw-fg: #0d0d0d;
+  --pw-fg-muted: #5e5e5e;
+  --pw-fg-subtle: #8f8f8f;
+
+  --pw-primary: #0d0d0d;
+  --pw-primary-fg: #ffffff;
+
+  --pw-accent: #4b56e3;
+  --pw-accent-text: #3a44c4;
+  --pw-accent-soft: #eceefe;
+
+  --pw-danger: #c62828;
+  --pw-danger-fg: #ffffff;
+  --pw-danger-soft: #fdecec;
+  --pw-success: #1f7a3a;
+  --pw-success-soft: #e6f4ea;
+  --pw-warning: #8a5a00;
+  --pw-warning-soft: #fcf1dc;
+
+  --pw-overlay: rgb(0 0 0 / 0.4);
+  --pw-shadow: rgb(0 0 0 / 0.06);
+  --pw-shadow-strong: rgb(0 0 0 / 0.14);
+  --pw-shimmer: rgb(255 255 255 / 0.75);
+
+  --pw-avatar-1: #fde4e4;
+  --pw-avatar-1-fg: #a3222b;
+  --pw-avatar-2: #fde8d7;
+  --pw-avatar-2-fg: #9a3d07;
+  --pw-avatar-3: #faefcb;
+  --pw-avatar-3-fg: #755100;
+  --pw-avatar-4: #dcf3e3;
+  --pw-avatar-4-fg: #1d6b37;
+  --pw-avatar-5: #d5f0ef;
+  --pw-avatar-5-fg: #0f6461;
+  --pw-avatar-6: #dde8fd;
+  --pw-avatar-6-fg: #1f4fb3;
+  --pw-avatar-7: #ebe4fd;
+  --pw-avatar-7-fg: #5b33b8;
+  --pw-avatar-8: #fbe2f1;
+  --pw-avatar-8-fg: #9c2471;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pw-canvas: #1a1a1c;
+    --pw-sidebar: #141416;
+    --pw-surface: #222225;
+    --pw-surface-muted: #2a2a2e;
+    --pw-selected: #313135;
+    --pw-border: #2f2f33;
+    --pw-border-strong: #777780;
+
+    --pw-fg: #ececec;
+    --pw-fg-muted: #a6a6ad;
+    --pw-fg-subtle: #7a7a80;
+
+    --pw-primary: #f2f2f2;
+    --pw-primary-fg: #0d0d0d;
+
+    --pw-accent: #8c95ff;
+    --pw-accent-text: #a5abff;
+    --pw-accent-soft: #262a4d;
+
+    --pw-danger: #f26d6d;
+    --pw-danger-fg: #1a1a1c;
+    --pw-danger-soft: #3b1f21;
+    --pw-success: #4cc27a;
+    --pw-success-soft: #1a3323;
+    --pw-warning: #e0b050;
+    --pw-warning-soft: #382c14;
+
+    --pw-overlay: rgb(0 0 0 / 0.6);
+    --pw-shadow: rgb(0 0 0 / 0.35);
+    --pw-shadow-strong: rgb(0 0 0 / 0.6);
+    --pw-shimmer: rgb(255 255 255 / 0.05);
+
+    --pw-avatar-1: #4a1f24;
+    --pw-avatar-1-fg: #ffb3b8;
+    --pw-avatar-2: #4a2a17;
+    --pw-avatar-2-fg: #ffc29a;
+    --pw-avatar-3: #40341a;
+    --pw-avatar-3-fg: #f2d27a;
+    --pw-avatar-4: #1d3a28;
+    --pw-avatar-4-fg: #8fdcaa;
+    --pw-avatar-5: #173a3a;
+    --pw-avatar-5-fg: #86d9d4;
+    --pw-avatar-6: #1c2c4a;
+    --pw-avatar-6-fg: #a4c3ff;
+    --pw-avatar-7: #2f2450;
+    --pw-avatar-7-fg: #c9b6ff;
+    --pw-avatar-8: #47203a;
+    --pw-avatar-8-fg: #f7b0de;
+  }
+}
+
+/* Motion and layout. */
+:root {
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+
+  --sidebar-width: 264px;
+  --rail-width: 56px;
+  --topbar-height: 52px;
+  --content-library: 1200px;
+  --content-form: 720px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0.01ms;
+    --duration-base: 0.01ms;
+  }
+}

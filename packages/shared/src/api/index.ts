@@ -1,5 +1,6 @@
 export * from './account.ts';
 export * from './admin.ts';
+export * from './admin-config.ts';
 export * from './artifacts.ts';
 export * from './auth.ts';
 export * from './comments.ts';
@@ -8,6 +9,7 @@ export * from './config.ts';
 export * from './content.ts';
 export * from './diff.ts';
 export * from './events.ts';
+export * from './oauth-consent.ts';
 export * from './passkeys.ts';
 export * from './projects.ts';
 export * from './publish.ts';

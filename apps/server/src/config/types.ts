@@ -36,6 +36,8 @@ export interface Config {
     scopes: string[];
     displayName: string;
     extraAuthParams: Record<string, string>;
+    /** `PINWALL_OIDC_ALLOW_HTTP_ISSUER`: an `http:` issuer was explicitly allowed. */
+    allowHttpIssuer: boolean;
     rolesClaim?: string;
     adminGroups: string[];
     memberGroups: string[];

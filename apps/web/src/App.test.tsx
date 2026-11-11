@@ -1,8 +1,9 @@
-import { render, screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { App } from './App.tsx';
+import { renderRoute } from './test/render.tsx';
 
-test('renders the app name', () => {
-  render(<App />);
-  expect(screen.getByText('Pinwall')).toBeInTheDocument();
+test('renders the sign-in page for a signed-out visitor', async () => {
+  const { router } = renderRoute('/', { me: null });
+  expect(await screen.findByRole('heading', { name: /Pinwall/ })).toBeInTheDocument();
+  await waitFor(() => expect(router.state.location.pathname).toBe('/signin'));
 });
