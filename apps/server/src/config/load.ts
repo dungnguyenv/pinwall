@@ -16,6 +16,8 @@ export interface ConfigIo {
 }
 
 const DAY_MS = 86_400_000;
+/** The shortest PINWALL_ACCESS_RECHECK_INTERVAL. */
+const MIN_RECHECK_INTERVAL_MS = 300_000;
 
 interface ParsedOrigin {
   origin: string;
@@ -405,7 +407,10 @@ export function loadConfig(
         custom(parseDuration).pipe(
           z
             .number()
-            .min(1, 'must be greater than zero')
+            .min(
+              MIN_RECHECK_INTERVAL_MS,
+              'must be at least 5m: a shorter interval asks the IdP on nearly every request',
+            )
             .max(DAY_MS, 'must be at most 24h: access is re-checked with the IdP at least daily'),
         ),
       ) ?? 12 * 3_600_000,

@@ -231,11 +231,20 @@ describe('origins', () => {
 });
 
 describe('durations and limits', () => {
-  test('recheck interval cannot exceed 24h', () => {
-    expect(() => loadConfig({ PINWALL_ACCESS_RECHECK_INTERVAL: '25h' })).toThrow(/24h/);
-    expect(loadConfig({ PINWALL_ACCESS_RECHECK_INTERVAL: '24h' }).access.recheckIntervalMs).toBe(
-      86_400_000,
-    );
+  test('recheck interval is between 5m and 24h', () => {
+    const interval = (value: string) =>
+      loadConfig({ PINWALL_ACCESS_RECHECK_INTERVAL: value }).access.recheckIntervalMs;
+    expect(loadConfig({}).access.recheckIntervalMs).toBe(12 * 3_600_000);
+    expect(interval('24h')).toBe(86_400_000);
+    expect(interval('5m')).toBe(300_000);
+    expect(issuesOf({ PINWALL_ACCESS_RECHECK_INTERVAL: '25h' })).toEqual([
+      expect.stringMatching(/^PINWALL_ACCESS_RECHECK_INTERVAL: .*24h/),
+    ]);
+    for (const tooShort of ['299999ms', '1m', '1ms']) {
+      expect(issuesOf({ PINWALL_ACCESS_RECHECK_INTERVAL: tooShort }), tooShort).toEqual([
+        expect.stringMatching(/^PINWALL_ACCESS_RECHECK_INTERVAL: .*5m/),
+      ]);
+    }
     expect(() => loadConfig({ PINWALL_ACCESS_RECHECK_INTERVAL: '0' })).toThrow(
       /PINWALL_ACCESS_RECHECK_INTERVAL/,
     );
