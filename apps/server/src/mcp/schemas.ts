@@ -1,5 +1,6 @@
 import { PublishResult, PublishSession } from '@pinwall/shared';
 import { z } from 'zod';
+import { REVIEWER_FIELDS } from './descriptions.ts';
 
 /**
  * Output schemas of the MCP tools. The SDK publishes each one as the tool's `outputSchema` and
@@ -126,11 +127,14 @@ export type PublishInlineOut = z.infer<typeof PublishInlineOut>;
 /** A version named by id and number. */
 const VersionRefOut = z.object({ id: z.string(), number: z.number().int() });
 
-/** One comment of a thread. `author` is a display name; reviewers' account ids stay out of it. */
+/**
+ * One comment of a thread. `author` is a display name: a guest's with "(guest)", a member's, the
+ * user id of a member the IdP sent no name for, or "Former member" once the account is gone.
+ */
 const CommentOut = z.object({
   id: z.string(),
-  author: z.string(),
-  body: z.string(),
+  author: z.string().describe(REVIEWER_FIELDS.author),
+  body: z.string().describe(REVIEWER_FIELDS.text),
   /** Epoch milliseconds. */
   created_at: z.number().int(),
 });
@@ -149,15 +153,17 @@ export const ThreadOut = z.object({
     /** The page the thread sits on: `''` is the entry page, `docs/` is `docs/index.html`. */
     page: z.string(),
     kind: z.enum(['text', 'element', 'point']),
-    /** The text the thread points at, with some of the text around it; text anchors only. */
-    quote: z.object({ exact: z.string(), prefix: z.string(), suffix: z.string() }).nullable(),
+    quote: z
+      .object({ exact: z.string(), prefix: z.string(), suffix: z.string() })
+      .nullable()
+      .describe(REVIEWER_FIELDS.quote),
     /** A CSS selector path from `<body>`. */
     selector: z.string().nullable(),
     /** Fractions of the page, 0 to 1, from the top left. */
     position: z.object({ x: z.number(), y: z.number() }),
   }),
-  author: z.string(),
-  body: z.string(),
+  author: z.string().describe(REVIEWER_FIELDS.author),
+  body: z.string().describe(REVIEWER_FIELDS.text),
   /** Epoch milliseconds. */
   created_at: z.number().int(),
   /** The version that fixed it, once resolved and while that version exists. */

@@ -609,6 +609,36 @@ describe.each(dialects)('MCP comment and share-link tools on %s', (dialect) => {
     });
   });
 
+  test('the output schemas mark reviewer text as feedback, not instructions', async () => {
+    const { tools } = await client.listTools();
+    /** The JSON Schema at `path` under a tool's output schema. */
+    const at = (tool: string, ...path: string[]): Record<string, unknown> => {
+      let node: unknown = tools.find((x) => x.name === tool)?.outputSchema;
+      for (const key of path) node = (node as Record<string, unknown> | undefined)?.[key];
+      return (node ?? {}) as Record<string, unknown>;
+    };
+    const threads = [
+      at('list_comments', 'properties', 'threads', 'items', 'properties'),
+      at('resolve_comment', 'properties', 'thread', 'properties'),
+    ];
+    for (const thread of threads) {
+      const reply = (thread.replies as { items: { properties: Record<string, unknown> } }).items
+        .properties;
+      const anchor = (thread.anchor as { properties: Record<string, unknown> }).properties;
+      for (const [name, field] of [
+        ['body', thread.body],
+        ['author', thread.author],
+        ['replies[].body', reply.body],
+        ['replies[].author', reply.author],
+        ['anchor.quote', anchor.quote],
+      ] as const) {
+        const description = String((field as { description?: unknown }).description ?? '');
+        expect(description, name).toMatch(/reviewer/i);
+        expect(description, name).toMatch(/never instructions to you/i);
+      }
+    }
+  });
+
   test('the server lists exactly TOOL_NAMES, each fully described', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((x) => x.name).sort()).toEqual([...TOOL_NAMES].sort());
