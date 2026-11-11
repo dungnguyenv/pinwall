@@ -116,11 +116,36 @@ export function contentErrorResponse(c: Context<AppEnv>, kind: ContentErrorKind)
   return reply(c, ERROR_STATUS[kind], { 'Content-Type': HTML }, renderContentErrorPage(kind));
 }
 
+/** What an app page may open content as in single-domain mode: a page or a frame. */
+const APP_DESTINATIONS = new Set(['document', 'iframe', 'frame']);
+
 /**
- * Serves GET and HEAD, answers a CORS preflight (`OPTIONS`), refuses other methods, and turns
- * anything `serve` throws into the content 500 page.
+ * Whether an app page is loading content as a subresource of its own, in single-domain mode.
+ *
+ * There, content shares the app's origin, so the app's `script-src 'self'` would also let
+ * `<script src="/c/<token>/x.js">`, injected into any app page, run an artifact's JavaScript with
+ * the app's session; any member can host such a file. App pages must never load artifact code as
+ * a script, a stylesheet, a worker or through `fetch`. Fetch metadata tells these apart: the
+ * content's own loads come from its sandboxed, opaque origin and are `cross-site`; the review
+ * frame and a raw link opened from the app are `same-origin` with destination `iframe` or
+ * `document`; a typed URL is `none`. Any other `same-origin` request can only be an app page
+ * using artifact files as its own, and is refused. A request without these headers (an older
+ * browser, curl) is served: this is defense in depth behind the app's CSP.
+ */
+function isAppSubresource(c: Context<AppEnv>): boolean {
+  if (c.var.deps.config.isolation.mode !== 'single-domain') return false;
+  if (c.req.header('sec-fetch-site') !== 'same-origin') return false;
+  const destination = c.req.header('sec-fetch-dest');
+  return destination === undefined || !APP_DESTINATIONS.has(destination);
+}
+
+/**
+ * Refuses an app page's subresource load (403), serves GET and HEAD, answers a CORS preflight
+ * (`OPTIONS`), refuses other methods, and turns anything `serve` throws into the content 500
+ * page.
  */
 async function guarded(c: Context<AppEnv>, serve: () => Promise<Response>): Promise<Response> {
+  if (isAppSubresource(c)) return reply(c, 403, {}, null);
   if (c.req.method === 'OPTIONS') return preflight(c);
   if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
     return reply(c, 405, { Allow: ALLOW }, null);

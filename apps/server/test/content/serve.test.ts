@@ -408,6 +408,42 @@ describe.each([
     }
   });
 
+  test('app pages cannot load content as a subresource of the app origin', async () => {
+    const { token } = await grantFor({ 'index.html': '<p>x</p>', 'x.js': 'alert(1)' });
+    const as = (site: string, dest: string, path = 'x.js', method = 'GET') =>
+      fetchContent(ctx, token, path, {
+        method,
+        headers: { 'sec-fetch-site': site, 'sec-fetch-dest': dest, 'sec-fetch-mode': 'no-cors' },
+      });
+
+    // What an app page would send for <script src="/c/…">, a stylesheet, fetch(), a worker…
+    for (const dest of ['script', 'style', 'empty', 'image', 'font', 'worker', 'embed', 'object']) {
+      for (const method of ['GET', 'HEAD']) {
+        const r = await as('same-origin', dest, 'x.js', method);
+        expect(r.status, `${dest} ${method}`).toBe(single ? 403 : 200);
+        expectContentHeaders(r);
+        if (single) expect(await r.text()).toBe('');
+      }
+    }
+    if (single) {
+      const root = await ctx.request(`/c/${token}`, {
+        headers: { 'sec-fetch-site': 'same-origin', 'sec-fetch-dest': 'script' },
+      });
+      expect(root.status).toBe(403);
+    }
+
+    // The review frame, a raw link opened from the app, a typed URL, the page's own loads (an
+    // opaque origin is cross-site), and a client that sends no fetch metadata all get through.
+    for (const dest of ['document', 'iframe', 'frame']) {
+      expect((await as('same-origin', dest, 'index.html')).status, dest).toBe(200);
+    }
+    expect((await as('none', 'document', 'index.html')).status).toBe(200);
+    for (const site of ['cross-site', 'same-site']) {
+      expect((await as(site, 'script')).status, site).toBe(200);
+    }
+    expect((await fetchContent(ctx, token, 'x.js')).status).toBe(200);
+  });
+
   test('a sandboxed page can load its own scripts, fonts and data across origins', async () => {
     const { token } = await grantFor({
       'index.html': '<script type="module" src="app.js"></script>',
