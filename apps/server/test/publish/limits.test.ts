@@ -1,5 +1,10 @@
 import { expect, test } from 'vitest';
-import { EXPANSION_FLOOR_BYTES, IngestBudget, limitExceeded } from '../../src/publish/limits.ts';
+import {
+  ENTRIES_PER_FILE,
+  EXPANSION_FLOOR_BYTES,
+  IngestBudget,
+  limitExceeded,
+} from '../../src/publish/limits.ts';
 
 const L = {
   maxUploadBytes: 1000,
@@ -43,6 +48,13 @@ test('file, version and count limits', () => {
   count.startFile('a', 0);
   count.startFile('b', 0);
   expect(() => count.startFile('c', 0)).toThrow(tooLarge({ limit: 'max_files', max: 2 }));
+});
+
+test('archive members of any kind are counted, up to ENTRIES_PER_FILE per allowed file', () => {
+  expect(ENTRIES_PER_FILE).toBe(4);
+  const b = new IngestBudget(L);
+  for (let i = 0; i < 8; i++) b.onArchiveEntry();
+  expect(() => b.onArchiveEntry()).toThrow(tooLarge({ limit: 'max_files', max: 2 }));
 });
 
 test('the per-file count starts again with each file', () => {

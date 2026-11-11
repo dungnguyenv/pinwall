@@ -389,6 +389,42 @@ test('zip methods other than store and deflate are refused', async () => {
   });
 });
 
+describe('members that are not files still count', () => {
+  // Directories and junk never become files, so only this count bounds how many there are.
+  const small = { ...roomy, maxFiles: 5 };
+  const directories = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ name: `d${i}/`, type: 'directory' as const }));
+  const archives = {
+    tar: (n: number) => makeTar(directories(n)),
+    'tar.gz': (n: number) => makeTar(directories(n), { gzip: true }),
+    zip: async (n: number) => makeZip(directories(n)),
+  };
+
+  test.each(['tar', 'tar.gz', 'zip'] as const)(
+    '%s: at most 4 × maxFiles members',
+    async (format) => {
+      let seen = 0;
+      const count = async () => {
+        seen += 1;
+      };
+      await readArchive(
+        Readable.from(await archives[format](20)),
+        format,
+        new IngestBudget(small),
+        count,
+      );
+      expect(seen).toBe(20);
+
+      seen = 0;
+      const many = await archives[format](21);
+      await expect(
+        readArchive(Readable.from(many), format, new IngestBudget(small), count),
+      ).rejects.toMatchObject({ status: 413, details: { limit: 'max_files', max: 5 } });
+      expect(seen).toBe(20);
+    },
+  );
+});
+
 describe('an expansion bomb stops early', () => {
   const bombs = {
     'tar.gz': () => makeTar([{ name: 'z.bin', body: Buffer.alloc(10_000_000) }], { gzip: true }),

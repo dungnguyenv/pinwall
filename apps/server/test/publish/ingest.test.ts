@@ -141,8 +141,9 @@ const REJECTIONS: [string, () => Promise<Buffer>, object][] = [
   ],
   [
     'max_upload_bytes',
-    // 40 × (512-byte header + 1024 bytes of data) = 61 KB of tar, all of it skipped junk.
-    () => withCss(Array.from({ length: 40 }, (_, i) => ({ name: `._pad${i}`, body: bytes(900) }))),
+    // 8 × (512-byte header + 3,072 bytes of data) = 28 KB of tar, all of it skipped junk, in
+    // fewer members than the 4 × max_files any archive may hold.
+    () => withCss(Array.from({ length: 8 }, (_, i) => ({ name: `._pad${i}`, body: bytes(3000) }))),
     { status: 413, details: { limit: 'max_upload_bytes', max: 20000 } },
   ],
   [

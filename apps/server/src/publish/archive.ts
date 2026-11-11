@@ -48,7 +48,8 @@ export function sniffArchive(head: Buffer): ArchiveFormat | null {
 /**
  * Reads `input` as an archive and calls `onEntry` for each member, one at a time and in archive
  * order. `onEntry` must read `body` to the end or stop caring about it; whatever it leaves unread
- * is discarded when it resolves. Decompressed bytes are counted with `budget.onExpandedBytes`.
+ * is discarded when it resolves. Every member is counted with `budget.onArchiveEntry` before
+ * `onEntry` sees it, and decompressed bytes with `budget.onExpandedBytes`.
  *
  * Rejects with the first failure, and only once a running `onEntry` has settled: an error thrown
  * by `onEntry`, by the budget or by `input` as it is; damage, truncation or a decoder error as
@@ -108,6 +109,12 @@ function readTar(
       // or one refused right here) would throw it for want of a listener. Its failures reach the
       // reader through `stop` and the stream's iterator instead.
       stream.on('error', () => {});
+      try {
+        budget.onArchiveEntry();
+      } catch (error) {
+        stop(error);
+        return;
+      }
       // tar-stream lets through a size it could not parse (null), and its entry stream then
       // never ends. Refuse it rather than wait.
       if (!Number.isSafeInteger(header.size) || header.size < 0) {
@@ -240,6 +247,7 @@ function countExpanded(budget: IngestBudget): Transform {
 
 async function readZip(zip: Buffer, budget: IngestBudget, onEntry: EntryHandler): Promise<void> {
   for (const entry of readZipDirectory(zip)) {
+    budget.onArchiveEntry();
     const isFile = entry.type === 'file';
     const body = isFile
       ? Readable.from(zipEntryChunks(zip, entry, budget), { objectMode: false })

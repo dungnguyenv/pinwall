@@ -17,6 +17,12 @@ export type LimitName =
  */
 export const EXPANSION_FLOOR_BYTES = 65_536;
 
+/**
+ * An archive may hold this many members of any kind (directories, links, macOS junk) per file
+ * `max_files` allows. Members that never become files cost time too.
+ */
+export const ENTRIES_PER_FILE = 4;
+
 /** The 413 for one limit, naming its setting; `path` names the file that crossed it. */
 export function limitExceeded(limit: LimitName, max: number, path?: string): AppError {
   const key = `publish.limit.${limit}`;
@@ -36,6 +42,7 @@ export function limitExceeded(limit: LimitName, max: number, path?: string): App
 export class IngestBudget {
   private requestBytes = 0;
   private expandedBytes = 0;
+  private entries = 0;
   private files = 0;
   private versionBytes = 0;
   private file: { path: string; bytes: number } | null = null;
@@ -54,6 +61,13 @@ export class IngestBudget {
     if (this.expandedBytes > ratio * Math.max(this.requestBytes, EXPANSION_FLOOR_BYTES)) {
       throw limitExceeded('max_expansion_ratio', ratio);
     }
+  }
+
+  /** Counts one archive member of any kind, before anything else is done with it. */
+  onArchiveEntry(): void {
+    this.entries += 1;
+    const max = this.limits.maxFiles;
+    if (this.entries > ENTRIES_PER_FILE * max) throw limitExceeded('max_files', max);
   }
 
   /** Opens the next file; `declaredSize` is the size its header claims, when it has one. */
