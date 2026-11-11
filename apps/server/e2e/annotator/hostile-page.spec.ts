@@ -78,3 +78,29 @@ test('the hover outline of a wide element never grows the page', async ({ page }
     .toBe(1);
   expect(await scrollSize(content)).toEqual(before);
 });
+
+test('comment mode ignores the clicks a page makes itself, and swallows them', async ({ page }) => {
+  const content = await openPage(page, 'autoclick.html');
+  const frameValue = (name: 'pageClicks' | 'ticks') =>
+    content
+      .locator('body')
+      .evaluate((_, key) => (globalThis as unknown as Record<string, number>)[key] ?? 0, name);
+  await broadcast(page, { pinwall: 1, type: 'set-mode', mode: 'comment' });
+
+  // A real click picks; it also shows that comment mode is on.
+  const text = content.locator('#text');
+  await expect
+    .poll(async () => {
+      await text.click();
+      return (await receivedOf(page, 'anchor-picked')).some((m) => m.anchor.dom?.path === '#text');
+    })
+    .toBe(true);
+
+  // Meanwhile the page keeps calling next.click() every 50 ms.
+  const clicks = await frameValue('pageClicks');
+  const ticks = await frameValue('ticks');
+  await expect.poll(() => frameValue('ticks')).toBeGreaterThanOrEqual(ticks + 5);
+  expect(await frameValue('pageClicks')).toBe(clicks);
+  const picked = await receivedOf(page, 'anchor-picked');
+  expect(picked.map((m) => m.anchor.dom?.path)).toEqual(picked.map(() => '#text'));
+});

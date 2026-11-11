@@ -24,6 +24,7 @@ import {
   getRangeAt,
   getSelection,
   isCollapsed,
+  isTrusted,
   preventDefault,
   rangeCount,
   removeListener,
@@ -258,13 +259,18 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
     return pointAnchor(ctx, event.clientX, event.clientY);
   };
 
+  /**
+   * In comment mode every click is kept from the page, but only the user's own make an anchor:
+   * pages click themselves (carousels, `el.click()` to open a file input), and such a click must
+   * not replace the spot the reviewer is commenting on.
+   */
   const onClick = (event: MouseEvent) => {
     if (mode !== 'comment') return;
     const target = eventTarget(event);
     if (isOverlay(target)) return;
     preventDefault(event);
     stopImmediatePropagation(event);
-    if (!swallowClick) pick(clickAnchor(event, target));
+    if (!swallowClick && isTrusted(event)) pick(clickAnchor(event, target));
   };
 
   /** Middle clicks would open links in a new tab: comment mode keeps them from the page too. */
@@ -276,6 +282,7 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
 
   const onMouseUp = (event: MouseEvent) => {
     if (mode !== 'comment' || page === null || isOverlay(eventTarget(event))) return;
+    if (!isTrusted(event)) return;
     const selection = getSelection(doc);
     if (selection === null || isCollapsed(selection) || rangeCount(selection) === 0) return;
     const anchor = textAnchor({ doc, page }, getRangeAt(selection, 0));

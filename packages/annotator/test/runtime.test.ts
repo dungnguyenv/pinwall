@@ -10,6 +10,7 @@ import {
   bootOptions,
   click,
   elementAt,
+  mouseUp,
   pointAt,
   quoteAnchor,
   SCRIPT_SRC,
@@ -25,6 +26,12 @@ vi.mock('../src/text-index.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/text-index.ts')>();
   return { ...actual, buildTextIndex: vi.fn(actual.buildTextIndex) };
 });
+// jsdom makes no trusted input events: the user's are the ones the helpers mark (user-events.ts).
+vi.mock('../src/pristine.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/pristine.ts')>();
+  const { isUserEvent } = await import('./helpers/user-events.ts');
+  return { ...actual, isTrusted: isUserEvent };
+});
 
 useRuntime();
 
@@ -35,10 +42,6 @@ function select(text: string): void {
   const selection = document.getSelection();
   selection?.removeAllRanges();
   selection?.addRange(rangeOf(text));
-}
-
-function mouseUp(target: EventTarget): void {
-  target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
 }
 
 /** Records `error` events on the window until the test finishes. */
@@ -180,14 +183,42 @@ test('comment mode swallows clicks before page handlers', () => {
   setMode('comment');
 
   const event = click(link);
-  (link as HTMLAnchorElement).click();
   expect(pageCapture).not.toHaveBeenCalled();
   expect(pageHandler).not.toHaveBeenCalled();
   expect(event.defaultPrevented).toBe(true);
   expect(location.hash).toBe('');
   const picked = sent('anchor-picked');
-  expect(picked).toHaveLength(2);
+  expect(picked).toHaveLength(1);
   expect(picked[0]?.anchor).toMatchObject({ kind: 'element', dom: { path: '#l' } });
+});
+
+test('comment mode picks only what the user does, and swallows script clicks too', async () => {
+  start();
+  const link = el('#l');
+  const pageHandler = vi.fn();
+  link.addEventListener('click', pageHandler);
+  setMode('comment');
+
+  // An auto-advancing carousel clicks for itself; other scripts dispatch their own events.
+  (link as HTMLAnchorElement).click();
+  const synthetic = new MouseEvent('click', { bubbles: true, cancelable: true });
+  el('#p1').dispatchEvent(synthetic);
+  select('beta gamma');
+  el('#p1').dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+  expect(pageHandler).not.toHaveBeenCalled();
+  expect(synthetic.defaultPrevented).toBe(true);
+  expect(location.hash).toBe('');
+  expect(sent('anchor-picked')).toEqual([]);
+
+  // The user's own selection and click still pick.
+  mouseUp(el('#p1'));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  document.getSelection()?.removeAllRanges();
+  click(link);
+  expect(sent('anchor-picked').map((m) => (m.anchor as { kind: string }).kind)).toEqual([
+    'text',
+    'element',
+  ]);
 });
 
 test('comment mode: alt-click, clicks on body and clicks on page-sized boxes are point anchors', () => {

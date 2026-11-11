@@ -44,6 +44,11 @@ function getter(owner: object | undefined, name: string): AnyFunction {
   }
 }
 
+/** `object` when `name` is its own property, else undefined. */
+function ownerOf(object: object | undefined, name: string): object | undefined {
+  return object !== undefined && Object.hasOwn(object, name) ? object : undefined;
+}
+
 const EventTargetProto = typeof EventTarget === 'function' ? EventTarget.prototype : undefined;
 const EventProto = typeof Event === 'function' ? Event.prototype : undefined;
 const MessageEventProto = typeof MessageEvent === 'function' ? MessageEvent.prototype : undefined;
@@ -93,6 +98,17 @@ export const stopImmediatePropagation: (event: Event) => void = method(
   'stopImmediatePropagation',
 );
 export const stopPropagation: (event: Event) => void = method(EventProto, 'stopPropagation');
+/**
+ * Whether the browser made `event` for a real user action, not a script (`el.click()`,
+ * `dispatchEvent`). `isTrusted` is an own, non-configurable property of every event, so the page
+ * cannot redefine it; its getter is taken from an event made here (from `Event.prototype` in an
+ * environment that keeps it there).
+ */
+export const isTrusted: (event: Event) => boolean = getter(
+  ownerOf(typeof Event === 'function' ? new Event('pinwall') : undefined, 'isTrusted') ??
+    EventProto,
+  'isTrusted',
+);
 /** The event's target as the current listener sees it (retargeted out of shadow trees). */
 export const eventTarget: (event: Event) => EventTarget | null = getter(EventProto, 'target');
 export const messageSource: (event: MessageEvent) => MessageEventSource | null = getter(
