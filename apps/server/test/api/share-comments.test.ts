@@ -407,6 +407,67 @@ describe.each(dialects)('guest comments through share links on %s', (dialect) =>
     expect((await listed(token)).items).toHaveLength(4);
   });
 
+  test('share viewers see names, never account ids or emails', async () => {
+    // A name the IdP filled in from the email shows as the part before the `@`.
+    const mai = await createSignedInUser(ctx, { kind: 'oidc', name: 'Mai.Tran@Example.test' });
+    const thread = await postThread(ctx, mai.cookie, artifactId, { versionId: v1.id });
+    const replied = await restClient(ctx, member.cookie).post(`/comments/${thread.id}/replies`, {
+      body: 'Đã sửa',
+    });
+    expect(replied.status).toBe(201);
+    const v2 = await publishV2();
+    const resolved = await restClient(ctx, member.cookie).post(`/comments/${thread.id}/resolve`, {
+      version_id: v2.id,
+    });
+    expect(resolved.status).toBe(200);
+    const pinned = await share({ versionId: v1.id });
+
+    const secrets = [member.user.id, mai.user.id, member.user.email, mai.user.email, v2.id];
+    const expectNoSecrets = (body: unknown) => {
+      const json = JSON.stringify(body);
+      for (const secret of secrets) expect(json).not.toContain(secret);
+    };
+    const members = { type: 'member', user_id: null };
+
+    // A link on v1 knows the thread was resolved, not in which (newer) version.
+    const [seen] = (await listed(pinned.token)).items;
+    expect(seen).toMatchObject({
+      id: thread.id,
+      author: { ...members, name: 'Mai.Tran' },
+      replies: [{ author: { ...members, name: 'Linh' }, body: 'Đã sửa' }],
+      status: 'resolved',
+      resolved_in_version: null,
+      resolved_by: { user_id: null, name: 'Linh' },
+      resolved_at: clock.now(),
+    });
+    expectNoSecrets(seen);
+
+    // A guest's reply comes back with the thread, as redacted.
+    const g = await created(await guestReply(pinned.token, thread.id, newReply()));
+    expect(g.thread).toMatchObject({
+      author: { ...members, name: 'Mai.Tran' },
+      resolved_in_version: null,
+      replies: [{ author: { ...members, name: 'Linh' } }, { author: { type: 'guest' } }],
+    });
+    expectNoSecrets(g);
+
+    // A link that shows v2 also shows the version the thread was resolved in.
+    const [current] = (await listed(token)).items;
+    expect(current).toMatchObject({
+      author: { ...members, name: 'Mai.Tran' },
+      resolved_in_version: { id: v2.id, number: 2 },
+      resolved_by: { user_id: null, name: 'Linh' },
+    });
+    expectNoSecrets({ ...current, resolved_in_version: null });
+
+    // Members still see who is who.
+    const own = await restClient(ctx, member.cookie).get(`/artifacts/${artifactId}/comments`);
+    expect(CommentThreadList.parse(own.body).items[0]).toMatchObject({
+      author: { type: 'member', user_id: mai.user.id, name: 'Mai.Tran@Example.test' },
+      resolved_by: { user_id: member.user.id, name: 'Linh' },
+    });
+  });
+
   test('share viewers filter and page threads', async () => {
     const a = await postThread(ctx, member.cookie, artifactId);
     clock.advance(1000);

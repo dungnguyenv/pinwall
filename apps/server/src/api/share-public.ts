@@ -26,6 +26,8 @@ import {
   issueGuestToken,
   listThreads,
   type ShareScope,
+  sharedComment,
+  sharedThread,
 } from '../domain/comments.ts';
 import {
   readUnlockCookie,
@@ -74,7 +76,7 @@ const commentLinkErrors = {
   410: linkErrors[410],
 };
 const guestNote =
-  'Needs no account: the share token and, for a link with a password, the unlock cookie authorize it. The link must allow comments.';
+  'Needs no account: the share token and, for a link with a password, the unlock cookie authorize it. The link must allow comments. Members appear by name only (`user_id` is always null), and a thread resolved in a version newer than the one the link shows has no `resolved_in_version`.';
 
 /**
  * Share info makes a content grant each time, so opening it counts per link and address: under
@@ -287,7 +289,9 @@ export function registerSharePublicRoutes(api: OpenAPIHono<AppEnv>): void {
       limit,
       cursor: cursor ?? null,
     });
-    return c.json({ items, next_cursor: nextCursor }, 200, noStore);
+    const shown = s.version.number;
+    const shared = items.map((thread) => sharedThread(thread, shown));
+    return c.json({ items: shared, next_cursor: nextCursor }, 200, noStore);
   });
 
   api.openapi(guestThreadRoute, async (c) => {
@@ -301,7 +305,15 @@ export function registerSharePublicRoutes(api: OpenAPIHono<AppEnv>): void {
       versionId: s.version.id,
     });
     const guestToken = await issueGuestToken(deps, thread.id, s.link.id);
-    return c.json({ thread, comment_id: thread.id, guest_token: guestToken }, 201, noStore);
+    return c.json(
+      {
+        thread: sharedThread(thread, s.version.number),
+        comment_id: thread.id,
+        guest_token: guestToken,
+      },
+      201,
+      noStore,
+    );
   });
 
   api.openapi(guestReplyRoute, async (c) => {
@@ -313,7 +325,15 @@ export function registerSharePublicRoutes(api: OpenAPIHono<AppEnv>): void {
     const { guest_name, body } = c.req.valid('json');
     const { thread, comment } = await addReply(deps, guestWriter(s, guest_name), id, body);
     const guestToken = await issueGuestToken(deps, comment.id, s.link.id);
-    return c.json({ thread, comment_id: comment.id, guest_token: guestToken }, 201, noStore);
+    return c.json(
+      {
+        thread: sharedThread(thread, s.version.number),
+        comment_id: comment.id,
+        guest_token: guestToken,
+      },
+      201,
+      noStore,
+    );
   });
 
   api.openapi(guestEditRoute, async (c) => {
@@ -325,7 +345,7 @@ export function registerSharePublicRoutes(api: OpenAPIHono<AppEnv>): void {
     const guestToken = c.req.valid('header')[GUEST_TOKEN_HEADER];
     const { body } = c.req.valid('json');
     const { comment } = await editComment(deps, guestChanger(s, guestToken), id, body);
-    return c.json(comment, 200, noStore);
+    return c.json(sharedComment(comment), 200, noStore);
   });
 
   api.openapi(guestDeleteRoute, async (c) => {

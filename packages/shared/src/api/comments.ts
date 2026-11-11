@@ -33,11 +33,17 @@ export type GuestName = z.infer<typeof GuestName>;
 export const VersionRef = z.object({ id: z.string(), number: z.number().int() });
 export type VersionRef = z.infer<typeof VersionRef>;
 
-/** A member; both fields are null once their account is deleted. */
+/**
+ * A member; both fields are null once their account is deleted. Share-link viewers get no
+ * `user_id`, ever: it is null for them.
+ */
 export const UserRef = z.object({ user_id: z.string().nullable(), name: z.string().nullable() });
 export type UserRef = z.infer<typeof UserRef>;
 
-/** Who wrote a comment: a member (null fields once their account is deleted) or a guest. */
+/**
+ * Who wrote a comment: a member (null fields once their account is deleted; `user_id` always
+ * null for share-link viewers) or a guest.
+ */
 export const CommentAuthor = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('member'),
@@ -67,8 +73,9 @@ export type Comment = z.infer<typeof Comment>;
 
 /**
  * A thread: its first comment, where it points, whether it is resolved, and its replies, oldest
- * first. `resolved_in_version` is null when the thread is open, or when the version it was
- * resolved in has since been deleted.
+ * first. `resolved_in_version` is null when the thread is open, when the version it was resolved
+ * in has since been deleted, or, for share-link viewers, when that version is newer than the one
+ * the link shows.
  */
 export const CommentThread = Comment.extend({
   anchor: Anchor,

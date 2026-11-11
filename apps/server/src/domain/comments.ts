@@ -1,4 +1,4 @@
-import type { Comment, CommentThread } from '@pinwall/shared';
+import type { Comment, CommentAuthor, CommentThread } from '@pinwall/shared';
 import type { Anchor } from '@pinwall/shared/protocol';
 import type { Transaction } from 'kysely';
 import { z } from 'zod';
@@ -74,6 +74,42 @@ export async function guestMayChange(
 export interface ShareScope {
   artifactId: string;
   maxVersionNumber: number;
+}
+
+/** A name that is a whole email address, as an IdP that sends no name leaves it. */
+const EMAIL_NAME = /^([^\s@]+)@[^\s@]+$/;
+
+/** A member's name as share viewers see it: an email address shows as the part before `@`. */
+function sharedName(name: string | null): string | null {
+  if (name === null) return null;
+  return EMAIL_NAME.exec(name)?.[1] ?? name;
+}
+
+function sharedAuthor(author: CommentAuthor): CommentAuthor {
+  if (author.type === 'guest') return { type: 'guest', name: author.name };
+  return { type: 'member', user_id: null, name: sharedName(author.name) };
+}
+
+/** A comment as share-link viewers see it: members by name only, never an account id or email. */
+export function sharedComment(comment: Comment): Comment {
+  return { ...comment, author: sharedAuthor(comment.author) };
+}
+
+/**
+ * A thread as the viewers of a share link that shows version `shownNumber` see it: members by
+ * name only, as `sharedComment` has them, and the version it was resolved in only when that is
+ * not newer than the link's, so a newer one leaves just "resolved".
+ */
+export function sharedThread(thread: CommentThread, shownNumber: number): CommentThread {
+  const { resolved_in_version: resolvedIn, resolved_by: resolver } = thread;
+  return {
+    ...thread,
+    author: sharedAuthor(thread.author),
+    resolved_in_version:
+      resolvedIn !== null && resolvedIn.number <= shownNumber ? resolvedIn : null,
+    resolved_by: resolver === null ? null : { user_id: null, name: sharedName(resolver.name) },
+    replies: thread.replies.map(sharedComment),
+  };
 }
 
 /**
