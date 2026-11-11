@@ -522,6 +522,7 @@ function Review({
           phone={phone}
           meId={me.id}
           shown={shown}
+          follow={view.follow}
           versions={versions}
           versionList={versionList}
           older={older}

@@ -1,10 +1,7 @@
 import type { InfiniteData, UseInfiniteQueryResult } from '@tanstack/react-query';
 import {
   ChevronRight,
-  Ellipsis,
   GitCompareArrows,
-  Keyboard,
-  Maximize,
   MessageSquare,
   MessageSquarePlus,
   Share,
@@ -22,16 +19,13 @@ import {
   cn,
   IconButton,
   Kbd,
-  Menu,
-  MenuContent,
   MenuItem,
-  MenuSeparator,
-  MenuTrigger,
   Skeleton,
   Tooltip,
 } from '../../ui/index.ts';
 import type { Device } from '../frame/device.ts';
 import { DevicePicker } from './device-picker.tsx';
+import { ReviewMenu } from './review-menu.tsx';
 import { keysOf } from './shortcuts.ts';
 import { VersionSwitcher } from './version-switcher.tsx';
 
@@ -41,6 +35,8 @@ export interface TopBarProps {
   meId: string;
   /** The version shown; null while none is. */
   shown: number | null;
+  /** Whether the review follows the latest version rather than one chosen in the address. */
+  follow: boolean;
   versions: UseInfiniteQueryResult<InfiniteData<VersionList>, ApiError>;
   versionList: VersionSummary[];
   older: number | null;
@@ -165,53 +161,6 @@ function CommentsToggle({
 }
 
 /**
- * More actions: full screen and the keyboard shortcuts, and on phones Compare
- * and Share, which the bar has no room for there.
- */
-function MoreMenu({
-  phone,
-  compareHref,
-  onFullScreen,
-  onShortcuts,
-}: {
-  phone: boolean;
-  compareHref: string;
-  onFullScreen(): void;
-  onShortcuts(): void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <Menu>
-      <MenuTrigger asChild>
-        <IconButton
-          label={t('web.review.more')}
-          icon={<Ellipsis />}
-          size="sm"
-          tooltipSide="bottom"
-        />
-      </MenuTrigger>
-      <MenuContent align="end">
-        {phone ? (
-          <>
-            <MenuItem asChild icon={<GitCompareArrows />}>
-              <Link to={compareHref}>{t('web.review.compare')}</Link>
-            </MenuItem>
-            <MenuItem icon={<Share />}>{t('web.review.share')}</MenuItem>
-            <MenuSeparator />
-          </>
-        ) : null}
-        <MenuItem icon={<Maximize />} shortcut={keysOf('fullScreen')} onSelect={onFullScreen}>
-          {t('web.review.fullScreen')}
-        </MenuItem>
-        <MenuItem icon={<Keyboard />} shortcut={keysOf('shortcuts')} onSelect={onShortcuts}>
-          {t('web.shortcuts.title')}
-        </MenuItem>
-      </MenuContent>
-    </Menu>
-  );
-}
-
-/**
  * The review screen's slim bar. Left: where the artifact lives and its name,
  * then the version. Right: screen sizes, Compare, comment mode, comments,
  * Share and More actions. On a phone it keeps the name, the version, comment
@@ -220,6 +169,10 @@ function MoreMenu({
 export function TopBar(p: TopBarProps) {
   const { t } = useTranslation();
   const commentKeys = keysOf('commentMode');
+  // The versions read so far; a next page means there are more than the first page holds.
+  const versionCount = p.versions.hasNextPage
+    ? Math.max(p.versionList.length, 2)
+    : p.versionList.length;
   return (
     <header className="flex h-(--topbar-height) shrink-0 items-center gap-1 border-border border-b bg-canvas px-2 md:gap-1.5 md:px-3">
       <Breadcrumb artifact={p.artifact} phone={p.phone} />
@@ -278,11 +231,23 @@ export function TopBar(p: TopBarProps) {
           {t('web.review.share')}
         </Button>
       )}
-      <MoreMenu
-        phone={p.phone}
-        compareHref={p.compareHref}
+      <ReviewMenu
+        artifact={p.artifact}
+        shown={p.shown}
+        follow={p.follow}
+        versionCount={versionCount}
         onFullScreen={p.onFullScreen}
         onShortcuts={p.onShortcuts}
+        extra={
+          p.phone ? (
+            <>
+              <MenuItem asChild icon={<GitCompareArrows />}>
+                <Link to={p.compareHref}>{t('web.review.compare')}</Link>
+              </MenuItem>
+              <MenuItem icon={<Share />}>{t('web.review.share')}</MenuItem>
+            </>
+          ) : undefined
+        }
       />
     </header>
   );

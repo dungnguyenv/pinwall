@@ -1,5 +1,6 @@
 import {
   type InfiniteData,
+  type QueryClient,
   skipToken,
   type UseInfiniteQueryResult,
   type UseQueryResult,
@@ -119,4 +120,19 @@ export function deleteVersion(artifactId: string, n: number): Promise<void> {
 
 export function deleteArtifact(artifactId: string): Promise<void> {
   return api(`/artifacts/${encodeURIComponent(artifactId)}`, { method: 'DELETE' });
+}
+
+/**
+ * Reads again what a restored or deleted version changed: the artifact (its
+ * current version), the version list, the threads and every artifact list. It
+ * waits for the artifact and the versions, so a page that navigates next shows
+ * the new current version at once instead of the old one for a moment.
+ */
+export async function refreshVersions(queryClient: QueryClient, artifactId: string): Promise<void> {
+  void queryClient.invalidateQueries({ queryKey: qk.threads({ kind: 'artifact', artifactId }) });
+  void queryClient.invalidateQueries({ queryKey: qk.artifactLists });
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: qk.artifact(artifactId) }),
+    queryClient.invalidateQueries({ queryKey: qk.versions(artifactId) }),
+  ]);
 }
