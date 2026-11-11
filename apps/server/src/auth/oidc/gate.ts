@@ -20,18 +20,24 @@ export function isRecheckDue(user: UserRow, now: number, config: Config): boolea
 }
 
 /**
- * Whether the last IdP check of `user` is recent enough to act on. With a refresh token Pinwall
- * can re-check, so access survives an IdP outage up to `MAX_IDP_STALENESS_MS`; without one it
- * cannot, so access ends when a re-check falls due and the person signs in again. Non-IdP users
- * (the owner) are always current.
+ * When the last IdP check of `user` stops being recent enough to act on. With a refresh token
+ * Pinwall can re-check, so access survives an IdP outage up to `MAX_IDP_STALENESS_MS` after the
+ * check; without one it cannot, so access ends when a re-check falls due and the person signs in
+ * again. A user never checked has no access: 0. Null for non-IdP users (the owner), whose access
+ * never depends on the IdP. Anything handed to an IdP user (a content grant) ends by then.
  */
+export function idpAccessDeadline(user: UserRow, config: Config): number | null {
+  if (user.kind !== 'oidc') return null;
+  if (user.idp_checked_at === null) return 0;
+  const bound =
+    user.idp_refresh_token !== null ? MAX_IDP_STALENESS_MS : config.access.recheckIntervalMs;
+  return user.idp_checked_at + bound;
+}
+
+/** Whether the last IdP check of `user` is still current: before `idpAccessDeadline`. */
 export function idpAccessCurrent(user: UserRow, now: number, config: Config): boolean {
-  if (user.kind !== 'oidc') return true;
-  if (user.idp_checked_at === null) return false;
-  const age = now - user.idp_checked_at;
-  return user.idp_refresh_token !== null
-    ? age < MAX_IDP_STALENESS_MS
-    : age < config.access.recheckIntervalMs;
+  const deadline = idpAccessDeadline(user, config);
+  return deadline === null || now < deadline;
 }
 
 export type GateResult = { ok: true; user: UserRow } | { ok: false };
