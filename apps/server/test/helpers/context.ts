@@ -26,11 +26,17 @@ export interface TestContext {
 /**
  * A complete app on a fresh temp data dir: migrated database (SQLite in the data dir, or a new
  * Postgres database on the test server, with a random `PINWALL_SECRET_KEY`), local blobs, a
- * silent logger unless `PINWALL_LOG_LEVEL` is given. A `PINWALL_DATA_DIR` passed in `env` is used
- * and left in place on close.
+ * silent logger unless `PINWALL_LOG_LEVEL` is given. With `log`, every line the logger writes,
+ * at any level, goes there as written. A `PINWALL_DATA_DIR` passed in `env` is used and left in
+ * place on close.
  */
 export async function createTestContext(
-  opts: { env?: Record<string, string>; dialect?: DbDialect; clock?: FixedClock } = {},
+  opts: {
+    env?: Record<string, string>;
+    dialect?: DbDialect;
+    clock?: FixedClock;
+    log?: (line: string) => void;
+  } = {},
 ): Promise<TestContext> {
   const given = opts.env ?? {};
   const cleanups: (() => Promise<unknown>)[] = [];
@@ -59,7 +65,9 @@ export async function createTestContext(
     Object.assign(env, given);
 
     const config = loadConfig(env);
-    const logger = createLogger(given.PINWALL_LOG_LEVEL === undefined ? 'silent' : config.logLevel);
+    const logger = opts.log
+      ? createLogger('trace', { write: opts.log })
+      : createLogger(given.PINWALL_LOG_LEVEL === undefined ? 'silent' : config.logLevel);
     deps = await createDeps(config, { logger, ...(opts.clock ? { clock: opts.clock } : {}) });
   } catch (error) {
     await cleanUp();

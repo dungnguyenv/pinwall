@@ -11,6 +11,7 @@ import { FixedClock } from '../../src/lib/clock.ts';
 import { hashSecret } from '../../src/lib/ids.ts';
 import type {
   CreatePublishSessionOut,
+  CreateShareLinkOut,
   GetArtifactOut,
   ListArtifactsOut,
   ListCommentsOut,
@@ -32,6 +33,7 @@ import {
   TestOAuthProvider,
   toolText,
 } from '../helpers/mcp.ts';
+import { approve, consentRequestId, tokenRequest } from '../helpers/oauth.ts';
 import { signInOidcUser } from '../helpers/oidc-browser.ts';
 import { startTestIdp, type TestIdp } from '../helpers/oidc-idp.ts';
 import { postThread, sampleAnchor } from '../helpers/review.ts';
@@ -43,6 +45,8 @@ const ACCESS_TOKEN_MS = 3_600_000;
 const IDP_STALENESS_MS = 86_400_000;
 /** After an IdP check fails, the next one waits this long. */
 const IDP_RETRY_BACKOFF_MS = 60_000;
+/** A used refresh token presented again after this long revokes its grant. */
+const REFRESH_REUSE_GRACE_MS = 120_000;
 /** Where the agent's browser comes back to: a loopback listener, as Claude Code registers. */
 const REDIRECT_URL = 'http://127.0.0.1:33418/callback';
 /** One test walks the whole flow (dozens of requests, one password hash): room on a loaded machine. */
@@ -55,6 +59,7 @@ interface Outputs {
   list_artifacts: ListArtifactsOut;
   get_artifact: GetArtifactOut;
   create_publish_session: CreatePublishSessionOut;
+  create_share_link: CreateShareLinkOut;
   publish_inline: PublishInlineOut;
   list_comments: ListCommentsOut;
   reply_to_comment: ReplyToCommentOut;
@@ -378,6 +383,7 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
     },
     FLOW_TIMEOUT_MS,
   );
+
   test(
     'keeps its tokens through an IdP outage and works again without a browser once the IdP is back',
     async () => {
@@ -448,6 +454,146 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
       ]);
       expect(provider.authorizationUrl).toBeNull();
       expect((await provider.tokens())?.refresh_token).not.toBe(held.refresh_token);
+    },
+    FLOW_TIMEOUT_MS,
+  );
+
+  test(
+    'never writes a token, code, verifier, upload URL or consent request id to the log',
+    async () => {
+      const lines: string[] = [];
+      const clock = new FixedClock(T);
+      const app = await createTestContext({ dialect, clock, log: (line) => lines.push(line) });
+      ctx = app;
+      const owner = await setupOwner(app);
+
+      // Every secret the flow handles, as the agent, its browser and its shell see them.
+      const secrets = new Map<string, string>();
+      const keep = (what: string, value: string | null | undefined) => {
+        if (!value) throw new Error(`the flow handed out no ${what}`);
+        secrets.set(value, what);
+      };
+      const base = inProcessFetch(app);
+      const fetch: FetchLike = async (url, init) => {
+        const res = await base(url, init);
+        if (new URL(url).pathname === '/oauth/token') {
+          const form = new URLSearchParams(String(init?.body));
+          for (const name of ['code', 'code_verifier', 'refresh_token']) {
+            const value = form.get(name);
+            if (value) keep(name, value);
+          }
+          if (res.ok) {
+            const issued = (await res.clone().json()) as Record<string, string>;
+            keep('access token', issued.access_token);
+            keep('refresh token', issued.refresh_token);
+          }
+        }
+        return res;
+      };
+      const provider = new TestOAuthProvider({
+        redirectUrl: REDIRECT_URL,
+        clientName: 'Claude Code',
+      });
+
+      // Sign-in: registration, authorize, the consent page, the code exchange.
+      const first = mcpTransport(app, { authProvider: provider, fetch });
+      await expect(
+        new Client({ name: 'pinwall-agent-flow', version: '0.0.0' }).connect(first),
+      ).rejects.toBeInstanceOf(UnauthorizedError);
+      const authorizationUrl = provider.authorizationUrl;
+      if (authorizationUrl === null) throw new Error('the SDK never sent the browser anywhere');
+      keep('code_challenge', authorizationUrl.searchParams.get('code_challenge'));
+      keep('state', authorizationUrl.searchParams.get('state'));
+      const requestId = await consentRequestId(await app.request(authorizationUrl.href));
+      keep('consent request id', requestId);
+      const asCookie = apiInit(app, { cookie: owner.cookie });
+      expect(
+        (await app.request(`${ORIGIN}/api/v1/oauth/requests/${requestId}`, asCookie)).status,
+      ).toBe(200);
+      const decided = await app.request(
+        `${ORIGIN}/api/v1/oauth/requests/${requestId}/decision`,
+        apiInit(app, { cookie: owner.cookie, body: { approve: true } }),
+      );
+      const code = new URL(
+        ((await decided.json()) as { redirect_to: string }).redirect_to,
+      ).searchParams.get('code');
+      keep('code', code);
+      await first.finishAuth(code ?? '');
+      const clientId = (await provider.clientInformation())?.client_id ?? '';
+
+      // Publishing: an upload URL used, then replayed; a share link made and opened; inline.
+      client = await connectMcp(app, { authProvider: provider, fetch });
+      const session = await ok(client, 'create_publish_session', { directory: './site' });
+      const uploadUrl = session.structuredContent.upload_url;
+      keep('upload token', new URL(uploadUrl).pathname.split('/').pop());
+      const body = await siteTar('<h1>Hello</h1>');
+      const uploaded = await app.request(uploadUrl, { method: 'POST', body });
+      expect(uploaded.status).toBe(201);
+      const { artifact_id } = PublishResult.parse(await uploaded.json());
+      expect((await app.request(uploadUrl, { method: 'POST', body })).ok).toBe(false);
+      keep('share password', 'correct horse battery');
+      const share = await ok(client, 'create_share_link', {
+        artifact_id,
+        password: 'correct horse battery',
+      });
+      keep('share token', new URL(share.structuredContent.url).pathname.split('/').pop());
+      await app.request(share.structuredContent.url);
+      await ok(client, 'publish_inline', { files: [{ path: 'index.html', content: '<p>x</p>' }] });
+
+      // A refresh on expiry, then the spent refresh token replayed after the grace window.
+      const spent = (await provider.tokens())?.refresh_token ?? '';
+      clock.advance(ACCESS_TOKEN_MS + 1);
+      await ok(client, 'list_artifacts');
+      clock.advance(REFRESH_REUSE_GRACE_MS + 1);
+      const reuse = { grant_type: 'refresh_token', refresh_token: spent, client_id: clientId };
+      expect((await tokenRequest(app, reuse)).status).toBe(400);
+
+      // A new approval: its refresh token revoked, then its code redeemed a second time.
+      const again = await approve(app, owner.cookie, { clientId, redirectUri: REDIRECT_URL });
+      keep('code', again.code);
+      keep('code_verifier', again.verifier);
+      const exchange = {
+        grant_type: 'authorization_code',
+        code: again.code,
+        redirect_uri: REDIRECT_URL,
+        code_verifier: again.verifier,
+        client_id: clientId,
+      };
+      const redeemed = await tokenRequest(app, exchange);
+      const pair = (await redeemed.json()) as { access_token: string; refresh_token: string };
+      keep('access token', pair.access_token);
+      keep('refresh token', pair.refresh_token);
+      const revoke = { token: pair.refresh_token, client_id: clientId };
+      expect((await tokenRequest(app, revoke, '/oauth/revoke')).status).toBe(200);
+      expect((await tokenRequest(app, exchange)).status).toBe(400);
+      const refused = await app.request(`${ORIGIN}/mcp`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${pair.access_token}`,
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      });
+      expect(refused.status).toBe(401);
+
+      // The capture saw the flow, the risky paths included...
+      const log = lines.join('');
+      for (const message of [
+        'oauth grant approved',
+        'oauth tokens issued',
+        'oauth tokens refreshed',
+        'oauth refresh token reused; grant revoked',
+        'oauth code replayed; grant revoked',
+        'oauth grant revoked',
+      ]) {
+        expect(log, message).toContain(`"msg":"${message}"`);
+      }
+      expect(log).toContain('/upload/:token');
+      expect(log).toContain('/api/v1/oauth/requests/:token');
+      // ...and wrote none of the secrets.
+      const leaked = [...secrets].filter(([value]) => log.includes(value)).map(([, what]) => what);
+      expect(leaked).toEqual([]);
+      expect(secrets.size).toBeGreaterThanOrEqual(14);
     },
     FLOW_TIMEOUT_MS,
   );
