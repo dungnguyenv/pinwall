@@ -15,7 +15,9 @@ import {
   RECENT_MAX,
   SEARCH_MAX_CHARS,
 } from '../domain/artifacts.ts';
+import { countOpenThreads } from '../domain/comments.ts';
 import { deleteArtifact } from '../domain/deletion.ts';
+import { countActiveShareLinks } from '../domain/shares.ts';
 import { getVersionsById } from '../domain/versions.ts';
 import { publicUrl } from '../http/public-url.ts';
 import { jsonBodyLimit } from './body-limit.ts';
@@ -153,23 +155,24 @@ const deleteRoute = createRoute({
 });
 
 /**
- * Artifacts as the API shows them, with their tags and current versions loaded for all rows at
- * once, so a page costs the same few queries whatever its size.
+ * Artifacts as the API shows them, with their tags, current versions, open thread counts and
+ * active share link counts loaded for all rows at once, so a page costs the same few queries
+ * whatever its size.
  */
 export async function toArtifactSummary(
   deps: AppDeps,
   rows: readonly ArtifactRow[],
 ): Promise<ArtifactSummary[]> {
   const { db } = deps.db;
-  const [tags, versions] = await Promise.all([
-    getTagsByArtifact(
-      db,
-      rows.map((row) => row.id),
-    ),
+  const ids = rows.map((row) => row.id);
+  const [tags, versions, openThreads, shareLinks] = await Promise.all([
+    getTagsByArtifact(db, ids),
     getVersionsById(
       db,
       rows.flatMap((row) => row.current_version_id ?? []),
     ),
+    countOpenThreads(db, ids),
+    countActiveShareLinks(db, ids, deps.clock.now()),
   ]);
   return rows.map((row) => {
     const current =
@@ -183,6 +186,8 @@ export async function toArtifactSummary(
       current_version:
         current === undefined ? null : toVersionSummary(current, row.current_version_id),
       latest_number: row.latest_number,
+      open_thread_count: openThreads.get(row.id) ?? 0,
+      share_link_count: shareLinks.get(row.id) ?? 0,
       created_by: row.created_by,
       created_at: row.created_at,
       updated_at: row.updated_at,

@@ -120,5 +120,10 @@
   "oidc.noAccess.unverified": "Email address not verified",
   "oidc.noAccess.switch": "Use a different account",
   "oidc.noAccess.retryHint": "If {{idp}} picks the same account again, sign out of {{idp}} first, then try again.",
-  "oidc.recheckRequired": "Your access could not be confirmed with your identity provider. Sign in to Pinwall again."
+  "oidc.recheckRequired": "Your access could not be confirmed with your identity provider. Sign in to Pinwall again.",
+  "comment.notFound": "This comment does not exist.",
+  "comment.editForbidden": "Only the author can edit this comment.",
+  "comment.deleteForbidden": "Only the author, the artifact's publisher or an admin can delete this comment.",
+  "comment.notThread": "Only the first comment of a thread can be resolved or reopened.",
+  "version.notInArtifact": "That version does not belong to this artifact."
 }

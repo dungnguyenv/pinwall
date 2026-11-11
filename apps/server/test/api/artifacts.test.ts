@@ -80,6 +80,8 @@ describe.each(dialects)('artifacts over REST on %s', (dialect) => {
       kind: 'html',
       tags: ['khách hàng', 'q4'],
       latest_number: 1,
+      open_thread_count: 0,
+      share_link_count: 0,
       created_by: member.user.id,
       created_at: T,
       updated_at: T,

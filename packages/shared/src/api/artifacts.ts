@@ -50,6 +50,10 @@ export const ArtifactSummary = z.object({
   current_version: VersionSummary.nullable(),
   /** The newest number given out; deleted versions leave gaps. */
   latest_number: z.number().int(),
+  /** Comment threads not resolved yet. */
+  open_thread_count: z.number().int(),
+  /** Share links that still open: neither revoked nor expired. */
+  share_link_count: z.number().int(),
   created_by: z.string().nullable(),
   created_at: Timestamp,
   updated_at: Timestamp,
