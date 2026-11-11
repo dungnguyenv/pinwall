@@ -3,13 +3,15 @@ import { type ReactElement, useEffect } from 'react';
 import type { DataRouter } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { setUnauthorizedHandler } from './api/client.ts';
-import { qk } from './api/keys.ts';
+import { replaceSession } from './api/session.ts';
 import { Toaster, TooltipProvider } from './ui/index.ts';
 
 /**
  * The app's providers around its router. A 401 `unauthorized` from any
- * request marks the session gone (`me` = null); `RequireAuth` then sends the
- * person to sign in and back to the page they were on.
+ * request marks the session gone (`me` = null) and forgets the data cached
+ * for it; `RequireAuth` then sends the person to sign in and back to the page
+ * they were on. The removed queries' observers are not told, so the
+ * signed-in pages do not refetch before `RequireAuth` replaces them.
  */
 export function App({
   router,
@@ -19,7 +21,7 @@ export function App({
   queryClient: QueryClient;
 }): ReactElement {
   useEffect(() => {
-    setUnauthorizedHandler(() => queryClient.setQueryData(qk.me, null));
+    setUnauthorizedHandler(() => replaceSession(queryClient, null));
     return () => setUnauthorizedHandler(null);
   }, [queryClient]);
 

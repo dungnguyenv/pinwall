@@ -1,4 +1,6 @@
 import {
+  hashKey,
+  type QueryClient,
   type UseMutationResult,
   type UseQueryResult,
   useMutation,
@@ -29,6 +31,21 @@ export function signOut(): Promise<void> {
   return api('/auth/sign-out', { method: 'POST' });
 }
 
+/** Cached queries that outlive a change of person: who is signed in, and what is the same for everyone. */
+const SESSION_KEYS = new Set([hashKey(qk.me), hashKey(qk.publicConfig)]);
+
+/**
+ * Makes `me` the signed-in person (`null`: nobody) and forgets every query
+ * cached for whoever came before, so a page never shows a previous person's
+ * data. `me` is written rather than removed so the components reading it
+ * update at once; the public configuration is the same for everyone and the
+ * sign-in page is showing it, so it stays.
+ */
+export function replaceSession(queryClient: QueryClient, me: Me | null): void {
+  queryClient.removeQueries({ predicate: (query) => !SESSION_KEYS.has(query.queryHash) });
+  queryClient.setQueryData(qk.me, me);
+}
+
 export function useMe(): UseQueryResult<Me | null, ApiError> {
   return useQuery<Me | null, ApiError>({ queryKey: qk.me, queryFn: getMe });
 }
@@ -49,10 +66,12 @@ export function useSignOut(): UseMutationResult<void, ApiError, void> {
   return useMutation<void, ApiError, void>({
     mutationFn: signOut,
     onSuccess: async () => {
-      // Leave the signed-in pages first, in one synchronous render, so none of
+      // Signed out first, so the sign-in page does not send the person back in.
+      queryClient.setQueryData(qk.me, null);
+      // Then leave the signed-in pages, in one synchronous render, so none of
       // them asks for its data again after the cache is emptied.
       await navigate('/signin', { flushSync: true });
-      queryClient.clear();
+      replaceSession(queryClient, null);
     },
   });
 }

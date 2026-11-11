@@ -50,7 +50,9 @@ test('signing out forgets every cached query and opens sign in', async () => {
       return new HttpResponse(null, { status: 204 });
     }),
   );
-  const { user, router, queryClient } = renderRoute('/home', {
+  // Start on the sign-in page, which sends a signed-in visitor on to /home:
+  // its code is loaded, as it is for anyone who signed in through it.
+  const { user, router, queryClient } = renderRoute('/signin?return_to=%2Fhome', {
     routes: [
       {
         path: '/home',
@@ -71,5 +73,10 @@ test('signing out forgets every cached query and opens sign in', async () => {
   expect(router.state.location.search).toBe('');
   expect(signedOut).toHaveBeenCalledOnce();
   expect(queryClient.getQueryData(['projects'])).toBeUndefined();
-  expect(queryClient.getQueryData(qk.me)).toBeUndefined();
+  expect(queryClient.getQueryData(qk.me)).toBeNull();
+  // The sign-in page knows the person signed out, so it does not send them back in.
+  expect(
+    await screen.findByRole('heading', { level: 1, name: 'Sign in to Pinwall' }),
+  ).toBeInTheDocument();
+  expect(router.state.location.pathname).toBe('/signin');
 });

@@ -70,6 +70,16 @@ test('a 401 during use sends the user to sign in and back', async () => {
   expect(back).toBe('/probe?tab=files#top');
 });
 
+test("a 401 during use forgets the person's cached data", async () => {
+  server.use(http.get(`${API}/probe`, () => apiError(401, 'unauthorized', 'Sign in to continue.')));
+  const { router, queryClient } = renderRoute('/probe', { routes: routes() });
+  queryClient.setQueryData(['projects', { archived: false }], fx.page([]));
+  await waitFor(() => expect(router.state.location.pathname).toBe('/signin'));
+  expect(queryClient.getQueryData(['projects', { archived: false }])).toBeUndefined();
+  expect(queryClient.getQueryData(['probe'])).toBeUndefined();
+  expect(queryClient.getQueryData(['me'])).toBeNull();
+});
+
 test('the guard shows a loading skeleton until the session is known', async () => {
   server.use(http.get(`${API}/probe`, () => HttpResponse.json({})));
   renderRoute('/probe', { routes: routes() });

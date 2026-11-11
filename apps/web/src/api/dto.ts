@@ -10,7 +10,21 @@
 import { Label, page, Timestamp } from '@pinwall/shared';
 import { z } from 'zod';
 
-export { ErrorBody, Me, PublicConfig, page } from '@pinwall/shared';
+export {
+  CeremonyOptions,
+  ErrorBody,
+  Label,
+  Me,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  PasskeyAuthenticationResponse,
+  PasskeyRegistrationResponse,
+  PasskeySignInRequest,
+  PublicConfig,
+  page,
+  SetupPasskeyOptionsRequest,
+  SetupRequest,
+} from '@pinwall/shared';
 
 // --- M4 (projects, artifacts, versions). Replace with re-exports once M4 merges. ---
 

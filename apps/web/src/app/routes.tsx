@@ -1,26 +1,26 @@
-import { lazy } from 'react';
+import { lazy, type ReactNode, Suspense } from 'react';
 import type { RouteObject } from 'react-router';
-import { Logo } from '../ui/index.ts';
+import { AuthPageFallback } from '../pages/auth/auth-layout.tsx';
 import { RequireAuth } from './require-auth.tsx';
 import { AppShell } from './shell/app-shell.tsx';
 
 /*
  * Pages load on first use, each in its own chunk, so the first download holds
- * only the shell. AppShell shows a quiet skeleton while a page's chunk loads.
+ * only the shell. AppShell shows a quiet skeleton while a page's chunk loads;
+ * the sign-in and setup pages, outside the shell, show their own.
  */
 const PlaceholderPage = lazy(() =>
   import('../pages/placeholder-page.tsx').then((m) => ({ default: m.PlaceholderPage })),
 );
+const SignInPage = lazy(() =>
+  import('../pages/auth/sign-in-page.tsx').then((m) => ({ default: m.SignInPage })),
+);
+const SetupPage = lazy(() =>
+  import('../pages/auth/setup-page.tsx').then((m) => ({ default: m.SetupPage })),
+);
 
-// A placeholder until the sign-in page exists (Task 5).
-function SignInPlaceholder() {
-  return (
-    <main className="grid min-h-dvh place-items-center bg-canvas">
-      <h1>
-        <Logo size="lg" />
-      </h1>
-    </main>
-  );
+function AuthRoute({ wide, children }: { wide?: boolean; children: ReactNode }) {
+  return <Suspense fallback={<AuthPageFallback wide={wide} />}>{children}</Suspense>;
 }
 
 /**
@@ -30,7 +30,22 @@ function SignInPlaceholder() {
  */
 export function buildRoutes(): RouteObject[] {
   return [
-    { path: '/signin', element: <SignInPlaceholder /> },
+    {
+      path: '/signin',
+      element: (
+        <AuthRoute>
+          <SignInPage />
+        </AuthRoute>
+      ),
+    },
+    {
+      path: '/setup',
+      element: (
+        <AuthRoute wide>
+          <SetupPage />
+        </AuthRoute>
+      ),
+    },
     {
       element: (
         <RequireAuth>

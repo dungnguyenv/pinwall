@@ -382,12 +382,14 @@ test('account menu shows Admin only to admins and signs out', async () => {
   await user.click(await screen.findByRole('menuitem', { name: 'Sign out' }));
   await waitFor(() => expect(router.state.location.pathname).toBe('/signin'));
   expect(signedOut).toBe(1);
-  expect(
-    queryClient
-      .getQueryCache()
-      .getAll()
-      .map((q) => q.queryKey),
-  ).toEqual([]);
+  // Nothing about the person is left: `me` says nobody is signed in, and only
+  // the public configuration, the same for everyone, may stay.
+  const left = queryClient
+    .getQueryCache()
+    .getAll()
+    .map((q) => q.queryKey);
+  expect(left.filter((key) => key[0] !== 'config')).toEqual([['me']]);
+  expect(queryClient.getQueryData(['me'])).toBeNull();
 });
 
 test('a skip link jumps to the content, and navigation focuses the page heading', async () => {
