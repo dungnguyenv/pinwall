@@ -32,11 +32,13 @@ const INDEX_NAMES = ['index.html', 'index.md'] as const;
 /**
  * The headers of every content response, errors and redirects included: nothing of the app's
  * (no `frame-ancestors`, no `X-Frame-Options`, no cookie). The sandbox policy is added in
- * single-domain mode, where content shares the app's origin.
+ * single-domain mode, where content shares the app's origin. An error response (`status` 400 or
+ * more) is never cached: the file, the grant or the blob it lacks may be back a moment later.
  */
-export function contentHeaders(config: Config): Record<string, string> {
+export function contentHeaders(config: Config, status = 200): Record<string, string> {
   return {
-    'Cache-Control': 'private, max-age=300, no-transform',
+    'Cache-Control':
+      status >= 400 ? 'no-store, no-transform' : 'private, max-age=300, no-transform',
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
     ...(config.isolation.mode === 'single-domain'
@@ -294,6 +296,6 @@ function reply(
 ): Response {
   return new Response(c.req.method === 'HEAD' ? null : body, {
     status,
-    headers: { ...contentHeaders(c.var.deps.config), ...headers },
+    headers: { ...contentHeaders(c.var.deps.config, status), ...headers },
   });
 }

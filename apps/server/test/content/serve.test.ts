@@ -100,7 +100,10 @@ describe.each([
 
   /** The headers every content response carries, and none of the app's. */
   function expectContentHeaders(r: Response): void {
-    expect(r.headers.get('cache-control')).toBe('private, max-age=300, no-transform');
+    // Success keeps the spec header; an error page is never cached.
+    expect(r.headers.get('cache-control')).toBe(
+      r.status >= 400 ? 'no-store, no-transform' : 'private, max-age=300, no-transform',
+    );
     expect(r.headers.get('x-content-type-options')).toBe('nosniff');
     expect(r.headers.get('referrer-policy')).toBe('no-referrer');
     expect(r.headers.get('content-security-policy')).toBe(single ? CONTENT_SANDBOX_CSP : null);
@@ -140,6 +143,40 @@ describe.each([
       ].sort(),
     );
     expect(await r.text()).toBe(html);
+  });
+
+  test('error responses are never cached and successes keep the spec header', async () => {
+    const video = Buffer.from(Array.from({ length: 100 }, (_, i) => i));
+    const { token } = await grantFor({ 'index.html': '<p>x</p>', 'v.mp4': video });
+    const deleted = await grantFor({ 'index.html': '<p>y</p>' });
+    await addTombstones(
+      ctx.deps.db.db,
+      [{ kind: 'content_grant', key: deleted.token, expiresAt: null }],
+      clock.now(),
+    );
+    await ctx.deps.db.db.deleteFrom('versions').where('id', '=', deleted.version.id).execute();
+
+    const cached = 'private, max-age=300, no-transform';
+    const uncached = 'no-store, no-transform';
+    const answers: [string, number, string, Response][] = [
+      ['file', 200, cached, await get(token, 'index.html')],
+      ['range', 206, cached, await get(token, 'v.mp4', { range: 'bytes=0-9' })],
+      ['not modified', 304, cached, await get(token, 'index.html', { 'if-none-match': '*' })],
+      ['not found', 404, uncached, await get(token, 'nope.html')],
+      ['unknown token', 404, uncached, await get('a'.repeat(32), 'index.html')],
+      ['bad range', 416, uncached, await get(token, 'v.mp4', { range: 'bytes=500-' })],
+      ['method', 405, uncached, await fetchContent(ctx, token, '', { method: 'POST' })],
+      ['gone', 410, uncached, await get(deleted.token, 'index.html')],
+    ];
+    await ctx.deps.blobs.delete(sha256('<p>x</p>'));
+    answers.push(['server error', 500, uncached, await get(token, 'index.html')]);
+    clock.advance(ctx.deps.config.ttl.previewMs + 1);
+    answers.push(['expired', 410, uncached, await get(token, 'index.html')]);
+
+    for (const [name, status, cacheControl, r] of answers) {
+      expect(r.status, name).toBe(status);
+      expect(r.headers.get('cache-control'), name).toBe(cacheControl);
+    }
   });
 
   test('never reads or sets cookies', async () => {
