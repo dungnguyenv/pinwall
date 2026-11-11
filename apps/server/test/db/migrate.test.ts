@@ -205,6 +205,7 @@ function graph(): Rows {
         version_id: 'ver_1',
         mode: 'review',
         share_link_id: 'shr_1',
+        user_id: null,
         created_at: T,
         expires_at: T + 1000,
       },
@@ -213,6 +214,7 @@ function graph(): Rows {
         version_id: 'ver_2',
         mode: 'raw',
         share_link_id: null,
+        user_id: user,
         created_at: T,
         expires_at: T + 1000,
       },
@@ -450,6 +452,8 @@ describe.each(dialects)('%s schema', (dialect) => {
       expect(await h.db.selectFrom(table).selectAll().execute(), table).toEqual([]);
     }
     expect(await ids(h, 'oauth_clients', 'id')).toEqual(['cli_1']);
+    // Their content grants go with them; a share link's grant belongs to no user and stays.
+    expect(await ids(h, 'content_grants', 'token')).toEqual(['grant-1']);
     expect(await ids(h, 'projects', 'created_by')).toEqual([null]);
     expect(await ids(h, 'artifacts', 'created_by')).toEqual([null]);
     expect(await ids(h, 'versions', 'created_by')).toEqual([null, null]);

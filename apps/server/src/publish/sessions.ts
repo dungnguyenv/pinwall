@@ -41,6 +41,17 @@ export type UploadReceipt =
 
 const sessionKey = (h: string) => `upload:${h}`;
 const receiptKey = (h: string) => `upload-receipt:${h}`;
+/** Every key of a user's upload URLs is put in this group, so a revocation can drop them all. */
+const userGroup = (userId: string) => ({ group: `upload-user:${userId}` });
+
+/**
+ * Ends every upload URL `userId` has ("Revoke now"): the sessions not used yet, and the
+ * receipts, so an upload running now cannot give its session back when it fails. A URL then
+ * answers as unknown. Returns how many entries were removed.
+ */
+export function revokeUploadSessions(deps: AppDeps, userId: string): Promise<number> {
+  return deps.oneTime.deleteGroup(userGroup(userId).group);
+}
 
 /**
  * Makes a one-time upload URL for `p.target`, valid for `PINWALL_UPLOAD_SESSION_TTL`. The target
@@ -70,12 +81,14 @@ export async function createPublishSession(
     message: p.message,
     expiresAt,
   };
+  const group = userGroup(actor.id);
   await deps.oneTime.put<UploadReceipt>(
     receiptKey(h),
     { state: 'open', expiresAt },
     UPLOAD_RECEIPT_TTL_MS,
+    group,
   );
-  await deps.oneTime.put(sessionKey(h), session, ttl);
+  await deps.oneTime.put(sessionKey(h), session, ttl, group);
 
   const url = publicUrl(deps.config, `/upload/${token}`);
   return {
@@ -138,8 +151,9 @@ function queryValue(text: string): string {
  * Publishes the body of an upload to the session behind `token`. A token works once: a retry
  * after success is refused with the version it made, one during an upload is refused as in
  * progress, one after expiry says how to get a new URL. An upload that fails before the session
- * expires gives the session back, so the same command can be run again once it is fixed. The
- * creator must still have access when the upload arrives.
+ * expires gives the session back, so the same command can be run again once it is fixed, unless
+ * the creator's credentials were revoked meanwhile. The creator must still have access when the
+ * upload arrives.
  */
 export async function runUpload(
   deps: AppDeps,
@@ -154,10 +168,12 @@ export async function runUpload(
   }
 
   const { expiresAt } = session;
+  const group = userGroup(session.actorId);
   await deps.oneTime.put<UploadReceipt>(
     receiptKey(h),
     { state: 'running', expiresAt },
     UPLOAD_RECEIPT_TTL_MS,
+    group,
   );
   try {
     const actor = await activeUser(deps, session.actorId);
@@ -171,18 +187,22 @@ export async function runUpload(
       receiptKey(h),
       { state: 'done', expiresAt, result },
       UPLOAD_RECEIPT_TTL_MS,
+      group,
     );
     return result;
   } catch (error) {
     input.body.destroy();
+    // A revocation while the upload ran removed its receipt: the URL stays gone.
+    if ((await deps.oneTime.peek<UploadReceipt>(receiptKey(h))) === null) throw error;
     // The receipt first: a retry that comes in between is told the upload is in progress.
     await deps.oneTime.put<UploadReceipt>(
       receiptKey(h),
       { state: 'open', expiresAt },
       UPLOAD_RECEIPT_TTL_MS,
+      group,
     );
     const left = expiresAt - deps.clock.now();
-    if (left > 0) await deps.oneTime.put(sessionKey(h), session, left);
+    if (left > 0) await deps.oneTime.put(sessionKey(h), session, left, group);
     throw error;
   }
 }

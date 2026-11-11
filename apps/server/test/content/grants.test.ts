@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { idpAccessCurrent, idpAccessDeadline } from '../../src/auth/oidc/gate.ts';
+import { revokeAllCredentials } from '../../src/auth/revoke.ts';
 import {
   contentBaseUrl,
   contentUrl,
@@ -56,6 +57,7 @@ describe.each(dialects)('content grants on %s', (dialect) => {
       version_id: version.id,
       mode: 'raw',
       share_link_id: null,
+      user_id: owner.id,
       created_at: T,
       expires_at: T + 43_200_000,
     });
@@ -85,6 +87,8 @@ describe.each(dialects)('content grants on %s', (dialect) => {
     });
     expect(review.mode).toBe('review');
     expect(review.expires_at).toBe(T + 5_000);
+    // Made for nobody signed in (a share link's guest): it belongs to no user.
+    expect(review.user_id).toBeNull();
     expect((await resolveGrant(ctx.deps, review.token)).grant.mode).toBe('review');
   });
 
@@ -167,6 +171,55 @@ describe.each(dialects)('content grants on %s', (dialect) => {
     // Once the tombstone expires, the token is merely unknown.
     clock.advance(1000);
     expect((await failure(resolveGrant(ctx.deps, unknown))).status).toBe(404);
+  });
+
+  test('a grant serves only while its user has access', async () => {
+    const { user: member } = await createSignedInUser(ctx, { kind: 'oidc' });
+    const grant = await raw({ user: member });
+    const guest = await raw({ user: null });
+    const update = (set: { role_override?: 'blocked' | null; disabled_at?: number | null }) =>
+      ctx.deps.db.db.updateTable('users').set(set).where('id', '=', member.id).execute();
+    const refused = { status: 410, message: t('content.gone.message'), details: undefined };
+
+    await update({ role_override: 'blocked' });
+    expect(await failure(resolveGrant(ctx.deps, grant.token))).toEqual(refused);
+    expect((await resolveGrant(ctx.deps, guest.token)).grant).toEqual(guest);
+    await update({ role_override: null });
+    expect((await resolveGrant(ctx.deps, grant.token)).grant).toEqual(grant);
+    await update({ disabled_at: T });
+    expect(await failure(resolveGrant(ctx.deps, grant.token))).toEqual(refused);
+  });
+
+  test("revoking a user's credentials ends their grants at once", async () => {
+    const { user: member } = await createSignedInUser(ctx, { kind: 'oidc' });
+    const live = await raw({ user: member });
+    const review = await createGrant(ctx.deps, {
+      versionId: version.id,
+      mode: 'review',
+      user: member,
+    });
+    const short = await raw({ user: member, ttlMs: 1_000 });
+    const others = await raw({ user: owner });
+    const guest = await raw({ user: null });
+    clock.advance(1_000);
+
+    const result = await revokeAllCredentials(ctx.deps, member.id);
+    expect(result.contentGrants).toBe(3);
+    const left = await ctx.deps.db.db.selectFrom('content_grants').select('token').execute();
+    expect(left.map((row) => row.token).sort()).toEqual([others.token, guest.token].sort());
+    // Revoked links say they are gone, for as long as they would have lived.
+    for (const token of [live.token, review.token]) {
+      expect(await failure(resolveGrant(ctx.deps, token))).toEqual({
+        status: 410,
+        message: t('content.gone.message'),
+        details: undefined,
+      });
+    }
+    // One that had expired needs no tombstone.
+    expect((await failure(resolveGrant(ctx.deps, short.token))).status).toBe(404);
+    clock.set(live.expires_at);
+    expect((await failure(resolveGrant(ctx.deps, live.token))).status).toBe(404);
+    expect((await revokeAllCredentials(ctx.deps, member.id)).contentGrants).toBe(0);
   });
 
   test('purge removes only expired grants', async () => {

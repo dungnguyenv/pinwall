@@ -6,6 +6,9 @@ import { PublishResult, PublishSession } from '@pinwall/shared';
 import { Hono } from 'hono';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { AppEnv } from '../../src/app.ts';
+import { revokeAllCredentials } from '../../src/auth/revoke.ts';
+import { sessionCookieName } from '../../src/auth/session-cookie.ts';
+import { createSession } from '../../src/auth/sessions.ts';
 import type { Config } from '../../src/config/types.ts';
 import type { UserRow } from '../../src/db/schema.ts';
 import { errorHandler } from '../../src/http/errors.ts';
@@ -164,7 +167,14 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
     );
 
   async function newSession(body: unknown = { target: {} }): Promise<PublishSession> {
-    const r = await create(body);
+    return newSessionFor(member.cookie, body);
+  }
+
+  async function newSessionFor(
+    cookie: string,
+    body: unknown = { target: {} },
+  ): Promise<PublishSession> {
+    const r = await create(body, { cookie });
     expect(r.status, await r.clone().text()).toBe(201);
     return PublishSession.parse(await r.json());
   }
@@ -666,6 +676,66 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
     const r2 = await put(s.upload_url, await site());
     expect(r2.status).toBe(201);
     expect(await versions()).toHaveLength(1);
+  });
+
+  test('Revoke now ends the upload URLs a user has not used yet', async () => {
+    await start();
+    const first = await newSession();
+    const second = await newSession({ target: { name: 'Other' } });
+    const other = await createSignedInUser(ctx, { kind: 'oidc', name: 'Minh' });
+    const kept = await newSessionFor(other.cookie);
+
+    await revokeAllCredentials(ctx.deps, member.user.id);
+    for (const s of [first, second]) {
+      const r = await put(s.upload_url, await site());
+      expect(r.status).toBe(404);
+      expect(await errorOf(r)).toEqual({
+        code: 'not_found',
+        message: t('publish.session.unknown'),
+      });
+    }
+    expect(await versions()).toEqual([]);
+    // Another user's URL is untouched, and once signed in again the user can get a new one.
+    expect((await put(kept.upload_url, await site())).status).toBe(201);
+    const { secret } = await createSession(ctx.deps, member.user.id, 'password', {
+      ip: '127.0.0.1',
+      userAgent: 'vitest',
+    });
+    const fresh = await newSessionFor(`${sessionCookieName(ctx.deps.config)}=${secret}`);
+    expect((await put(fresh.upload_url, await site())).status).toBe(201);
+  });
+
+  test('an upload that fails after its user was revoked does not give its URL back', async () => {
+    await start();
+    const s = await newSession();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const bad = await makeTar([{ name: '../x', body: 'x' }]);
+    const slow = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(bad.subarray(0, 100));
+        await gate;
+        controller.enqueue(bad.subarray(100));
+        controller.close();
+      },
+    });
+    const running = put(s.upload_url, slow);
+    const token = s.upload_url.slice(s.upload_url.lastIndexOf('/') + 1);
+    await vi.waitFor(async () => {
+      const receipt = await ctx.deps.oneTime.peek<UploadReceipt>(
+        `upload-receipt:${hashSecret(token)}`,
+      );
+      expect(receipt?.state).toBe('running');
+    });
+
+    await revokeAllCredentials(ctx.deps, member.user.id);
+    release();
+    expect((await running).status).toBe(400);
+    const r = await put(s.upload_url, await site());
+    expect(r.status).toBe(404);
+    expect(await versions()).toEqual([]);
   });
 
   describe('a client that stops sending', () => {
