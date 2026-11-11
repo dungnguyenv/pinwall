@@ -6,6 +6,7 @@ import {
   MAX_WARNINGS,
   type MetadataFile,
   resolveRef,
+  SCAN_BUDGET_BYTES,
   SCAN_MAX_BYTES,
   SEARCH_TEXT_MAX_CHARS,
 } from '../../src/content/metadata.ts';
@@ -29,6 +30,19 @@ const wellFormed = (text: string) =>
 
 const html = (body: string, entry = 'index.html') =>
   extractMetadata(files({ [entry]: body }), entry, 'html');
+
+/**
+ * A small entry and five pages, each a word and a root-absolute link followed by more than
+ * `SCAN_MAX_BYTES` of comment: the budget runs out inside p4.html, so p5.html is never read.
+ */
+function budgetSite(): Record<string, string> {
+  const site: Record<string, string> = { 'index.html': '<title>T</title>' };
+  for (let n = 1; n <= 5; n++) {
+    site[`p${n}.html`] =
+      `<p>word${n}</p><a href="/abs${n}">x</a><!--${'x'.repeat(SCAN_MAX_BYTES)}-->`;
+  }
+  return site;
+}
 
 describe('title', () => {
   test('title from <title>, else the first heading', async () => {
@@ -624,6 +638,39 @@ describe('untrusted input never throws and stays bounded', () => {
     });
   });
 
+  test('at most SCAN_BUDGET_BYTES are read across a version; later files are skipped', async () => {
+    const site = budgetSite();
+    const reads: { path: string; max: number }[] = [];
+    const watched = files(site).map(
+      (file): MetadataFile => ({
+        ...file,
+        read: (max) => {
+          reads.push({ path: file.path, max });
+          return file.read(max);
+        },
+      }),
+    );
+    const m = await extractMetadata(watched, 'index.html', 'html');
+
+    expect(m.text).toContain('word4');
+    expect(m.text).not.toContain('word5');
+    // Skipped files add no warning of their own.
+    expect(m.warnings.map((w) => w.url)).toEqual(['/abs1', '/abs2', '/abs3', '/abs4']);
+    expect(reads.map((r) => r.path)).toEqual([
+      'index.html',
+      'p1.html',
+      'p2.html',
+      'p3.html',
+      'p4.html',
+    ]);
+    expect(reads.every((r) => r.max <= SCAN_MAX_BYTES)).toBe(true);
+    const total = reads.reduce(
+      (sum, r) => sum + Math.min(r.max, Buffer.byteLength(site[r.path] ?? '')),
+      0,
+    );
+    expect(total).toBe(SCAN_BUDGET_BYTES);
+  });
+
   test('files are read at most once, and skipped when nothing more is needed', async () => {
     const reads: string[] = [];
     const counted = (path: string, body: string): MetadataFile => ({
@@ -816,6 +863,14 @@ describe.each(dialects)('extractVersionText on %s', (dialect) => {
       'index.html': `<p>early</p>${' '.repeat(SCAN_MAX_BYTES)}<p>late</p>`,
     });
     expect(await extractVersionText(ctx.deps, id)).toBe('early');
+  });
+
+  test('stops at SCAN_BUDGET_BYTES as extractMetadata does', async () => {
+    const site = budgetSite();
+    const text = await extractVersionText(ctx.deps, await version('index.html', site));
+    expect(text).toContain('word4');
+    expect(text).not.toContain('word5');
+    expect(text).toBe((await extractMetadata(files(site), 'index.html', 'html')).text);
   });
 
   test('a file whose blob is gone is skipped, not fatal', async () => {

@@ -14,6 +14,13 @@ export const SEARCH_TEXT_MAX_CHARS = 200_000;
 export const MAX_WARNINGS = 50;
 /** Per HTML/CSS file scanned for warnings: bytes beyond this are not scanned. */
 export const SCAN_MAX_BYTES = 5_000_000;
+/** markdown-it's inline parser needs up to ~2.6 µs per byte on hostile input, so it reads less. */
+export const MARKDOWN_MAX_BYTES = 500_000;
+/**
+ * Bytes read in all across the files of one version for metadata and search text. The file that
+ * reaches it is read only up to it, and the files after it are skipped.
+ */
+export const SCAN_BUDGET_BYTES = 20_000_000;
 
 export interface PublishWarning {
   code: 'root_absolute_url';
@@ -30,20 +37,19 @@ export interface VersionMetadata {
   warnings: PublishWarning[];
 }
 
-/** A file of a version as extraction sees it; `read` returns its whole content. */
+/** A file of a version as extraction sees it. */
 export interface MetadataFile {
   path: string;
   contentType: string;
   size: number;
-  read(): Promise<Buffer>;
+  /** The first `max` bytes of the file, or all of it when it is shorter. */
+  read(max: number): Promise<Buffer>;
 }
 
 const TITLE_MAX_CHARS = 200;
 const THEME_COLOR_MAX_CHARS = 64;
 const THEME_COLOR = /^(#[0-9a-f]{3,8}|[a-z]{3,20}|(rgb|rgba|hsl|hsla)\([0-9.,%\s]+\))$/i;
 
-/** markdown-it's inline parser needs up to ~2.6 µs per byte on hostile input, so it reads less. */
-const MARKDOWN_MAX_BYTES = 500_000;
 /** The HTML parser is fed this many UTF-16 units at a time, and checked between writes. */
 const HTML_CHUNK = 16 * 1024;
 /**
@@ -111,7 +117,8 @@ const markdown = new MarkdownIt({ html: false, linkify: false, typographer: fals
  * Reads what a version shows: the title, theme color and thumbnail of its entry page, the text of
  * its pages for search, and the warnings that tell the publisher a page will not load in
  * single-domain mode. Never executes or fetches anything, and never throws on malformed markup:
- * each file is read up to `SCAN_MAX_BYTES` (Markdown up to less), and what it collects is bounded.
+ * each file is read up to `SCAN_MAX_BYTES` (Markdown up to less), the version up to
+ * `SCAN_BUDGET_BYTES`, and what it collects is bounded.
  */
 export async function extractMetadata(
   files: readonly MetadataFile[],
@@ -131,13 +138,18 @@ export async function extractMetadata(
     .filter((item): item is { file: MetadataFile; type: ScanType } => item.type !== null)
     .sort((a, b) => compareForText(entryPath, a.file.path, b.file.path));
 
+  let budget = SCAN_BUDGET_BYTES;
   for (const { file, type } of queue) {
+    if (budget <= 0) break;
     const isEntry = file.path === entryPath;
     const wantText = type !== 'css' && !sink.full;
     const wantWarnings = type !== 'markdown' && !warnings.full;
     if (!isEntry && !wantText && !wantWarnings) continue;
 
-    const source = decode(await file.read(), readLimit(type));
+    const max = Math.min(readLimit(type), budget);
+    const bytes = await file.read(max);
+    budget -= Math.min(bytes.length, max);
+    const source = decode(bytes, max);
     if (type === 'markdown') {
       scanMarkdown(source, wantText ? sink : null, isEntry ? probe : null);
     } else if (type === 'html') {
@@ -165,8 +177,9 @@ export async function extractMetadata(
 /**
  * The search text of a stored version, by the same rule as `extractMetadata`: its entry first,
  * then its other `.html`/`.htm`/`.md` files by path, up to `SEARCH_TEXT_MAX_CHARS`. Only the head
- * of each file is read. A file whose blob is missing is logged and skipped, so one lost blob does
- * not stop a re-index.
+ * of each file is read, and at most `SCAN_BUDGET_BYTES` in all; unlike at publish, stylesheets do
+ * not count against that budget, as they are not read here. A file whose blob is missing is
+ * logged and skipped, so one lost blob does not stop a re-index.
  */
 export async function extractVersionText(deps: AppDeps, versionId: string): Promise<string> {
   const rows = await deps.db.db
@@ -190,12 +203,15 @@ export async function extractVersionText(deps: AppDeps, versionId: string): Prom
     )
     .sort((a, b) => compareForText(a.row.entryPath, a.row.path, b.row.path));
 
+  let budget = SCAN_BUDGET_BYTES;
   for (const { row, type } of pages) {
-    if (sink.full) break;
+    if (sink.full || budget <= 0) break;
     if (row.size <= 0) continue;
-    const bytes = await readHead(deps, versionId, row, readLimit(type));
+    const max = Math.min(readLimit(type), budget);
+    const bytes = await readHead(deps, versionId, row, max);
     if (bytes === null) continue;
-    const source = decode(bytes, readLimit(type));
+    budget -= bytes.length;
+    const source = decode(bytes, max);
     if (type === 'markdown') scanMarkdown(source, sink, null);
     else scanHtml(source, row.path, sink, null, null);
   }
