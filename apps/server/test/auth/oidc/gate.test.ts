@@ -362,7 +362,45 @@ describe.each(dialects)('IdP access gate on %s', (dialect) => {
     const { user } = await signIn();
     clock.advance(24 * H);
     const before = refreshes();
-    expect(await gateUser(ctx.deps, await row(user.id), { inline: false })).toEqual({ ok: false });
+    expect(await gateUser(ctx.deps, await row(user.id), { inline: false })).toEqual({
+      ok: false,
+      idpUnavailable: false,
+    });
     expect(refreshes()).toBe(before);
+  });
+
+  test('gateUser tells an IdP that could not answer from one that ended access', async () => {
+    await start();
+    // The IdP is down past the 24-hour bound: a later check may still let the user in.
+    const { user } = await signIn();
+    idp.setReachable(false);
+    clock.advance(24 * H);
+    const unavailable = { ok: false, idpUnavailable: true };
+    expect(await gateUser(ctx.deps, await row(user.id), { inline: true })).toEqual(unavailable);
+    // Within the backoff the IdP is not asked again, and the answer is the same.
+    const before = refreshes();
+    expect(await gateUser(ctx.deps, await row(user.id), { inline: true })).toEqual(unavailable);
+    expect(refreshes()).toBe(before);
+
+    // A slow IdP cut off at the inline timeout could not answer either.
+    idp.setReachable(true);
+    const slow = await signIn();
+    oidcRuntime(ctx.deps).inlineRecheckTimeoutMs = 50;
+    idp.setLatency(500);
+    clock.advance(24 * H);
+    expect(await gateUser(ctx.deps, await row(slow.user.id), { inline: true })).toEqual(
+      unavailable,
+    );
+    await oidcRuntime(ctx.deps).inflight.get(slow.user.id);
+    idp.setLatency(0);
+
+    // The IdP refused the refresh token: only a sign-in brings the user back.
+    const refused = await signIn();
+    await idp.revokeGrants(refused.sub);
+    clock.advance(24 * H);
+    expect(await gateUser(ctx.deps, await row(refused.user.id), { inline: true })).toEqual({
+      ok: false,
+      idpUnavailable: false,
+    });
   });
 });

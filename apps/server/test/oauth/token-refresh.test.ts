@@ -349,20 +349,24 @@ describe.each(dialects)('refreshing OAuth tokens on %s', (dialect) => {
     expect(reused).toHaveLength(1);
   });
 
-  test('an IdP outage refuses the refresh without using up the token', async () => {
+  test('an IdP outage answers try-later without using up the token', async () => {
     await startWithIdp();
     const bea = await signInMember();
     const t0 = await issue(bea.cookie);
     idp.setReachable(false);
     clock.advance(24 * H);
 
-    await expectRefusal(
-      await refresh(t0.refresh),
-      400,
-      'invalid_grant',
-      t('oauth.token.accessEnded'),
-    );
+    // temporarily_unavailable, unlike invalid_grant, makes MCP clients keep their tokens.
+    const expectTryLater = async (r: Response) => {
+      expect(r.headers.get('retry-after')).toBe('60');
+      await expectRefusal(r, 503, 'temporarily_unavailable', t('oauth.token.idpUnavailable'));
+    };
+    await expectTryLater(await refresh(t0.refresh));
     expect(await tokenRow(t0.refresh)).toMatchObject({ used_at: null });
+    // Within the inline backoff the IdP is not asked again; the answer stays the same.
+    const asked = idp.tokenRequests('refresh_token');
+    await expectTryLater(await refresh(t0.refresh));
+    expect(idp.tokenRequests('refresh_token')).toBe(asked);
 
     idp.setReachable(true);
     clock.advance(60_001);
@@ -370,6 +374,51 @@ describe.each(dialects)('refreshing OAuth tokens on %s', (dialect) => {
     expect(await grantOf(clientId)).toMatchObject({ revoked_at: null });
     expect(await userRow(bea.user.id)).toMatchObject({ disabled_at: null });
   });
+
+  test('during an IdP outage a blocked member is still refused for good', async () => {
+    await startWithIdp();
+    const bea = await signInMember();
+    const t0 = await issue(bea.cookie);
+    idp.setReachable(false);
+    clock.advance(24 * H);
+    expect((await refresh(t0.refresh)).status).toBe(503);
+    await ctx.deps.db.db
+      .updateTable('users')
+      .set({ role_override: 'blocked' })
+      .where('id', '=', bea.user.id)
+      .execute();
+    await expectRefusal(
+      await refresh(t0.refresh),
+      400,
+      'invalid_grant',
+      t('oauth.token.accessEnded'),
+    );
+  });
+
+  test.each([
+    ['OIDC is turned off', false],
+    ['the user is from another issuer', true],
+  ])(
+    'a stale IdP user is invalid_grant when %s: no IdP will vouch for them',
+    async (_, withIdp) => {
+      if (withIdp) await startWithIdp();
+      else await start();
+      const member = await createSignedInUser(ctx, { kind: 'oidc', name: 'Cy' });
+      await ctx.deps.db.db
+        .updateTable('users')
+        .set({ idp_refresh_token: 'v1.sealed' })
+        .where('id', '=', member.user.id)
+        .execute();
+      const t0 = await issue(member.cookie);
+      clock.advance(24 * H);
+      await expectRefusal(
+        await refresh(t0.refresh),
+        400,
+        'invalid_grant',
+        t('oauth.token.accessEnded'),
+      );
+    },
+  );
 
   test('an IdP that refuses its refresh token asks for a sign-in, and the token waits', async () => {
     await startWithIdp();

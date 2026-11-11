@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 import type { Transaction } from 'kysely';
 import type { AppEnv, AuthContext } from '../app.ts';
-import { gateUser } from '../auth/oidc/gate.ts';
+import { gateUser, INLINE_RETRY_BACKOFF_MS } from '../auth/oidc/gate.ts';
 import type { BearerResolver } from '../auth/resolve.ts';
 import { hasAccess } from '../auth/roles.ts';
 import type { Database, OAuthClientRow } from '../db/schema.ts';
@@ -110,6 +110,17 @@ export async function issueTokens(
 }
 
 const accessEnded = () => new OAuthError('invalid_grant', t('oauth.token.accessEnded'));
+/**
+ * The IdP could not confirm access just now. MCP clients drop their tokens on `invalid_grant`
+ * and open a browser sign-in, which cannot succeed while the IdP is down; on
+ * `temporarily_unavailable` they keep them and the next call refreshes again (SDK `auth()`). The
+ * retry is due when the inline re-check's backoff ends.
+ */
+const idpUnavailable = () =>
+  new OAuthError('temporarily_unavailable', t('oauth.token.idpUnavailable'), {
+    status: 503,
+    retryAfterSeconds: INLINE_RETRY_BACKOFF_MS / 1000,
+  });
 const badRefresh = () => new OAuthError('invalid_grant', t('oauth.token.badRefresh'));
 
 /** The registered client the form's `client_id` names; anything else is `invalid_client`. */
@@ -202,7 +213,9 @@ export async function exchangeCode(deps: AppDeps, form: URLSearchParams): Promis
  *    grant is revoked with every token it holds;
  * 4. another `resource` is `invalid_target`;
  * 5. the person's access is checked, the IdP asked inline when a re-check is due, before the
- *    token is used, so a refusal (an IdP outage among them) leaves it usable for a later retry;
+ *    token is used, so a refusal leaves it usable. When only the IdP's failure to answer stands
+ *    between a person who still has access and the refresh, it is `temporarily_unavailable`
+ *    (503), so the client keeps its tokens and retries; any other refusal is `invalid_grant`;
  * 6. one transaction marks the token used and issues the new pair. A token that a concurrent
  *    refresh used in the meantime is within the grace window, so it gets a pair too.
  */
@@ -263,6 +276,10 @@ export async function refreshGrant(deps: AppDeps, form: URLSearchParams): Promis
     .where('id', '=', found.user_id)
     .executeTakeFirst();
   const gate = user ? await gateUser(deps, user, { inline: true }) : undefined;
+  if (user && gate && !gate.ok && gate.idpUnavailable && hasAccess(user)) {
+    deps.logger.warn(ids, 'oauth refresh deferred: the IdP could not confirm access');
+    throw idpUnavailable();
+  }
   if (!gate?.ok || !hasAccess(gate.user)) throw accessEnded();
 
   const tokens = await db.transaction().execute(async (trx) => {

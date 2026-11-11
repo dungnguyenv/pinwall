@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { TemporarilyUnavailableError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { CommentThreadList, LiveEvent, PublishResult } from '@pinwall/shared';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 import { ARTIFACT_TOPIC } from '../../src/domain/search.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { hashSecret } from '../../src/lib/ids.ts';
@@ -30,11 +32,17 @@ import {
   TestOAuthProvider,
   toolText,
 } from '../helpers/mcp.ts';
+import { signInOidcUser } from '../helpers/oidc-browser.ts';
+import { startTestIdp, type TestIdp } from '../helpers/oidc-idp.ts';
 import { postThread, sampleAnchor } from '../helpers/review.ts';
 
 const T = Date.UTC(2026, 10, 10);
 const ORIGIN = 'http://localhost:8080';
 const ACCESS_TOKEN_MS = 3_600_000;
+/** How long Pinwall acts on an IdP user's last good check while it cannot ask the IdP again. */
+const IDP_STALENESS_MS = 86_400_000;
+/** After an IdP check fails, the next one waits this long. */
+const IDP_RETRY_BACKOFF_MS = 60_000;
 /** Where the agent's browser comes back to: a loopback listener, as Claude Code registers. */
 const REDIRECT_URL = 'http://127.0.0.1:33418/callback';
 /** One test walks the whole flow (dozens of requests, one password hash): room on a loaded machine. */
@@ -104,10 +112,17 @@ const siteTar = (heading: string) =>
     { gzip: true },
   );
 
+let idp: TestIdp;
+beforeAll(async () => {
+  idp = await startTestIdp();
+});
+afterAll(() => idp?.close());
+
 describe.each(dialects)('an agent over MCP on %s', (dialect) => {
   let ctx: TestContext | undefined;
   let client: Client | undefined;
   afterEach(async () => {
+    idp.setReachable(true);
     await client?.close();
     await ctx?.close();
     client = undefined;
@@ -360,6 +375,79 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
       const again = provider.authorizationUrl as URL | null;
       expect(again).not.toBeNull();
       expect(again?.searchParams.get('client_id')).toBe(registered?.client_id);
+    },
+    FLOW_TIMEOUT_MS,
+  );
+  test(
+    'keeps its tokens through an IdP outage and works again without a browser once the IdP is back',
+    async () => {
+      const clock = new FixedClock(T);
+      const app = await createTestContext({
+        dialect,
+        clock,
+        env: idp.env({ PINWALL_OIDC_MEMBER_GROUPS: 'pinwall-users' }),
+      });
+      ctx = app;
+      const bea = await signInOidcUser(app, idp, {
+        sub: `bea-${randomUUID()}`,
+        name: 'Bea',
+        email: 'bea@example.com',
+        email_verified: true,
+        groups: ['pinwall-users'],
+      });
+      const traffic = recordedFetch(app);
+      const provider = new TestOAuthProvider({
+        redirectUrl: REDIRECT_URL,
+        clientName: 'Claude Code',
+      });
+
+      // Bea, an IdP member, connects the agent through the browser.
+      const first = mcpTransport(app, { authProvider: provider, fetch: traffic.fetch });
+      await expect(
+        new Client({ name: 'pinwall-agent-flow', version: '0.0.0' }).connect(first),
+      ).rejects.toBeInstanceOf(UnauthorizedError);
+      const authorizationUrl = provider.authorizationUrl;
+      if (authorizationUrl === null) throw new Error('the SDK never sent the browser anywhere');
+      await first.finishAuth(await approveInBrowser(app, authorizationUrl, bea.cookie));
+      client = await connectMcp(app, { authProvider: provider, fetch: traffic.fetch });
+      expect((await ok(client, 'whoami')).structuredContent.user.id).toBe(bea.user.id);
+
+      // The IdP is down for longer than Pinwall acts on its last answer. The refresh is told to
+      // try later, so the SDK keeps everything it holds and opens no browser.
+      const held = await provider.tokens();
+      if (!held?.refresh_token) throw new Error('no refresh token was issued');
+      idp.setReachable(false);
+      clock.advance(IDP_STALENESS_MS);
+      provider.authorizationUrl = null;
+      traffic.calls.length = 0;
+      await expect(client.callTool({ name: 'whoami', arguments: {} })).rejects.toBeInstanceOf(
+        TemporarilyUnavailableError,
+      );
+      expect(traffic.calls).toEqual([
+        'POST /mcp 401',
+        'POST /oauth/token refresh_token 503 temporarily_unavailable',
+      ]);
+      expect(await provider.tokens()).toEqual(held);
+      expect(provider.authorizationUrl).toBeNull();
+      const kept = await app.deps.db.db
+        .selectFrom('oauth_tokens')
+        .selectAll()
+        .where('token_hash', '=', hashSecret(held.refresh_token))
+        .executeTakeFirstOrThrow();
+      expect(kept).toMatchObject({ kind: 'refresh', used_at: null });
+
+      // The IdP answers again: the next call refreshes with the same token and goes through.
+      idp.setReachable(true);
+      clock.advance(IDP_RETRY_BACKOFF_MS + 1);
+      traffic.calls.length = 0;
+      expect((await ok(client, 'whoami')).structuredContent.user.id).toBe(bea.user.id);
+      expect(traffic.calls).toEqual([
+        'POST /mcp 401',
+        'POST /oauth/token refresh_token 200',
+        'POST /mcp 200',
+      ]);
+      expect(provider.authorizationUrl).toBeNull();
+      expect((await provider.tokens())?.refresh_token).not.toBe(held.refresh_token);
     },
     FLOW_TIMEOUT_MS,
   );

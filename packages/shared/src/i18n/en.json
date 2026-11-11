@@ -604,6 +604,7 @@
   "oauth.token.mismatch": "The code was issued for another client or redirect_uri, or the code_verifier does not match.",
   "oauth.token.resource": "Tokens are issued only for {{resource}}.",
   "oauth.token.accessEnded": "Your Pinwall access could not be confirmed. Sign in again.",
+  "oauth.token.idpUnavailable": "Pinwall could not confirm your access with your sign-in provider just now. Your connection is kept: try again in a minute.",
   "oauth.token.badRefresh": "The refresh token is invalid, expired or revoked. Sign in again.",
   "oauth.token.reused": "This refresh token was already used, so Pinwall ended the connection for safety. Sign in again.",
   "oauth.revoke.missing": "Send token and client_id.",
