@@ -9,6 +9,12 @@ export const REFRESH_TOKEN_PREFIX = 'pwr_';
 export const ACCESS_TOKEN_TTL_MS = 3_600_000;
 /** Refresh tokens rotate: each use issues a new one with a full lifetime. */
 export const REFRESH_TOKEN_TTL_MS = 2_592_000_000;
+/**
+ * A used refresh token presented again this long after its first use still refreshes, since
+ * agent sessions that share one stored credential refresh at about the same time. Later, the
+ * reuse is taken for a stolen token and the grant is revoked.
+ */
+export const REFRESH_REUSE_GRACE_MS = 120_000;
 /** How long an authorization request waits for the person to sign in and decide. */
 export const AUTH_REQUEST_TTL_MS = 600_000;
 /** Authorization codes are single use and live this long. */

@@ -11,7 +11,13 @@ import { OAUTH_RATES } from './constants.ts';
 import { OAuthError, oauthJson } from './errors.ts';
 import { authorizationServerMetadata, protectedResourceMetadata } from './metadata.ts';
 import { AuthorizePageError, startAuthorization } from './requests.ts';
-import { exchangeCode, readTokenForm, type TokenResponse } from './tokens.ts';
+import {
+  exchangeCode,
+  readTokenForm,
+  refreshGrant,
+  revokeToken,
+  type TokenResponse,
+} from './tokens.ts';
 
 /** The largest registration request body read. */
 const MAX_REGISTRATION_BYTES = 65_536;
@@ -77,6 +83,8 @@ async function grantTokens(deps: AppDeps, form: URLSearchParams): Promise<TokenR
   switch (form.get('grant_type')) {
     case 'authorization_code':
       return exchangeCode(deps, form);
+    case 'refresh_token':
+      return refreshGrant(deps, form);
     default:
       throw new OAuthError('unsupported_grant_type', t('oauth.token.grantType'));
   }
@@ -85,8 +93,9 @@ async function grantTokens(deps: AppDeps, form: URLSearchParams): Promise<TokenR
 /**
  * Pinwall's OAuth authorization server for its MCP resource: the metadata documents (JSON for
  * every client, browsers included), the authorization endpoint, which hands off to the SPA's
- * consent page, and the registration (RFC 7591) and token endpoints, whose every refusal is
- * RFC 6749 JSON. Its URLs all come from the public origin. Mount it before the SPA.
+ * consent page, and the registration (RFC 7591), token and revocation (RFC 7009) endpoints,
+ * whose every refusal is RFC 6749 JSON. Its URLs all come from the public origin. Mount it before
+ * the SPA.
  */
 export function mountOAuth(app: Hono<AppEnv>): void {
   app.get('/.well-known/oauth-authorization-server', (c) =>
@@ -121,6 +130,17 @@ export function mountOAuth(app: Hono<AppEnv>): void {
       // RFC 6749 §5.1, with the `Cache-Control: no-store` every OAuth answer carries.
       c.header('Pragma', 'no-cache');
       return c.json(await grantTokens(c.var.deps, await readTokenForm(c)));
+    }),
+  );
+
+  app.post(
+    '/oauth/revoke',
+    oauthJson(async (c) => {
+      // Counted before the body is read, so malformed requests use up the limit too.
+      await enforceRateLimit(c, OAUTH_RATES.revoke);
+      await revokeToken(c.var.deps, await readTokenForm(c));
+      // RFC 7009 §2.2: 200 whether or not there was anything to revoke; the body is ignored.
+      return c.body(null, 200);
     }),
   );
 }
