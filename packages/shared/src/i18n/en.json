@@ -130,5 +130,12 @@
   "share.passwordTooLong": "Use a password of at most {{max}} characters.",
   "share.badExpiry": "Choose an expiry in the future.",
   "share.revokeForbidden": "Only the link's creator, the artifact's publisher or an admin can revoke it.",
+  "share.notFound.title": "Link not found",
+  "share.notFound.message": "This share link does not exist. Check that it was copied completely.",
+  "share.gone.title": "Link no longer available",
+  "share.gone.message": "This share link was revoked, or what it shared was deleted.",
+  "share.expired.title": "Link expired",
+  "share.expired.message": "This share link has expired. Ask the person who shared it for a new one.",
+  "share.passwordRequired": "Enter the password to open this link.",
   "version.notInArtifact": "That version does not belong to this artifact."
 }

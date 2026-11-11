@@ -6,6 +6,7 @@ import { bearerResolvers } from './auth/resolvers.ts';
 import { type ContentHooks, contentHooks } from './content/hooks.ts';
 import { mountRawLinks } from './content/raw-links.ts';
 import { mountContent } from './content/routes.ts';
+import { mountShareLinks } from './content/share-route.ts';
 import type { UserRow } from './db/schema.ts';
 import type { AppDeps } from './deps.ts';
 import { errorHandler, notFoundHandler } from './http/errors.ts';
@@ -111,6 +112,8 @@ export function buildApp(deps: AppDeps, opts: { contentHooks?: ContentHooks } = 
   app.route('/auth/oidc', buildOidcRouter());
   // `/a/:id/raw` and `/a/:id/v/:n/raw` take a cookie or a bearer token; the SPA owns `/a/:id`.
   mountRawLinks(app);
+  // `/s/:token` needs no account; links that open the share viewer fall through to the SPA.
+  mountShareLinks(app);
 
   mountSpa(app, deps.config.webDir ?? defaultWebDir(), deps.logger);
 

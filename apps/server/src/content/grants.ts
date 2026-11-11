@@ -24,7 +24,8 @@ export function isContentToken(value: string): boolean {
  * `PINWALL_PREVIEW_TTL`), and never past the moment `user`'s IdP access stops being current, so
  * a grant cannot outlive the access of the person it was made for. It records `user`, so it
  * serves only while they have access and "Revoke now" ends it. `user` is null only when no
- * signed-in person asked for it (a share link's guest).
+ * signed-in person asked for it (a share link's guest). Pass the transaction in `db` when one is
+ * open.
  */
 export async function createGrant(
   deps: AppDeps,
@@ -34,6 +35,7 @@ export async function createGrant(
     user: UserRow | null;
     shareLinkId?: string | null;
     ttlMs?: number;
+    db?: Db;
   },
 ): Promise<ContentGrantRow> {
   const now = deps.clock.now();
@@ -48,7 +50,7 @@ export async function createGrant(
     created_at: now,
     expires_at: accessEnd === null ? ttlEnd : Math.min(ttlEnd, accessEnd),
   };
-  await deps.db.db.insertInto('content_grants').values(grant).execute();
+  await (p.db ?? deps.db.db).insertInto('content_grants').values(grant).execute();
   return grant;
 }
 
