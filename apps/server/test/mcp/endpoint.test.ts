@@ -4,6 +4,7 @@ import { type CallToolResult, LATEST_PROTOCOL_VERSION } from '@modelcontextproto
 import { afterEach, describe, expect, onTestFinished, test } from 'vitest';
 import type { UserRow } from '../../src/db/schema.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
+import type { ErrorCode } from '../../src/lib/errors.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { mcpBodyLimit } from '../../src/mcp/route.ts';
 import { SERVER_INSTRUCTIONS, TOOL_NAMES } from '../../src/mcp/server.ts';
@@ -184,6 +185,8 @@ describe.each(dialects)('/mcp on %s', (dialect) => {
   test('GET and DELETE are 405', async () => {
     await start();
     const token = await createUserToken(ctx, ada.user.id);
+    // One of the app's error codes, answered in its usual shape.
+    const code: ErrorCode = 'method_not_allowed';
     for (const method of ['GET', 'DELETE']) {
       const r = await ctx.request('/mcp', {
         method,
@@ -191,9 +194,8 @@ describe.each(dialects)('/mcp on %s', (dialect) => {
       });
       expect(r.status, method).toBe(405);
       expect(r.headers.get('allow'), method).toBe('POST');
-      expect(await r.json(), method).toEqual({
-        error: { code: 'method_not_allowed', message: t('mcp.method') },
-      });
+      expect(r.headers.get('cache-control'), method).toBe('no-store');
+      expect(await r.json(), method).toEqual({ error: { code, message: t('mcp.method') } });
     }
     // Without a credential the answer is the challenge, so a client knows to sign in first.
     const anonymous = await ctx.request('/mcp', { method: 'GET' });

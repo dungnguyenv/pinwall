@@ -3,6 +3,7 @@ export type ErrorCode =
   | 'unauthorized'
   | 'forbidden'
   | 'not_found'
+  | 'method_not_allowed'
   | 'conflict'
   | 'version_conflict'
   | 'gone'
@@ -42,6 +43,10 @@ export const forbidden = (message: string, details?: Record<string, unknown>) =>
 
 export const notFound = (message: string, details?: Record<string, unknown>) =>
   new AppError('not_found', 404, message, details);
+
+/** The caller sets the `Allow` header before throwing it. */
+export const methodNotAllowed = (message: string) =>
+  new AppError('method_not_allowed', 405, message);
 
 export const conflict = (message: string, details?: Record<string, unknown>) =>
   new AppError('conflict', 409, message, details);

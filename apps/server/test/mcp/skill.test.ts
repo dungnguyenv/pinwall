@@ -22,6 +22,7 @@ const ERROR_CODES = Object.keys({
   unauthorized: true,
   forbidden: true,
   not_found: true,
+  method_not_allowed: true,
   conflict: true,
   version_conflict: true,
   gone: true,

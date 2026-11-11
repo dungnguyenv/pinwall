@@ -4,7 +4,7 @@ import type { AppEnv } from '../app.ts';
 import { type BearerResolver, resolveAuth } from '../auth/resolve.ts';
 import { bearerResolvers } from '../auth/resolvers.ts';
 import type { Config } from '../config/types.ts';
-import { forbidden, unauthorized } from '../lib/errors.ts';
+import { forbidden, methodNotAllowed, unauthorized } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { resourceMetadataUrl } from '../oauth/metadata.ts';
 import { oauthAccessTokenResolver } from '../oauth/tokens.ts';
@@ -72,10 +72,8 @@ async function serveMcp(c: Context<AppEnv>): Promise<Response> {
   const { deps, auth } = c.var;
   if (auth === null) throw unauthorized(t('mcp.signIn'));
   if (c.req.method !== 'POST') {
-    return c.json({ error: { code: 'method_not_allowed', message: t('mcp.method') } }, 405, {
-      Allow: 'POST',
-      'Cache-Control': 'no-store',
-    });
+    c.header('Allow', 'POST');
+    throw methodNotAllowed(t('mcp.method'));
   }
   const server = createMcpServer({ deps, auth, c });
   const transport = new WebStandardStreamableHTTPServerTransport({
