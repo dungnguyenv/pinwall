@@ -1,7 +1,35 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig, type ProxyOptions } from 'vite';
+
+/*
+ * In development the Pinwall server runs on :8080 and Vite serves the app on
+ * :5173, passing the server's own paths through. Start the server with
+ * PINWALL_PUBLIC_ORIGIN=http://localhost:5173 so its CSRF check accepts the
+ * Origin the browser sends. The Host header is kept as the browser sent it.
+ */
+const SERVER = 'http://localhost:8080';
+const SERVER_PATHS = [
+  '/api',
+  '/auth/oidc',
+  '/upload',
+  '/c/',
+  '/mcp',
+  '/.well-known',
+  // OAuth endpoints only: /oauth/consent is an app page.
+  '^/oauth/(authorize|token|register|revoke)',
+  // Raw links, which redirect to a content grant.
+  '^/a/[^/]+/(v/\\d+/)?raw',
+];
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  server: {
+    proxy: Object.fromEntries(
+      SERVER_PATHS.map((path): [string, ProxyOptions] => [
+        path,
+        { target: SERVER, changeOrigin: false },
+      ]),
+    ),
+  },
 });
