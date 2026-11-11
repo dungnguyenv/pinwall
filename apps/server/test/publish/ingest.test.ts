@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { MARKDOWN_MAX_BYTES, SCAN_MAX_BYTES } from '../../src/content/metadata.ts';
+import { searchQuery } from '../../src/db/dialect.ts';
 import type { UserRow, VersionRow } from '../../src/db/schema.ts';
 import type { PublishTarget } from '../../src/domain/versions.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
@@ -476,6 +477,20 @@ describe.each(dialects)('ingest on %s', (dialect) => {
       );
       // The empty page and the image are never read.
       expect(get).toHaveBeenCalledTimes(2);
+    });
+
+    test('a page of 200k characters of distinct Korean words publishes and is searchable', async () => {
+      // The title and 66,665 two-syllable words fill the 200,000-unit text cap; folded to jamo,
+      // they overflowed a Postgres tsvector.
+      const words = Array.from({ length: 66_665 }, (_, n) =>
+        String.fromCharCode(0xac00 + Math.floor(n / 11_172), 0xac00 + (n % 11_172)),
+      );
+      const { artifact } = await publishFiles(ctx, actor, {
+        'index.html': `<title>보고서</title><p>${words.join(' ')}</p>`,
+      });
+      for (const q of [words[0], words[40_000], words[66_664], '보고서']) {
+        expect(await searchQuery(ctx.deps.db, q ?? '', 10), q).toEqual([artifact.id]);
+      }
     });
 
     test('publishLinks names the artifact and the raw version on the public origin', () => {
