@@ -16,13 +16,11 @@ run against the commit that will be tagged, and recorded on this page.
    [Automated runs](#automated-runs). `e2e/acceptance-report.md` is not kept in the repository, and
    a copy of it from an earlier commit proves nothing about this one.
 2. **The manual checks, on the image built from that commit** (`pnpm test:acceptance` leaves it as
-   `pinwall:acceptance`). Only [claude-code](#claude-code) (item 2) has been run on an image built
+   `pinwall:acceptance`). [claude-code](#claude-code) (item 2), [review-loop](#review-loop)
+   (item 4) and [cloudflare-tunnel](#cloudflare-tunnel) (item 8) have been run on an image built
    from the candidate (see [Results](#results)); the others are still to do:
-   - [review-loop](#review-loop) (item 4), after a fresh [claude-code](#claude-code) run, in the
-     same Claude Code session.
-   - [claude-desktop](#claude-desktop) (item 3a) and then [cloudflare-tunnel](#cloudflare-tunnel)
-     (item 8), over one quick tunnel. They need `cloudflared`, Claude Desktop and an internet
-     connection.
+   - [claude-desktop](#claude-desktop) (item 3a), over a quick tunnel. It needs `cloudflared`,
+     Claude Desktop and an internet connection.
    - [fresh-install](#fresh-install) (item 1). Its timing includes the image pull, so it needs a
      published image: run it on a pre-release such as `v1.0.0-rc.1` once one is pushed, or on
      1.0.0 itself right after the release, and record which.
@@ -58,8 +56,8 @@ outcome. Keep older rows; add new ones below them.
 | [claude-desktop](#claude-desktop) | 3a | | | | not run yet |
 | [zitadel](#zitadel) | 3, 3b | | | | not run yet |
 | [google](#google) | 3 | | | | not run yet |
-| [review-loop](#review-loop) | 4 | | | | not run yet |
-| [cloudflare-tunnel](#cloudflare-tunnel) | 8 | | | | not run yet |
+| [review-loop](#review-loop) | 4 | 2026-11-12 | 1.0.0 image built locally from `8061ff3`, behind a Cloudflare quick tunnel (https origin), Claude Code 2.1.263 | controller | pass |
+| [cloudflare-tunnel](#cloudflare-tunnel) | 8 | 2026-11-12 | same run as review-loop, cloudflared 2026.10.7 | controller | pass |
 | [fresh-install](#fresh-install) | 1 | | | | not run yet |
 | [two-machines](#two-machines) (optional) | 6 | | | | not run yet |
 
@@ -73,6 +71,16 @@ The second `claude-code` row repeats it on an image built from the candidate com
 with every capability dropped. The sign-in, consent and publish steps behaved the same. The review
 link opened the review screen with the page in its frame 20 seconds after the request. The
 container's log held no token, code, upload address or consent request id.
+
+The `review-loop` and `cloudflare-tunnel` rows come from one run behind a quick tunnel, on the
+tunnel's https origin. Claude Code connected through the tunnel and published the fixture folder.
+A comment "Make this bold" was pinned on a paragraph, and Claude Code was asked to read the comments
+and fix them. Without a reload, the open tab switched to v2 with the paragraph in bold, and the card
+read "Resolved in v2" with its pin on the same paragraph. Through the tunnel, the raw link of v1,
+the files behind its grant and a public share link all hashed the same as the local files. Every
+content response carried `no-transform`, and Cloudflare reported `DYNAMIC`, so nothing was cached
+or rewritten. The agent's reply showed `&lt;strong&gt;` because the agent wrote the entity itself;
+the `reply_to_comment` description now says the text is plain.
 
 ## The automated part
 
