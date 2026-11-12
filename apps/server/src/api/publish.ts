@@ -18,6 +18,7 @@ import type { PublishTarget } from '../domain/versions.ts';
 import { badRequest } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import {
+  countFailedPublish,
   countRequestBytes,
   type FileSink,
   ingestInline,
@@ -31,7 +32,12 @@ import {
   PUBLISH_SESSION_RATE,
   toPublishResult,
 } from '../publish/sessions.ts';
-import { type FormPart, readUploadForm, uploadFormError } from '../publish/upload-form.ts';
+import {
+  type FormPart,
+  type FormReader,
+  readUploadForm,
+  uploadFormError,
+} from '../publish/upload-form.ts';
 import { declaredLength } from '../publish/upload-route.ts';
 import { jsonBodyLimit } from './body-limit.ts';
 
@@ -217,14 +223,46 @@ async function publishWebUpload(
   opts: Omit<PublishOptions, 'message'>,
 ): Promise<PublishOutcome> {
   const { deps } = c.var;
-  const { limits } = deps.config;
+  const budget = new IngestBudget(deps.config.limits);
+  let opened: OpenedUpload;
+  try {
+    opened = await openWebUpload(c, budget);
+  } catch (error) {
+    // `ingestStreamed` counts the publish from here on; a refusal before it is counted here.
+    countFailedPublish(deps, opts.source, error, budget.requestBytesRead);
+    throw error;
+  }
+  const { form, head, next } = opened;
+  return ingestStreamed(
+    deps,
+    toPublishTarget(head.fields.target),
+    { ...opts, message: messageOf(head.fields.message) },
+    budget,
+    () => form.destroy(),
+    (sink) => storeFormFiles(head, next, sink),
+  );
+}
+
+/** A web upload read up to its first file. */
+interface OpenedUpload {
+  form: FormReader;
+  head: FormHead;
+  /** The next part of `form`; each file part counts toward `PINWALL_MAX_FILES`. */
+  next: () => Promise<FormPart | null>;
+}
+
+/**
+ * Refuses a declared length over `PINWALL_MAX_UPLOAD_BYTES`, then reads the form up to its first
+ * file, counting every request byte in `budget`. On failure the request body is destroyed.
+ */
+async function openWebUpload(c: Context<AppEnv>, budget: IngestBudget): Promise<OpenedUpload> {
+  const { limits } = c.var.deps.config;
   const raw = c.req.raw.body === null ? Readable.from([]) : Readable.fromWeb(c.req.raw.body);
   const declared = declaredLength(c.req.header('content-length'));
   if (declared !== null && declared > limits.maxUploadBytes) {
     raw.destroy();
     throw limitExceeded('max_upload_bytes', limits.maxUploadBytes);
   }
-  const budget = new IngestBudget(limits);
   const form = readUploadForm(countRequestBytes(raw, budget), c.req.header('content-type') ?? '');
   let files = 0;
   const next = async (): Promise<FormPart | null> => {
@@ -235,22 +273,12 @@ async function publishWebUpload(
     }
     return part;
   };
-
-  let head: FormHead;
   try {
-    head = await readFormHead(next);
+    return { form, head: await readFormHead(next), next };
   } catch (error) {
     form.destroy();
     throw error;
   }
-  return ingestStreamed(
-    deps,
-    toPublishTarget(head.fields.target),
-    { ...opts, message: messageOf(head.fields.message) },
-    budget,
-    () => form.destroy(),
-    (sink) => storeFormFiles(head, next, sink),
-  );
 }
 
 /** Reads the fields that come before the first file, and that file. */

@@ -278,8 +278,8 @@ export function publishLinks(
 
 /**
  * Runs one publish and keeps its two counters: `bytesRead()` (request bytes read, whatever the
- * outcome) is added to `uploadBytes` once it ends, and a refusal that is the client's fault
- * (`rejectionReason`) counts in `uploadsRejected` before it is rethrown.
+ * outcome) is added to `uploadBytes` once it ends, and a failure is counted by
+ * `countFailedPublish` before it is rethrown.
  */
 async function metered<T>(
   deps: AppDeps,
@@ -287,16 +287,36 @@ async function metered<T>(
   bytesRead: () => number,
   run: () => Promise<T>,
 ): Promise<T> {
+  let result: T;
   try {
-    return await run();
+    result = await run();
   } catch (error) {
-    const reason = rejectionReason(error);
-    if (reason !== null) deps.metrics.uploadsRejected.inc({ reason });
+    countFailedPublish(deps, source, error, bytesRead());
     throw error;
-  } finally {
-    const bytes = bytesRead();
-    if (bytes > 0) deps.metrics.uploadBytes.inc({ source }, bytes);
   }
+  countUploadBytes(deps, source, bytesRead());
+  return result;
+}
+
+/**
+ * Counts a publish that failed: the `bytesRead` request bytes in `uploadBytes`, and the refusal in
+ * `uploadsRejected` when it is the client's fault (`rejectionReason`). The ingest functions count
+ * their own; a route that refuses a publish before handing it to one (a web upload whose form
+ * head is still being read) calls this itself.
+ */
+export function countFailedPublish(
+  deps: AppDeps,
+  source: VersionSource,
+  error: unknown,
+  bytesRead: number,
+): void {
+  const reason = rejectionReason(error);
+  if (reason !== null) deps.metrics.uploadsRejected.inc({ reason });
+  countUploadBytes(deps, source, bytesRead);
+}
+
+function countUploadBytes(deps: AppDeps, source: VersionSource, bytes: number): void {
+  if (bytes > 0) deps.metrics.uploadBytes.inc({ source }, bytes);
 }
 
 /**
