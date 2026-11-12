@@ -395,6 +395,13 @@ describe.each(dialects)('comment threads on %s', (dialect) => {
     const issues = (noQuote.body as ErrorJson).error.details?.issues as { path: string }[];
     expect(issues[0]?.path).toBe('anchor.quote');
     expect((await post({ body: 'x' })).status).toBe(400);
+    // A page with a dot segment would lead the review frame out of the version's own files.
+    for (const page of ['../../a/x/raw', 'docs/..', './']) {
+      const away = await post({ body: 'x', anchor: sampleAnchor({ page }) });
+      expect(away.status).toBe(400);
+      const pageIssues = (away.body as ErrorJson).error.details?.issues as { path: string }[];
+      expect(pageIssues[0]?.path).toBe('anchor.page');
+    }
 
     expect((await api(m).post(`/comments/${root.id}/replies`, { body: ' ' })).status).toBe(400);
     expect((await api(m).patch(`/comments/${root.id}`, { body: '' })).status).toBe(400);

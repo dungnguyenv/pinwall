@@ -161,10 +161,13 @@ test('setup → sign-in → create project → upload a folder → see it in the
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(new RegExp(`/a/${made.artifactId}$`));
-  await expect(page.getByRole('link', { name: /Open page/ })).toHaveAttribute(
+  // The review screen opens on it; its menu links the raw page.
+  await page.getByRole('button', { name: 'More actions' }).click();
+  await expect(page.getByRole('menuitem', { name: 'Open raw page' })).toHaveAttribute(
     'href',
     `/a/${made.artifactId}/raw`,
   );
+  await page.keyboard.press('Escape');
 
   // The tab icon and the install manifest are served.
   const favicon = await page.request.get('/favicon.svg');

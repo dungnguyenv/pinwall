@@ -131,7 +131,7 @@ The exact signatures are in each task's Interfaces block.
 - **Task 6:**
   - `ReviewPage`, `top-bar.tsx`: Task 8 mounts the Share dialog there;
   - `useFullScreen`, `Popover`;
-  - the selectors that Task 11 drives: `[data-annotator]`, `article[data-thread-id]`, the button "Choose version (showing vN)", "Comment mode", and the textbox "Comment".
+  - the selectors that Task 11 drives: `[data-annotator]`, `article[data-thread-id]`, the button "Choose version, showing vN", "Comment mode", and the textbox "Comment".
 - **Task 7:** `canDelete`, and `ReviewMenu` with its `extra` slot, where Task 8 puts Share on phones.
 
 ---
@@ -649,7 +649,7 @@ export function ReviewPage(): JSX.Element;
   - **Shell.** The M7a shell shows its rail. The page fills `100dvh` as a column.
   - **Top bar** (`--topbar-height`), left to right:
     - the breadcrumb: the project as a link to `/projects/:id`, `/`, then the artifact name as the `h1` (truncated, with `title`);
-    - the version switcher, a Menu whose trigger reads `vN` and is named t('web.review.versionTrigger', { number }) ("Choose version (showing v{{number}})"). Items run newest first with the number, Current, relative time, author and message. Load more is at the bottom. Choosing the current version goes to `/a/:id`, any other to `/a/:id/v/:n`.
+    - the version switcher, a Menu whose trigger reads `vN` and is named t('web.review.versionTrigger', { number }) ("Choose version, showing v{{number}}"). Items run newest first with the number, Current, relative time, author and message. Load more is at the bottom. Choosing the current version goes to `/a/:id`, any other to `/a/:id/v/:n`.
     - a spacer;
     - the device `ToggleGroup` (Desktop, Tablet 768, Phone 390) plus a Custom width Popover with a number input (240–3840) and the scale label (`50%`) when scaled;
     - Compare (link to `/a/:id/compare?to=N`);
@@ -685,7 +685,7 @@ export function ReviewPage(): JSX.Element;
 ```ts
 test('opens the current version in the sandboxed frame, with the rail', ...);
   // renderRoute('/a/art_1') → GET …/versions/3/preview?mode=review; iframe src = grant.url, sandbox = CONTENT_SANDBOX;
-  // no 'Projects' heading (rail); link 'Launch site' → /projects/prj_2; heading 'Pricing'; button 'Choose version (showing v3)'
+  // no 'Projects' heading (rail); link 'Launch site' → /projects/prj_2; heading 'Pricing'; button 'Choose version, showing v3'
 test('a version URL shows that version and offers the latest', ...);   // /a/art_1/v/1 → preview n=1; pill text t('web.review.olderVersion', { number: 1, latest: 3 }); 'View latest' → /a/art_1
 test('the version switcher lists versions and navigates', ...);   // 'v3' marked Current; choose v2 → /a/art_1/v/2; choose v3 → /a/art_1
 test('device sizes resize the frame and are remembered', ...);

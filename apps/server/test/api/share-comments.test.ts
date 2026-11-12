@@ -237,6 +237,15 @@ describe.each(dialects)('guest comments through share links on %s', (dialect) =>
     await created(await guestPost(token, newThread({ body: 'Một\nHai' })));
   });
 
+  test("a guest's anchor page cannot lead out of the version", async () => {
+    // From a single-domain grant, this is an app route that redirects to another artifact.
+    const away = await guestPost(token, newThread({ anchor: sampleAnchor({ page: '../../a/x' }) }));
+    expect(away.status).toBe(400);
+    const issues = (await errorOf(away)).details?.issues as { path: string }[];
+    expect(issues[0]?.path).toBe('anchor.page');
+    expect(await ctx.deps.db.db.selectFrom('comments').select('id').execute()).toHaveLength(0);
+  });
+
   test('guests edit and delete their own comment for 15 minutes', async () => {
     const a = await created(await guestPost(token, newThread()));
     clock.advance(1000);

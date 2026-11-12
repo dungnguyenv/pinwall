@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { delay, HttpResponse, http } from 'msw';
 import { beforeEach, expect, test } from 'vitest';
 import i18n from '../../i18n.ts';
@@ -26,7 +26,7 @@ test('configuration shows sections, values, hidden secrets and help', async () =
   renderRoute('/admin/config');
 
   expect(await screen.findByRole('heading', { level: 1, name: 'Admin' })).toBeInTheDocument();
-  expect(document.title).toBe('Configuration · Pinwall');
+  await waitFor(() => expect(document.title).toBe('Configuration · Pinwall'));
   expect(await screen.findByText(t('web.config.envNote'))).toBeInTheDocument();
   expect(t('web.config.envNote')).toBe(
     'These settings come from environment variables. Pinwall shows them but never changes them: edit your deployment and restart.',

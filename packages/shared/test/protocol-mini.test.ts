@@ -35,6 +35,8 @@ test('Anchor validates under zod/mini as under zod', () => {
   ).toEqual([['dom']]);
   for (const bad of [
     { page: 'p'.repeat(PAGE_MAX_CHARS + 1) },
+    { page: '../x' },
+    { page: 'a/./b' },
     { kind: 'area' },
     { position: { x: 1.5, y: 0 } },
     { position: { x: 0, y: Number.NaN } },

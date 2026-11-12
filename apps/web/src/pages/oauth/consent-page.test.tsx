@@ -74,7 +74,7 @@ test('shows who asks, where it returns and as whom', async () => {
   const deny = screen.getByRole('button', { name: 'Deny' });
   expect(allow).not.toHaveFocus();
   expect(deny).not.toHaveFocus();
-  expect(document.title).toBe('Allow access · Pinwall');
+  await waitFor(() => expect(document.title).toBe('Allow access · Pinwall'));
 });
 
 test('a person without an email is named alone', async () => {

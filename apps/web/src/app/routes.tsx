@@ -18,8 +18,11 @@ const ProjectPage = lazy(() =>
 const SearchPage = lazy(() =>
   import('../pages/search-page.tsx').then((m) => ({ default: m.SearchPage })),
 );
-const ArtifactPage = lazy(() =>
-  import('../pages/artifact/artifact-page.tsx').then((m) => ({ default: m.ArtifactPage })),
+const ReviewPage = lazy(() =>
+  import('../review/viewer/review-page.tsx').then((m) => ({ default: m.ReviewPage })),
+);
+const ComparePage = lazy(() =>
+  import('../review/compare/compare-page.tsx').then((m) => ({ default: m.ComparePage })),
 );
 const NotFoundPage = lazy(() =>
   import('../pages/not-found-page.tsx').then((m) => ({ default: m.NotFoundPage })),
@@ -57,6 +60,9 @@ const ConfigPage = lazy(() =>
 const ConsentPage = lazy(() =>
   import('../pages/oauth/consent-page.tsx').then((m) => ({ default: m.ConsentPage })),
 );
+const SharePage = lazy(() =>
+  import('../pages/share/share-page.tsx').then((m) => ({ default: m.SharePage })),
+);
 
 function AuthRoute({ wide, children }: { wide?: boolean; children: ReactNode }) {
   return <Suspense fallback={<AuthPageFallback wide={wide} />}>{children}</Suspense>;
@@ -86,6 +92,15 @@ export function buildRoutes(): RouteObject[] {
         </AuthRoute>
       ),
     },
+    // A share link's viewer: no account, no shell. The server decides which links reach it.
+    {
+      path: '/s/:token',
+      element: (
+        <Suspense fallback={<div className="min-h-dvh bg-canvas" />}>
+          <SharePage />
+        </Suspense>
+      ),
+    },
     {
       path: '/oauth/consent',
       element: (
@@ -108,10 +123,9 @@ export function buildRoutes(): RouteObject[] {
         { path: '/', element: <AllArtifactsPage /> },
         { path: 'projects/:projectId', element: <ProjectPage /> },
         { path: 'search', element: <SearchPage /> },
-        // The review screen (M8) replaces this page on all three.
-        { path: 'a/:artifactId', element: <ArtifactPage /> },
-        { path: 'a/:artifactId/v/:n', element: <ArtifactPage /> },
-        { path: 'a/:artifactId/compare', element: <ArtifactPage /> },
+        { path: 'a/:artifactId', element: <ReviewPage /> },
+        { path: 'a/:artifactId/v/:n', element: <ReviewPage /> },
+        { path: 'a/:artifactId/compare', element: <ComparePage /> },
         {
           path: 'settings',
           element: <SettingsLayout />,

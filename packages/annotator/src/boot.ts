@@ -2,11 +2,13 @@
  * The annotator of one frame: it tells the viewer which page the frame shows, turns clicks and
  * selections into anchors in comment mode, and draws the pins the viewer sends. Every frame of a
  * review grant runs its own annotator and talks to `window.top` (the viewer) directly. It hears
- * the viewer only once it has posted `ready`, and draws only the anchors of its own page.
+ * the viewer only once it has posted `ready`, and draws only the anchors of its own page. The top
+ * content frame (the one the viewer embeds) also reports and follows the viewer's scrolling.
  */
 import {
   ANNOTATOR_GLOBAL,
   type Anchor,
+  ClientPoint,
   type PageToViewerMessage,
   PROTOCOL_VERSION,
   type ViewerToPageMessage,
@@ -33,6 +35,7 @@ import {
   windowListeners,
 } from './pristine.ts';
 import { type Placement, placeAnchor } from './reattach.ts';
+import { scrollFraction, scrollToFraction } from './scroll.ts';
 import { buildTextIndex, type TextIndex } from './text-index.ts';
 
 export interface BootOptions {
@@ -40,6 +43,11 @@ export interface BootOptions {
   scriptSrc: string | null;
   /** The viewer's window; `win.top` when left out. */
   top?: Window | null;
+  /**
+   * The frame's parent window; `win.parent` when left out. When it is `top`, this is the top
+   * content frame, the only one that posts `scrolled` and obeys `scroll-to`.
+   */
+  parent?: Window | null;
 }
 
 export interface Annotator {
@@ -57,8 +65,8 @@ type Win = Window & typeof globalThis;
 const RETRY_MS = 2000;
 /** How often the frame's URL is checked for `pushState` navigations, which fire no event. */
 const NAVIGATION_CHECK_MS = 1000;
-/** Fallback layout throttle where there is no `requestAnimationFrame`. */
-const LAYOUT_DELAY_MS = 50;
+/** Fallback layout and scroll throttle where there is no `requestAnimationFrame`. */
+const FRAME_DELAY_MS = 50;
 /** A clicked box covering this much of the viewport is "the page": the click becomes a point. */
 const PAGE_SIZED = 0.8;
 
@@ -102,6 +110,7 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
   if (page === null) return null;
   const top = opts.top === undefined ? w.top : opts.top;
   if (!top) return null;
+  const isTopContent = (opts.parent === undefined ? w.parent : opts.parent) === top;
 
   const doc = w.document;
   const events = windowListeners(w);
@@ -129,6 +138,8 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
   let swallowTimer: number | undefined;
   let retryTimer: number | undefined;
   let layoutPending = false;
+  let scrollPending = false;
+  let destroyed = false;
   let resizeObserver: ResizeObserver | null = null;
   const removers: (() => void)[] = [];
 
@@ -145,6 +156,12 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
     removers.push(() => events.remove(type, listener, options));
   };
 
+  /** Runs `fn` before the next repaint. */
+  const onNextFrame = (fn: () => void) => {
+    if (typeof w.requestAnimationFrame === 'function') w.requestAnimationFrame(fn);
+    else w.setTimeout(fn, FRAME_DELAY_MS);
+  };
+
   const runLayout = guard(() => {
     layoutPending = false;
     overlay?.layout();
@@ -152,8 +169,20 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
   const scheduleLayout = () => {
     if (layoutPending || overlay === null) return;
     layoutPending = true;
-    if (typeof w.requestAnimationFrame === 'function') w.requestAnimationFrame(runLayout);
-    else w.setTimeout(runLayout, LAYOUT_DELAY_MS);
+    onNextFrame(runLayout);
+  };
+
+  const reportScroll = guard(() => {
+    scrollPending = false;
+    if (destroyed) return;
+    post({ pinwall: 1, type: 'scrolled', frameId, ...scrollFraction(w) });
+  });
+  /** The viewport scrolled (not an element inside the page): report it once this frame. */
+  const onScroll = (event: Event) => {
+    const target = eventTarget(event);
+    if ((target !== doc && target !== w) || scrollPending) return;
+    scrollPending = true;
+    onNextFrame(reportScroll);
   };
 
   /**
@@ -225,6 +254,9 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
       case 'focus-anchor':
         overlay?.focus(msg.id);
         break;
+      case 'scroll-to':
+        if (isTopContent) scrollToFraction(w, msg);
+        break;
     }
   };
 
@@ -245,8 +277,17 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
 
   const isOverlay = (target: EventTarget | null) => overlay !== null && target === overlay.host;
 
-  const pick = (anchor: Anchor | null) => {
-    if (anchor !== null) post({ pinwall: 1, type: 'anchor-picked', anchor, frameId });
+  /** Posts `anchor`, with the pointer position of `event` when the protocol can carry it. */
+  const pick = (anchor: Anchor | null, event: MouseEvent) => {
+    if (anchor === null) return;
+    const client = ClientPoint.safeParse({ x: event.clientX, y: event.clientY });
+    post({
+      pinwall: 1,
+      type: 'anchor-picked',
+      anchor,
+      frameId,
+      ...(client.success ? { client: client.data } : {}),
+    });
   };
 
   /** Whether `el`'s box covers most of the viewport, as page wrappers do. */
@@ -285,7 +326,7 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
     if (isOverlay(target)) return;
     preventDefault(event);
     stopImmediatePropagation(event);
-    if (!swallowClick && isTrusted(event)) pick(clickAnchor(event, target));
+    if (!swallowClick && isTrusted(event)) pick(clickAnchor(event, target), event);
   };
 
   /** Middle clicks would open links in a new tab: comment mode keeps them from the page too. */
@@ -302,7 +343,7 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
     if (selection === null || isCollapsed(selection) || rangeCount(selection) === 0) return;
     const anchor = textAnchor({ doc, page }, getRangeAt(selection, 0));
     if (anchor === null) return;
-    pick(anchor);
+    pick(anchor, event);
     // The click that ends this selection belongs to it, not to the element under the pointer.
     swallowClick = true;
     if (swallowTimer !== undefined) w.clearTimeout(swallowTimer);
@@ -364,6 +405,7 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
   listen('load', onLoad, {});
   listen('resize', scheduleLayout, { passive: true });
   listen('scroll', scheduleLayout, passive);
+  if (isTopContent) listen('scroll', onScroll, passive);
   const navigationTimer = w.setInterval(guard(checkNavigation), NAVIGATION_CHECK_MS);
 
   if (doc.readyState === 'loading') {
@@ -372,7 +414,6 @@ export function boot(win: Window, opts: BootOptions): Annotator | null {
     removers.push(() => removeListener(doc, 'DOMContentLoaded', ready));
   } else guard(onReady)();
 
-  let destroyed = false;
   return {
     get page() {
       return page ?? '';

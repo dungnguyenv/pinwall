@@ -1,5 +1,17 @@
 import { z } from 'zod';
-import { ArtifactSummary, Me, Project, PublicConfig, page, VersionSummary } from '../api/dto.ts';
+import {
+  ArtifactSummary,
+  Comment,
+  CommentThread,
+  ContentGrant,
+  Me,
+  Project,
+  PublicConfig,
+  page,
+  ShareInfo,
+  ShareLink,
+  VersionSummary,
+} from '../api/dto.ts';
 
 const CREATED = Date.UTC(2026, 10, 1);
 
@@ -100,6 +112,102 @@ export const fx = {
         review: `http://localhost:3000/a/${id}`,
         raw: `http://localhost:3000/a/${id}/raw`,
       },
+      ...o,
+    });
+  },
+
+  /**
+   * An open thread on version 1, pinned to a point; its first comment is by
+   * the signed-in fixture user. `thread_id` follows `id`.
+   */
+  thread(o: Partial<CommentThread> = {}): CommentThread {
+    const id = o.id ?? 'cmt_1';
+    return CommentThread.parse({
+      id,
+      thread_id: id,
+      artifact_id: 'art_1',
+      version: { id: 'ver_1', number: 1 },
+      author: { type: 'member', user_id: 'usr_0000000000000000000a', name: 'Ada Lovelace' },
+      body: 'Make the heading larger.',
+      created_at: CREATED,
+      updated_at: CREATED,
+      edited_at: null,
+      anchor: {
+        page: '/',
+        kind: 'point',
+        position: { x: 0.5, y: 0.25 },
+        viewport: { width: 1280 },
+      },
+      status: 'open',
+      resolved_in_version: null,
+      resolved_by: null,
+      resolved_at: null,
+      replies: [],
+      ...o,
+    });
+  },
+
+  /** A reply by the fixture user in thread `cmt_1`. */
+  comment(o: Partial<Comment> = {}): Comment {
+    return Comment.parse({
+      id: 'cmt_2',
+      thread_id: 'cmt_1',
+      artifact_id: 'art_1',
+      version: { id: 'ver_1', number: 1 },
+      author: { type: 'member', user_id: 'usr_0000000000000000000a', name: 'Ada Lovelace' },
+      body: 'Agreed.',
+      created_at: CREATED + 1_000,
+      updated_at: CREATED + 1_000,
+      edited_at: null,
+      ...o,
+    });
+  },
+
+  /** A review grant good for 12 hours from now. */
+  grant(o: Partial<ContentGrant> = {}): ContentGrant {
+    return ContentGrant.parse({
+      url: 'https://content.example/g/grant-1/',
+      mode: 'review',
+      expires_at: Date.now() + 12 * 3_600_000,
+      isolation: 'content-domain',
+      ...o,
+    });
+  },
+
+  /** An active link to the current version, open to anyone who has it, without comments. */
+  shareLink(o: Partial<ShareLink> = {}): ShareLink {
+    return ShareLink.parse({
+      id: 'shl_1',
+      artifact_id: 'art_1',
+      version: null,
+      has_password: false,
+      allow_comments: false,
+      expires_at: null,
+      created_by: { user_id: 'usr_0000000000000000000a', name: 'Ada Lovelace' },
+      created_at: CREATED,
+      last_used_at: null,
+      revoked_at: null,
+      status: 'active',
+      ...o,
+    });
+  },
+
+  /**
+   * What a link without comments shows: version 1 of an HTML artifact, as raw
+   * files, with "Open original" for link `tok`. With `allow_comments` its grant
+   * is a review grant, as the server sends it.
+   */
+  shareInfo(o: Partial<ShareInfo> = {}): ShareInfo {
+    const allowComments = o.allow_comments ?? false;
+    return ShareInfo.parse({
+      artifact_name: 'Homepage',
+      kind: 'html',
+      version_number: 1,
+      follows_current: true,
+      allow_comments: allowComments,
+      expires_at: null,
+      original_url: 'http://localhost:3000/s/tok/original',
+      content: fx.grant({ mode: allowComments ? 'review' : 'raw' }),
       ...o,
     });
   },

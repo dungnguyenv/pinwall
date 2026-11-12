@@ -150,6 +150,7 @@ test('comment mode: a selection posts a text anchor and swallows the click', asy
         dom: { path: '#p1' },
       }),
       frameId,
+      client: { x: 0, y: 0 },
     },
   ]);
   expect(event.defaultPrevented).toBe(true);

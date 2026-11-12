@@ -10,7 +10,9 @@ export type DialogSize = 'sm' | 'md' | 'lg';
 /*
  * Shared by Dialog and ConfirmDialog. The overlay is also the layout box: it
  * centers the panel from 640px up and docks it to the bottom edge, full width,
- * below that. The panel scrolls inside itself, never the page.
+ * below that. The panel scrolls inside itself, never the page. `min-w-0` keeps a
+ * grid item from growing to its content, so a long one-line label (a Select's
+ * value) is cut short inside the panel instead of pushing it past the screen.
  */
 export const OVERLAY_CLASS =
   'fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-overlay p-4 data-[state=closed]:animate-fade-out data-[state=open]:animate-fade-in max-sm:items-end max-sm:justify-items-stretch max-sm:p-0';
@@ -23,7 +25,7 @@ const PANEL_SIZES: Record<DialogSize, string> = {
 
 export function panelClass(size: DialogSize) {
   return cn(
-    'relative flex max-h-[calc(100dvh-2rem)] w-full flex-col rounded-xl border border-border bg-surface text-fg shadow-dialog outline-none',
+    'relative flex max-h-[calc(100dvh-2rem)] w-full min-w-0 flex-col rounded-xl border border-border bg-surface text-fg shadow-dialog outline-none',
     'data-[state=closed]:animate-dialog-out data-[state=open]:animate-dialog-in',
     'max-sm:max-h-[90dvh] max-sm:rounded-b-none max-sm:border-x-0 max-sm:border-b-0 max-sm:pb-[env(safe-area-inset-bottom)] max-sm:data-[state=closed]:animate-sheet-out max-sm:data-[state=open]:animate-sheet-in',
     PANEL_SIZES[size],

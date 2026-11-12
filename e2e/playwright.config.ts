@@ -6,6 +6,8 @@ const port = Number(process.env.PINWALL_E2E_PORT ?? 18087);
 export default defineConfig({
   testDir: import.meta.dirname,
   testMatch: '*.spec.ts',
+  // The review suite has servers and a config of its own (review.config.ts).
+  testIgnore: 'review/**',
   // One server, one owner account, one walk after another.
   workers: 1,
   fullyParallel: false,

@@ -21,7 +21,7 @@ const STOP_TIMEOUT_MS = 10_000;
 const LOG_TAIL_LINES = 40;
 
 /** What the e2e run is currently serving, so the teardown can stop it. */
-let current: RunningPinwall | null = null;
+const running = new Set<RunningPinwall>();
 
 /** The last lines of the server's output, with the one-time setup token blanked. */
 function describeTail(lines: string[]): string {
@@ -59,13 +59,18 @@ async function terminate(child: ChildProcess): Promise<void> {
 
 /**
  * Starts the real server (`main.ts serve`) on `port` with a throwaway data directory and the
- * built SPA. Resolves once it listens and has logged the one-time setup link; rejects, with the
- * tail of its output, if it exits or stays silent for 30 seconds. Either way nothing is left
- * running or on disk after a failure.
+ * built SPA. Its public origin is `publicOrigin` (by default `http://localhost:<port>`); `env`
+ * adds or overrides settings (the isolation mode, say). Resolves once it listens and has logged
+ * the one-time setup link; rejects, with the tail of its output, if it exits or stays silent for
+ * 30 seconds. Either way nothing is left running or on disk after a failure.
  */
-export async function startPinwall(o: { port: number }): Promise<RunningPinwall> {
+export async function startPinwall(o: {
+  port: number;
+  publicOrigin?: string;
+  env?: Record<string, string>;
+}): Promise<RunningPinwall> {
   const dataDir = await mkdtemp(join(tmpdir(), 'pinwall-e2e-'));
-  const origin = `http://localhost:${o.port}`;
+  const origin = o.publicOrigin ?? `http://localhost:${o.port}`;
   // The run owns its configuration: nothing PINWALL_* from the caller's shell leaks in.
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !key.startsWith('PINWALL_')),
@@ -81,6 +86,7 @@ export async function startPinwall(o: { port: number }): Promise<RunningPinwall>
       PINWALL_HOST: '127.0.0.1',
       PINWALL_PUBLIC_ORIGIN: origin,
       PINWALL_METRICS_PORT: '0',
+      ...o.env,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -94,11 +100,12 @@ export async function startPinwall(o: { port: number }): Promise<RunningPinwall>
     if (tail.length > LOG_TAIL_LINES) tail.shift();
   };
 
+  let self: RunningPinwall | null = null;
   const stop = async () => {
     process.off('exit', killOnExit);
     await terminate(child);
     await rm(dataDir, { recursive: true, force: true });
-    if (current?.dataDir === dataDir) current = null;
+    if (self !== null) running.delete(self);
   };
 
   try {
@@ -131,9 +138,9 @@ export async function startPinwall(o: { port: number }): Promise<RunningPinwall>
         reject(new Error(`Pinwall exited before it was ready (${signal ?? `code ${code}`})`));
       });
     });
-    const running: RunningPinwall = { origin, setupUrl, dataDir, stop };
-    current = running;
-    return running;
+    self = { origin, setupUrl, dataDir, stop };
+    running.add(self);
+    return self;
   } catch (error) {
     await stop();
     throw new Error(
@@ -145,7 +152,10 @@ export async function startPinwall(o: { port: number }): Promise<RunningPinwall>
   }
 }
 
-/** Stops the server `startPinwall` started and removes its data directory; safe to call twice. */
+/**
+ * Stops every server `startPinwall` started and removes their data directories; safe to call
+ * twice.
+ */
 export async function stopPinwall(): Promise<void> {
-  await current?.stop();
+  await Promise.all([...running].map((server) => server.stop()));
 }

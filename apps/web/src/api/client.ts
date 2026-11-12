@@ -35,6 +35,8 @@ export interface RequestOptions<T> {
   /** Sent as JSON. */
   body?: unknown;
   query?: Query;
+  /** Extra request headers, such as a share-link guest's edit token. The JSON content type and `accept` win. */
+  headers?: Record<string, string>;
   /** Parses the success body. Without one the body is ignored and the call resolves undefined. */
   schema?: z.ZodType<T>;
   signal?: AbortSignal;
@@ -58,7 +60,7 @@ export function apiUrl(path: string, query?: Query): string {
  */
 export async function api<T = void>(path: string, o: RequestOptions<T> = {}): Promise<T> {
   const { method = 'GET', body, query, schema, signal, redirectOn401 = true } = o;
-  const headers: Record<string, string> = { accept: 'application/json' };
+  const headers: Record<string, string> = { ...o.headers, accept: 'application/json' };
   const init: RequestInit = { method, headers, credentials: 'same-origin' };
   if (signal) init.signal = signal;
   if (body !== undefined) {

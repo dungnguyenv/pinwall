@@ -1,12 +1,13 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
-import { readPref, usePref, writePref } from './storage.ts';
+import { readPref, readText, usePref, writePref, writeText } from './storage.ts';
 
 const VIEWS = ['grid', 'list'] as const;
 
 afterEach(() => {
   vi.restoreAllMocks();
   localStorage.clear();
+  sessionStorage.clear();
 });
 
 function blockStorage() {
@@ -57,4 +58,51 @@ test('usePref reads the new key when the key changes', () => {
   expect(result.current[0]).toBe('grid');
   rerender({ key: 'pinwall.view.a' });
   expect(result.current[0]).toBe('list');
+});
+
+test('text storage reads and writes local and session storage apart', () => {
+  expect(readText('pinwall:note')).toBeNull();
+  writeText('pinwall:note', 'kept');
+  writeText('pinwall:note', 'tab only', { session: true });
+  expect(localStorage.getItem('pinwall:note')).toBe('kept');
+  expect(sessionStorage.getItem('pinwall:note')).toBe('tab only');
+  expect(readText('pinwall:note')).toBe('kept');
+  expect(readText('pinwall:note', { session: true })).toBe('tab only');
+
+  // null removes, and only from the storage asked for.
+  writeText('pinwall:note', null, { session: true });
+  expect(readText('pinwall:note', { session: true })).toBeNull();
+  expect(readText('pinwall:note')).toBe('kept');
+  writeText('pinwall:note', null);
+  expect(readText('pinwall:note')).toBeNull();
+});
+
+test('readText treats a value longer than max as not there', () => {
+  localStorage.setItem('pinwall:note', 'abcdef');
+  expect(readText('pinwall:note', { max: 6 })).toBe('abcdef');
+  expect(readText('pinwall:note', { max: 5 })).toBeNull();
+  expect(readText('pinwall:note')).toBe('abcdef');
+});
+
+test('text storage survives a throwing storage', () => {
+  localStorage.setItem('pinwall:note', 'kept');
+  blockStorage();
+  expect(readText('pinwall:note')).toBeNull();
+  expect(readText('pinwall:note', { session: true })).toBeNull();
+  expect(() => writeText('pinwall:note', 'x')).not.toThrow();
+  expect(() => writeText('pinwall:note', 'x', { session: true })).not.toThrow();
+
+  vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+    throw new DOMException('Blocked', 'SecurityError');
+  });
+  expect(() => writeText('pinwall:note', null)).not.toThrow();
+});
+
+test('text storage survives a storage that cannot even be reached', () => {
+  const blocked = () => {
+    throw new DOMException('Blocked', 'SecurityError');
+  };
+  vi.spyOn(window, 'sessionStorage', 'get').mockImplementation(blocked);
+  expect(readText('pinwall:note', { session: true })).toBeNull();
+  expect(() => writeText('pinwall:note', 'x', { session: true })).not.toThrow();
 });

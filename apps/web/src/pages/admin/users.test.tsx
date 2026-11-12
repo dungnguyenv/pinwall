@@ -111,7 +111,7 @@ test('the page opens the user list and names itself', async () => {
 
   expect(router.state.location.pathname).toBe('/admin/users');
   expect(screen.getByRole('heading', { level: 1, name: 'Admin' })).toBeInTheDocument();
-  expect(document.title).toBe('Users · Pinwall');
+  await waitFor(() => expect(document.title).toBe('Users · Pinwall'));
   const nav = screen.getByRole('navigation', { name: 'Admin sections' });
   expect(
     within(nav)

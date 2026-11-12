@@ -3,10 +3,12 @@ import {
   ANNOTATOR_GLOBAL,
   ANNOTATOR_PATH,
   Anchor,
+  ClientPoint,
   MAX_ANCHORS,
   PROTOCOL_VERSION,
   parsePageMessage,
   parseViewerMessage,
+  ScrollFraction,
 } from '../src/protocol.ts';
 
 const text = {
@@ -67,6 +69,35 @@ test('Anchor keeps its numbers and strings within bounds', () => {
   }
   expect(Anchor.safeParse({ ...text, page: 'p'.repeat(1024) }).success).toBe(true);
   expect(Anchor.safeParse({ ...text, viewport: { width: 100_000 } }).success).toBe(true);
+});
+
+test('a page has no . or .. segment, which would lead out of the version', () => {
+  for (const page of ['.', '..', './', '../', '../x', 'a/../b', 'a/./b', 'a/..', 'docs/.']) {
+    expect(Anchor.safeParse({ ...text, page }).error?.issues.map((i) => i.path)).toEqual([
+      ['page'],
+    ]);
+    expect(parsePageMessage({ pinwall: 1, type: 'ready', page, frameId: 'f1' })).toBeNull();
+    expect(parsePageMessage({ pinwall: 1, type: 'navigated', page, frameId: 'f1' })).toBeNull();
+    expect(
+      parseViewerMessage({
+        pinwall: 1,
+        type: 'show-anchors',
+        anchors: [{ id: 'c1', number: 1, resolved: false, anchor: { ...text, page } }],
+      }),
+    ).toBeNull();
+  }
+  // Dots inside a name are fine, and a page is decoded: "%2e%2e" is a file of that name.
+  for (const page of [
+    '',
+    'docs/',
+    '...',
+    '.well-known/x',
+    'a..b/',
+    'v1.2/notes.html',
+    '%2e%2e/x',
+  ]) {
+    expect(Anchor.safeParse({ ...text, page }).success).toBe(true);
+  }
 });
 
 test('messages need pinwall: 1 and a known type for their direction', () => {
@@ -164,4 +195,73 @@ test('every viewer message parses, and pin numbers start at 1', () => {
   ]) {
     expect(parseViewerMessage(bad)).toBeNull();
   }
+});
+
+test('pick points and scroll messages validate', () => {
+  const pointA = {
+    page: '',
+    kind: 'point',
+    position: { x: 0.2, y: 0.3 },
+    viewport: { width: 800 },
+  };
+  expect(
+    parsePageMessage({
+      pinwall: 1,
+      type: 'anchor-picked',
+      anchor: pointA,
+      frameId: 'f1',
+      client: { x: 120, y: 48.5 },
+    })?.type,
+  ).toBe('anchor-picked');
+  expect(
+    parsePageMessage({ pinwall: 1, type: 'anchor-picked', anchor: pointA, frameId: 'f1' }),
+  ).not.toBeNull();
+  expect(parsePageMessage({ pinwall: 1, type: 'scrolled', frameId: 'f1', x: 0, y: 0.5 })).toEqual({
+    pinwall: 1,
+    type: 'scrolled',
+    frameId: 'f1',
+    x: 0,
+    y: 0.5,
+  });
+  for (const bad of [
+    { type: 'scrolled', frameId: 'f1', x: 1.2, y: 0 },
+    { type: 'scrolled', frameId: 'f1', x: 0, y: -0.1 },
+    { type: 'scrolled', x: 0, y: 0 },
+    {
+      type: 'anchor-picked',
+      anchor: pointA,
+      frameId: 'f1',
+      client: { x: Number.POSITIVE_INFINITY, y: 0 },
+    },
+    { type: 'anchor-picked', anchor: pointA, frameId: 'f1', client: { x: 0, y: Number.NaN } },
+    { type: 'anchor-picked', anchor: pointA, frameId: 'f1', client: { x: 100_001, y: 0 } },
+    { type: 'anchor-picked', anchor: pointA, frameId: 'f1', client: { x: 0, y: -100_001 } },
+    { type: 'anchor-picked', anchor: pointA, frameId: 'f1', client: { x: 0 } },
+  ]) {
+    expect(parsePageMessage({ pinwall: 1, ...bad })).toBeNull();
+  }
+  expect(
+    parsePageMessage({
+      pinwall: 1,
+      type: 'anchor-picked',
+      anchor: pointA,
+      frameId: 'f1',
+      client: { x: -100_000, y: 100_000 },
+    }),
+  ).not.toBeNull();
+  expect(parseViewerMessage({ pinwall: 1, type: 'scroll-to', x: 0.25, y: 1 })?.type).toBe(
+    'scroll-to',
+  );
+  expect(parseViewerMessage({ pinwall: 1, type: 'scroll-to', x: 0.25, y: 1.5 })).toBeNull();
+  expect(parsePageMessage({ pinwall: 1, type: 'scroll-to', x: 0, y: 0 })).toBeNull();
+  expect(
+    parseViewerMessage({ pinwall: 1, type: 'scrolled', frameId: 'f1', x: 0, y: 0 }),
+  ).toBeNull();
+});
+
+test('ClientPoint and ScrollFraction name the new shapes', () => {
+  expect(ClientPoint.parse({ x: -5, y: 12.25 })).toEqual({ x: -5, y: 12.25 });
+  expect(ClientPoint.safeParse({ x: Number.NEGATIVE_INFINITY, y: 0 }).success).toBe(false);
+  expect(ScrollFraction.parse({ x: 1, y: 0 })).toEqual({ x: 1, y: 0 });
+  expect(ScrollFraction.safeParse({ x: 0, y: 1.0001 }).success).toBe(false);
 });
