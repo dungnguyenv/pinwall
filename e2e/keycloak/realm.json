@@ -1,0 +1,82 @@
+{
+  "realm": "pinwall",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "groups": [
+    { "name": "pinwall-admins", "path": "/pinwall-admins" },
+    { "name": "pinwall-members", "path": "/pinwall-members" }
+  ],
+  "clients": [
+    {
+      "clientId": "pinwall",
+      "name": "Pinwall end-to-end test",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "pinwall-e2e-client-secret",
+      "redirectUris": ["http://localhost:18096/auth/oidc/callback"],
+      "webOrigins": [],
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "consentRequired": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ],
+      "defaultClientScopes": ["basic", "acr", "web-origins", "profile", "roles", "email"],
+      "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt"]
+    }
+  ],
+  "users": [
+    {
+      "username": "ada",
+      "enabled": true,
+      "email": "ada@example.test",
+      "emailVerified": true,
+      "firstName": "Ada",
+      "lastName": "Example",
+      "credentials": [{ "type": "password", "value": "ada-e2e-password", "temporary": false }],
+      "realmRoles": ["default-roles-pinwall"],
+      "groups": ["/pinwall-admins"]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "email": "bob@example.test",
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Example",
+      "credentials": [{ "type": "password", "value": "bob-e2e-password", "temporary": false }],
+      "realmRoles": ["default-roles-pinwall"],
+      "groups": ["/pinwall-members"]
+    },
+    {
+      "username": "eve",
+      "enabled": true,
+      "email": "eve@example.test",
+      "emailVerified": true,
+      "firstName": "Eve",
+      "lastName": "Example",
+      "credentials": [{ "type": "password", "value": "eve-e2e-password", "temporary": false }],
+      "realmRoles": ["default-roles-pinwall"]
+    }
+  ]
+}
