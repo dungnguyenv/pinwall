@@ -628,9 +628,10 @@ async function insertEverything(deps: AppDeps, source: InsertSource): Promise<nu
 
 /**
  * Makes the target the restore's until it commits: on Postgres every backed-up table is locked
- * against writers (readers go on), so nothing lands between the check and the rows. Then the
- * default project a first start created is deleted, unless an artifact already uses it; on
- * SQLite this write is what takes the database's write lock.
+ * against writers (readers go on), so nothing lands between the check and the rows; on SQLite the
+ * transaction took the database's write lock when it began (`BEGIN IMMEDIATE`, see
+ * `connectDb`), which does the same. Then the default project a first start created is deleted,
+ * unless an artifact already uses it.
  */
 async function takeTarget(trx: Transaction<Database>, dialect: DbDialect): Promise<void> {
   if (dialect === 'postgres') {

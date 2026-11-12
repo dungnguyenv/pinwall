@@ -317,7 +317,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
 
-      - name: Start Postgres and MinIO
+      - name: Start Postgres and Silo
         run: docker compose -f docker-compose.test.yml up -d --wait
 
       # The image the acceptance specs run, built once here and loaded into the local Docker. It
