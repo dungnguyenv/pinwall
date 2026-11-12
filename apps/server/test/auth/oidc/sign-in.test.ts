@@ -215,20 +215,31 @@ describe.each(dialects)('OIDC sign-in on %s', (dialect) => {
         allowComments: true,
       });
     const opens = async (token: string) => (await ctx.request(`/api/v1/share/${token}`)).status;
+    const revokedAt = async () =>
+      (
+        await ctx.deps.db.db
+          .selectFrom('share_links')
+          .select('revoked_at')
+          .executeTakeFirstOrThrow()
+      ).revoked_at;
 
-    // An answer without the roles claim proves nothing: refused, but the links stay.
+    // An answer without the roles claim proves nothing: refused, and the link is only suspended
+    // while the person has no role, not revoked: admitted again, it opens again.
     const kept = await share();
     idp.setGroups(ada.sub, undefined);
     expect((await signInWithIdp(ctx, idp, { as: ada.sub })).status).toBe(403);
+    expect(await opens(kept.token)).toBe(410);
+    expect(await revokedAt()).toBeNull();
+    idp.setGroups(ada.sub, ['pinwall-users']);
+    await signInOidcUser(ctx, idp, { ...ada, groups: ['pinwall-users'] });
     expect(await opens(kept.token)).toBe(200);
 
-    // Groups that no longer earn a role: the person is out, and so is what they shared.
+    // Groups that no longer earn a role: the person is out, and what they shared is revoked.
     clock.advance(1000);
     idp.setGroups(ada.sub, ['other']);
     expect((await signInWithIdp(ctx, idp, { as: ada.sub })).status).toBe(403);
     expect(await opens(kept.token)).toBe(410);
-    const rows = await ctx.deps.db.db.selectFrom('share_links').select('revoked_at').execute();
-    expect(rows).toEqual([{ revoked_at: clock.now() }]);
+    expect(await revokedAt()).toBe(clock.now());
   });
 
   test('a sign-in token without the roles claim is logged once, by the claim name only', async () => {

@@ -4,16 +4,19 @@ import type { Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import type { Transaction } from 'kysely';
 import type { AppEnv } from '../app.ts';
+import { gateUser, idpAccessDeadline } from '../auth/oidc/gate.ts';
+import type { Db } from '../auth/passkeys.ts';
 import { normalizePassword } from '../auth/password.ts';
 import { enforceRateLimit, type RateRule } from '../auth/rate-limits.ts';
+import { hasAccess } from '../auth/roles.ts';
 import type { Config } from '../config/types.ts';
 import { contentUrl, createGrant, type GrantMode } from '../content/grants.ts';
-import type { DbDialect } from '../db/connect.ts';
 import type {
   ArtifactRow,
   ContentGrantRow,
   Database,
   ShareLinkRow,
+  UserRow,
   VersionRow,
 } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
@@ -95,11 +98,36 @@ function assertOpen(link: ShareLinkRow, now: number): void {
 }
 
 /**
+ * The person who made `link`, while they could still use Pinwall themselves: the test their API
+ * tokens and OAuth grants pass (`gateUser` without waiting on the IdP, then `hasAccess`). That
+ * fails when their account is disabled, blocked or gone, and, for an IdP user, once their last
+ * IdP check is no longer current (a refused refresh token, or no successful check within the
+ * bound). The link then answers 410 exactly as a revoked one does, saying nothing about the
+ * maker; it is suspended, not revoked, and opens again once the maker signs in and is admitted.
+ */
+async function assertMakerCurrent(deps: AppDeps, db: Db, link: ShareLinkRow): Promise<UserRow> {
+  const maker =
+    link.created_by === null
+      ? undefined
+      : await db
+          .selectFrom('users')
+          .selectAll()
+          .where('id', '=', link.created_by)
+          .executeTakeFirst();
+  if (maker !== undefined) {
+    const gate = await gateUser(deps, maker, { inline: false });
+    if (gate.ok && hasAccess(gate.user)) return gate.user;
+  }
+  throw linkGone('revoked');
+}
+
+/**
  * The share link `token` names, with its artifact and the version it shows (its own, or the
  * artifact's current one), and whether `unlockCookie` unlocks it. A token never issued answers
  * 404; a link deleted with its version or artifact, or revoked, 410 with `details.reason`
- * `deleted` or `revoked`; an expired one 410 with reason `expired`. Messages speak of the link
- * only, never of what it pointed to.
+ * `deleted` or `revoked`; an expired one 410 with reason `expired`; one whose maker has no
+ * current access answers as a revoked one (`assertMakerCurrent`). Messages speak of the link
+ * only, never of what it pointed to or who made it.
  */
 export async function resolveShare(
   deps: AppDeps,
@@ -120,6 +148,7 @@ export async function resolveShare(
     throw notFound(t('share.notFound.message'));
   }
   assertOpen(link, now);
+  await assertMakerCurrent(deps, db, link);
   const artifact = await db
     .selectFrom('artifacts')
     .selectAll()
@@ -169,11 +198,12 @@ export async function resolveCommentShare(
  * transaction once the artifact is held, and share-locked on Postgres (the order `shareGrant`,
  * revokes and deletions lock in). A revoke, expiry or deletion that landed after the request
  * resolved the link refuses the write (410, `details.reason` as `resolveShare` gives it), and
- * one that comes later waits for the write; a link closed to comments answers 403.
+ * one that comes later waits for the write. A maker without current access refuses it as a
+ * revoke does; a link closed to comments answers 403.
  */
 export async function holdCommentLink(
   trx: Transaction<Database>,
-  dialect: DbDialect,
+  deps: AppDeps,
   linkId: string,
   now: number,
 ): Promise<ShareLinkRow> {
@@ -181,11 +211,12 @@ export async function holdCommentLink(
     .selectFrom('share_links')
     .selectAll()
     .where('id', '=', linkId)
-    .$if(dialect === 'postgres', (qb) => qb.forShare())
+    .$if(deps.db.dialect === 'postgres', (qb) => qb.forShare())
     .executeTakeFirst();
   // A per-version link goes with its version, and every link with its artifact.
   if (link === undefined) throw linkGone('deleted');
   assertOpen(link, now);
+  await assertMakerCurrent(deps, trx, link);
   if (link.allow_comments !== 1) throw forbidden(t('share.commentsOff'));
   return link;
 }
@@ -308,10 +339,12 @@ export async function unlockShare(
 /**
  * A new content grant of `mode` to the version `s` shows, made for the link's guest: no user,
  * the link recorded so revoking it ends the grant, and lasting `PINWALL_PREVIEW_TTL` but never
- * past the link's expiry. A locked link gets none (401). The link is checked again in the
- * transaction that writes the grant, with its artifact and its row share-locked on Postgres
- * (the order revokes and deletions lock them in), so a revoke, expiry or deletion that lands
- * after `s` was read either waits for the grant and then ends it, or wins and this answers 410.
+ * past the link's expiry or its maker's IdP access deadline (`idpAccessDeadline`); none at all
+ * while the maker has no current access. A locked link gets none (401). The link is checked
+ * again in the transaction that writes the grant, with its artifact and its row share-locked on
+ * Postgres (the order revokes and deletions lock them in), so a revoke, expiry or deletion that
+ * lands after `s` was read either waits for the grant and then ends it, or wins and this
+ * answers 410.
  */
 export async function shareGrant(
   deps: AppDeps,
@@ -337,20 +370,27 @@ export async function shareGrant(
       .executeTakeFirst();
     if (artifact === undefined || link === undefined) throw linkGone('deleted');
     assertOpen(link, now);
+    const maker = await assertMakerCurrent(deps, trx, link);
     const version = await trx
       .selectFrom('versions')
       .select('id')
       .where('id', '=', s.version.id)
       .executeTakeFirst();
     if (version === undefined) throw linkGone('deleted');
-    const { previewMs } = deps.config.ttl;
+    // Never past the link's expiry, nor past the moment its maker's IdP access stops being
+    // current, as a grant made for the maker themselves would end.
+    const ends = [link.expires_at, idpAccessDeadline(maker, deps.config)];
+    const ttlMs = Math.min(
+      deps.config.ttl.previewMs,
+      ...ends.filter((end): end is number => end !== null).map((end) => end - now),
+    );
     return createGrant(deps, {
       db: trx,
       versionId: version.id,
       mode,
       user: null,
       shareLinkId: link.id,
-      ttlMs: link.expires_at === null ? previewMs : Math.min(previewMs, link.expires_at - now),
+      ttlMs,
     });
   });
 }

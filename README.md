@@ -156,7 +156,8 @@ by default, never more than 24), that someone still has access. A person removed
 loses access by the next check, with no admin action, and an admin can end a person's browser
 sessions, MCP tokens and API tokens at once with **Revoke now** under **Admin, Users**. Revoke now,
 a block, or a check that finds the provider gives someone no role also revokes every share link that
-person made, for good.
+person made, for good. Their links also stop opening whenever their own access lapses, for instance
+when a check is overdue or the provider refused it, and open again once they sign in.
 
 Put the client secret in a file and give its path in `PINWALL_OIDC_CLIENT_SECRET_FILE`. A person who
 signs in successfully but earns no role is refused. A role an admin sets on the Users page replaces
