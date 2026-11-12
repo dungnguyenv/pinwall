@@ -73,8 +73,9 @@ const secret = (
 
 /**
  * Every infrastructure setting, grouped by section in `ConfigSection` order and, within a
- * section, in the order of the roadmap's Configuration table. The one catalog of variables:
- * the admin view and the generated configuration reference both read it.
+ * section, in the order of the roadmap's Configuration table. It says how the admin view reads
+ * each setting; `config/catalog.ts` holds the text about the same variables for the generated
+ * configuration reference, and a test keeps the two lists, sections and defaults in step.
  */
 export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
   setting('general', 'PINWALL_PUBLIC_ORIGIN', (c) => c.publicOrigin),
