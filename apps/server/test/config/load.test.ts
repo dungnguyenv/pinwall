@@ -461,6 +461,7 @@ describe('proxy, secret key and access', () => {
     const c = loadConfig({
       PINWALL_OIDC_ISSUER: 'https://idp',
       PINWALL_OIDC_CLIENT_ID: 'c',
+      PINWALL_OIDC_ROLES_CLAIM: 'groups',
       PINWALL_OIDC_ADMIN_GROUPS: 'admins, ops',
       PINWALL_ADMIN_EMAILS: 'A@X.com',
       PINWALL_OIDC_EXTRA_AUTH_PARAMS: 'access_type=offline',
@@ -516,6 +517,29 @@ describe('proxy, secret key and access', () => {
     expect(issuesOf({ PINWALL_OIDC_ISSUER: 'not a url', PINWALL_OIDC_CLIENT_ID: 'c' })).toEqual([
       expect.stringMatching(/^PINWALL_OIDC_ISSUER: /),
     ]);
+  });
+
+  test('group rules need a roles claim to read groups from', () => {
+    const oidc = { PINWALL_OIDC_ISSUER: 'https://idp', PINWALL_OIDC_CLIENT_ID: 'c' };
+    for (const groups of [
+      { PINWALL_OIDC_ADMIN_GROUPS: 'admins' },
+      { PINWALL_OIDC_MEMBER_GROUPS: 'staff' },
+      { PINWALL_OIDC_ADMIN_GROUPS: 'admins', PINWALL_OIDC_MEMBER_GROUPS: 'staff' },
+    ]) {
+      expect(issuesOf({ ...oidc, ...groups }), Object.keys(groups).join()).toEqual([
+        expect.stringMatching(
+          /^PINWALL_OIDC_ROLES_CLAIM: required when PINWALL_OIDC_ADMIN_GROUPS or PINWALL_OIDC_MEMBER_GROUPS is set/,
+        ),
+      ]);
+      expect(
+        loadConfig({ ...oidc, ...groups, PINWALL_OIDC_ROLES_CLAIM: 'groups' }).oidc?.rolesClaim,
+      ).toBe('groups');
+    }
+    // Blank lists are no rules; a roles claim alone is fine too.
+    expect(loadConfig({ ...oidc, PINWALL_OIDC_ADMIN_GROUPS: ' , ' }).oidc?.adminGroups).toEqual([]);
+    expect(loadConfig({ ...oidc, PINWALL_OIDC_ROLES_CLAIM: 'groups' }).oidc?.rolesClaim).toBe(
+      'groups',
+    );
   });
 
   test('an http: issuer is refused unless PINWALL_OIDC_ALLOW_HTTP_ISSUER is true', () => {

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import type { UserRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
+import { endShareLinkStreams } from '../domain/live.ts';
+import { revokeShareLinksOf } from '../domain/shares.ts';
 import { decodeCursor, encodeCursor } from '../lib/cursor.ts';
 import { forbidden, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
@@ -40,24 +42,34 @@ export async function listUsers(
 }
 
 /**
- * Sets, or with `null` clears, what an admin decided for a user's role. It wins over the
- * identity provider's role and takes effect on the user's next request. An admin cannot change
- * their own, and nobody can change the owner's: the owner is always an admin, so Pinwall always
- * has one way in.
+ * Sets, or with `null` clears, what an admin decided for a user's role, from the user's next
+ * request on. `admin` and `member` replace the identity provider's role only while the IdP
+ * admits the user (see `effectiveRole`); `blocked` always applies. Blocking also revokes
+ * every share link the user made, in the same transaction (`revokeShareLinksOf`), and ends their
+ * live streams once it commits: unblocking later does not bring them back. An admin cannot
+ * change their own, and nobody can change the owner's: the owner is always an admin, so Pinwall
+ * always has one way in. Returns the user as changed, and how many share links were revoked.
  */
 export async function setRoleOverride(
   deps: AppDeps,
   actor: UserRow,
   userId: string,
   role: Role | 'blocked' | null,
-): Promise<UserRow> {
+): Promise<{ user: UserRow; shareLinks: number }> {
   if (actor.id === userId) throw forbidden(t('auth.ownRole'));
-  const { db } = deps.db;
+  const { db, dialect } = deps.db;
   const user = await db.selectFrom('users').selectAll().where('id', '=', userId).executeTakeFirst();
   if (!user) throw notFound(t('auth.userNotFound'));
   if (user.kind === 'owner') throw forbidden(t('auth.ownerRole'));
-  await db.updateTable('users').set({ role_override: role }).where('id', '=', userId).execute();
-  return { ...user, role_override: role };
+  const linkIds = await db.transaction().execute(async (trx) => {
+    // The links' artifacts are held before the user row is written, as every revoke takes them.
+    const revoked =
+      role === 'blocked' ? await revokeShareLinksOf(trx, dialect, userId, deps.clock.now()) : [];
+    await trx.updateTable('users').set({ role_override: role }).where('id', '=', userId).execute();
+    return revoked;
+  });
+  for (const linkId of linkIds) endShareLinkStreams(deps, linkId);
+  return { user: { ...user, role_override: role }, shareLinks: linkIds.length };
 }
 
 /** Whether a user with this id exists. */

@@ -83,8 +83,8 @@ Who the identity provider admits, and as what: admin or member. People who sign 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PINWALL_OIDC_ROLES_CLAIM` | none; groups are not read | The claim in the sign-in token that lists a person's groups or roles: a string, an array, or an object whose keys are the groups. A dotted name such as `realm_access.roles` reads a nested claim. |
-| `PINWALL_OIDC_ADMIN_GROUPS` | none | Groups whose members become admins, separated by commas. Names must match exactly, including case. Needs `PINWALL_OIDC_ROLES_CLAIM`. |
-| `PINWALL_OIDC_MEMBER_GROUPS` | none | Groups whose members become members, separated by commas. Names must match exactly, including case. Needs `PINWALL_OIDC_ROLES_CLAIM`. |
+| `PINWALL_OIDC_ADMIN_GROUPS` | none | Groups whose members become admins, separated by commas. Names must match exactly, including case. Requires `PINWALL_OIDC_ROLES_CLAIM`: without it Pinwall does not start. |
+| `PINWALL_OIDC_MEMBER_GROUPS` | none | Groups whose members become members, separated by commas. Names must match exactly, including case. Requires `PINWALL_OIDC_ROLES_CLAIM`: without it Pinwall does not start. |
 | `PINWALL_ADMIN_EMAILS` | none | Email addresses that become admins, separated by commas. Matched ignoring case, and only when the provider says the email is verified. |
 | `PINWALL_MEMBER_EMAILS` | none | Email addresses that become members, separated by commas. Matched ignoring case, and only when the provider says the email is verified. |
 | `PINWALL_MEMBER_DOMAINS` | none | Email domains whose verified addresses become members, such as `example.com`. When no member group, email or domain is set, everyone the provider admits is a member. |

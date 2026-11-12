@@ -14,8 +14,9 @@ export const OWNER_ROLE_MESSAGE =
 
 /**
  * A user as the admin API lists them. `effective_role` follows the server's
- * rule (the owner is always an admin, an override wins over the identity
- * provider's role) unless the test states it.
+ * rule (the owner is always an admin, a block always applies, and another
+ * override replaces the identity provider's role only while it gives one)
+ * unless the test states it.
  */
 export function fxAdminUser(o: Partial<AdminUser> = {}): AdminUser {
   const base = {
@@ -33,7 +34,14 @@ export function fxAdminUser(o: Partial<AdminUser> = {}): AdminUser {
     last_seen_at: null,
     ...o,
   };
-  const effective = base.kind === 'owner' ? 'admin' : (base.role_override ?? base.idp_role ?? null);
+  const effective =
+    base.kind === 'owner'
+      ? 'admin'
+      : base.role_override === 'blocked'
+        ? 'blocked'
+        : base.idp_role === null
+          ? null
+          : (base.role_override ?? base.idp_role);
   return AdminUser.parse({ effective_role: effective, ...base });
 }
 

@@ -47,6 +47,8 @@ export interface TestIdp {
   setGroups(sub: string, groups: unknown): void;
   /** The account is no longer found, so its refresh tokens get invalid_grant. */
   disable(sub: string): void;
+  /** Undoes `disable`: the account is found again and can sign in. */
+  enable(sub: string): void;
   /** Destroys the grants the account received, so its refresh tokens get invalid_grant. */
   revokeGrants(sub: string): Promise<void>;
   /** The account that interactions complete as, until changed. */
@@ -405,6 +407,9 @@ export async function startTestIdp(opts: TestIdpOptions = {}): Promise<TestIdp> 
     disable: (sub) => {
       account(sub);
       disabled.add(sub);
+    },
+    enable: (sub) => {
+      disabled.delete(sub);
     },
     revokeGrants: async (sub) => {
       for (const id of grantIds.get(sub) ?? []) await (await provider.Grant.find(id))?.destroy();

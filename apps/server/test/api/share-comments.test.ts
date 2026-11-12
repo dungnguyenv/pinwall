@@ -19,7 +19,7 @@ import {
 } from '../../src/domain/comments.ts';
 import { deleteVersion } from '../../src/domain/deletion.ts';
 import { ARTIFACT_TOPIC } from '../../src/domain/search.ts';
-import { SHARE_RATES } from '../../src/domain/share-access.ts';
+import { resolveShare, SHARE_RATES, shareGrant } from '../../src/domain/share-access.ts';
 import { createShareLink, revokeShareLink } from '../../src/domain/shares.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
@@ -683,6 +683,31 @@ describe.each(dialects)('guest comments through share links on %s', (dialect) =>
         versionId: v2.id,
       }),
     ).rejects.toMatchObject({ status: 400, details: { field: 'version_id' } });
+  });
+
+  test('a maker who lost access after the request resolved the link refuses writes and grants', async () => {
+    const state = await resolveShare(ctx.deps, token, undefined);
+    // Blocked since, without the block's own revoke (as if it ran outside these checks).
+    await ctx.deps.db.db
+      .updateTable('users')
+      .set({ role_override: 'blocked' })
+      .where('id', '=', member.user.id)
+      .execute();
+    const guest: CommentActor = {
+      kind: 'guest',
+      shareLinkId: linkId,
+      name: 'Lan',
+      guestToken: null,
+    };
+    const revoked = { status: 410, details: { reason: 'revoked' } };
+    await expect(
+      createThread(ctx.deps, guest, artifactId, {
+        body: 'Muộn',
+        anchor: sampleAnchor(),
+        versionId: v1.id,
+      }),
+    ).rejects.toMatchObject(revoked);
+    await expect(shareGrant(ctx.deps, state, 'review')).rejects.toMatchObject(revoked);
   });
 
   test('guest writes are rate limited per IP and per link', async () => {

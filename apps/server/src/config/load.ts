@@ -406,6 +406,21 @@ export function loadConfig(
       r.fail('PINWALL_OIDC_SCOPES', 'must include the openid scope');
     }
     const rolesClaim = r.read('PINWALL_OIDC_ROLES_CLAIM', text);
+    const adminGroups = parseList(r.raw('PINWALL_OIDC_ADMIN_GROUPS'));
+    const memberGroups = parseList(r.raw('PINWALL_OIDC_MEMBER_GROUPS'));
+    // Without a claim to read them from, nobody has groups: no group rule can ever match, so
+    // admin groups would silently make no admin and member groups would let no one in.
+    if (
+      (adminGroups.length > 0 || memberGroups.length > 0) &&
+      r.raw('PINWALL_OIDC_ROLES_CLAIM') === undefined
+    ) {
+      r.fail(
+        'PINWALL_OIDC_ROLES_CLAIM',
+        'required when PINWALL_OIDC_ADMIN_GROUPS or PINWALL_OIDC_MEMBER_GROUPS is set: without ' +
+          'it Pinwall reads no groups from the identity provider, so no group rule can match. ' +
+          "Set it to the claim that lists a person's groups, such as groups or realm_access.roles",
+      );
+    }
     if (issuer !== undefined && clientIdRaw !== undefined) {
       oidc = {
         issuer,
@@ -416,8 +431,8 @@ export function loadConfig(
         extraAuthParams: r.read('PINWALL_OIDC_EXTRA_AUTH_PARAMS', custom(parseAuthParams)) ?? {},
         allowHttpIssuer,
         ...(rolesClaim === undefined ? {} : { rolesClaim }),
-        adminGroups: parseList(r.raw('PINWALL_OIDC_ADMIN_GROUPS')),
-        memberGroups: parseList(r.raw('PINWALL_OIDC_MEMBER_GROUPS')),
+        adminGroups,
+        memberGroups,
       };
     }
   }

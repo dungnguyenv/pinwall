@@ -32,6 +32,8 @@ export interface OidcRuntime {
   readonly inlineBackoffUntil: Map<string, number>;
   /** How long a request waits for an inline re-check. */
   inlineRecheckTimeoutMs: number;
+  /** Whether a sign-in token without the roles claim has been logged yet. */
+  missingRolesClaimLogged: boolean;
 }
 
 /** Any failure to fetch or accept the IdP's discovery document. */
@@ -85,6 +87,7 @@ export function oidcRuntime(deps: AppDeps): OidcRuntime {
     inflight: new Map(),
     inlineBackoffUntil: new Map(),
     inlineRecheckTimeoutMs: INLINE_RECHECK_TIMEOUT_MS,
+    missingRolesClaimLogged: false,
   };
   runtimes.set(deps, runtime);
   return runtime;

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Me } from '@pinwall/shared';
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
+import { createShareLink } from '../../../src/domain/shares.ts';
 import { publicUrl } from '../../../src/http/public-url.ts';
 import { FixedClock } from '../../../src/lib/clock.ts';
 import { t } from '../../../src/lib/i18n.ts';
@@ -10,6 +11,7 @@ import { createTestContext, type TestContext } from '../../helpers/context.ts';
 import { dialects } from '../../helpers/db.ts';
 import { authorizeAtIdp, signInOidcUser, signInWithIdp } from '../../helpers/oidc-browser.ts';
 import { startTestIdp, type TestIdp, type TestIdpAccount } from '../../helpers/oidc-idp.ts';
+import { publishFiles } from '../../helpers/publish.ts';
 
 const T = Date.UTC(2026, 10, 10);
 const ROLE_ENV = {
@@ -198,6 +200,67 @@ describe.each(dialects)('OIDC sign-in on %s', (dialect) => {
     expect(await sessions()).toHaveLength(0);
     const user = await userBySub(sub);
     expect(user).toMatchObject({ kind: 'oidc', idp_role: null, idp_refresh_token: null });
+  });
+
+  test('a sign-in the IdP no longer admits revokes what the person shared', async () => {
+    await start();
+    const ada = account();
+    const { user } = await signInOidcUser(ctx, idp, ada);
+    const { artifact } = await publishFiles(ctx, user, { 'index.html': '<p>một</p>' });
+    const share = () =>
+      createShareLink(ctx.deps, user, artifact.id, {
+        versionId: null,
+        password: null,
+        expiresAt: null,
+        allowComments: true,
+      });
+    const opens = async (token: string) => (await ctx.request(`/api/v1/share/${token}`)).status;
+    const revokedAt = async () =>
+      (
+        await ctx.deps.db.db
+          .selectFrom('share_links')
+          .select('revoked_at')
+          .executeTakeFirstOrThrow()
+      ).revoked_at;
+
+    // An answer without the roles claim proves nothing: refused, and the link is only suspended
+    // while the person has no role, not revoked: admitted again, it opens again.
+    const kept = await share();
+    idp.setGroups(ada.sub, undefined);
+    expect((await signInWithIdp(ctx, idp, { as: ada.sub })).status).toBe(403);
+    expect(await opens(kept.token)).toBe(410);
+    expect(await revokedAt()).toBeNull();
+    idp.setGroups(ada.sub, ['pinwall-users']);
+    await signInOidcUser(ctx, idp, { ...ada, groups: ['pinwall-users'] });
+    expect(await opens(kept.token)).toBe(200);
+
+    // Groups that no longer earn a role: the person is out, and what they shared is revoked.
+    clock.advance(1000);
+    idp.setGroups(ada.sub, ['other']);
+    expect((await signInWithIdp(ctx, idp, { as: ada.sub })).status).toBe(403);
+    expect(await opens(kept.token)).toBe(410);
+    expect(await revokedAt()).toBe(clock.now());
+  });
+
+  test('a sign-in token without the roles claim is logged once, by the claim name only', async () => {
+    await start();
+    const warn = vi.spyOn(ctx.deps.logger, 'warn');
+    const aboutTheClaim = () =>
+      warn.mock.calls.filter(([, msg]) => typeof msg === 'string' && msg.includes('roles claim'));
+    await signInOidcUser(ctx, idp, account());
+    expect(aboutTheClaim()).toEqual([]);
+
+    for (const groupless of [account({ groups: undefined }), account({ groups: undefined })]) {
+      expect((await signInWithIdp(ctx, idp, { as: groupless.sub })).status).toBe(403);
+    }
+    expect(aboutTheClaim()).toEqual([
+      [
+        { claim: 'groups' },
+        'An OIDC sign-in token had no roles claim, so no group rule can match that person. ' +
+          'If nobody gets in by group, make the identity provider send the claim that ' +
+          'PINWALL_OIDC_ROLES_CLAIM names. Logged once.',
+      ],
+    ]);
   });
 
   test('use a different account restarts with prompt=select_account and keeps return_to', async () => {

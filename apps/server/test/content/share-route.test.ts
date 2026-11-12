@@ -159,7 +159,13 @@ describe.each([
     const [grant] = await grantsOf(linkId);
     expect(grant?.expires_at).toBe(expiresAt);
 
-    // A link that lasts longer than a preview gives grants of the preview's length.
+    // A link that lasts longer than a preview gives grants of the preview's length, once its
+    // maker's access (checked now, as the access re-check does) outlasts the preview too.
+    await ctx.deps.db.db
+      .updateTable('users')
+      .set({ idp_checked_at: clock.now() })
+      .where('id', '=', member.user.id)
+      .execute();
     const later = await share(artifact.id, { expiresAt: clock.now() + 30 * 86_400_000 });
     expect((await open(later.token)).status).toBe(302);
     const [long] = await grantsOf(later.linkId);

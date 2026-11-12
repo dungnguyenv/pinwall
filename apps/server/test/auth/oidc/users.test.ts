@@ -39,6 +39,7 @@ describe.each(dialects)('OIDC users on %s', (dialect) => {
       env: {
         PINWALL_OIDC_ISSUER: ISSUER,
         PINWALL_OIDC_CLIENT_ID: 'pinwall',
+        PINWALL_OIDC_ROLES_CLAIM: 'groups',
         PINWALL_OIDC_ADMIN_GROUPS: 'pinwall-admins',
         PINWALL_OIDC_MEMBER_GROUPS: 'pinwall-users',
       },
@@ -173,13 +174,25 @@ describe.each(dialects)('OIDC users on %s', (dialect) => {
     expect((await row(stranger.user.id)).idp_refresh_token).toBeNull();
   });
 
-  test('role_override wins over the mapped role', async () => {
+  test('role_override replaces the mapped role only while the IdP admits the person', async () => {
     const first = await upsert(id());
-    await setColumns(first.user.id, { role_override: 'member' });
-    const allowed = await upsert(id({ groups: ['other'] }), 'rt-2');
-    expect(allowed).toMatchObject({ admitted: true });
-    expect(allowed.user).toMatchObject({ idp_role: null, role_override: 'member' });
-    expect(openRefreshToken(ctx.deps, allowed.user.idp_refresh_token ?? '')).toBe('rt-2');
+    await setColumns(first.user.id, { role_override: 'admin' });
+    const promoted = await upsert(id(), 'rt-2');
+    expect(promoted).toMatchObject({ admitted: true });
+    expect(promoted.user).toMatchObject({ idp_role: 'member', role_override: 'admin' });
+    expect(openRefreshToken(ctx.deps, promoted.user.idp_refresh_token ?? '')).toBe('rt-2');
+
+    // Dropped by the IdP: the override no longer lets them in, but stays stored.
+    for (const role_override of ['member', 'admin'] as const) {
+      await setColumns(first.user.id, { role_override });
+      const dropped = await upsert(id({ groups: ['other'] }), 'rt-3');
+      expect(dropped, role_override).toMatchObject({ admitted: false });
+      expect(dropped.user).toMatchObject({
+        idp_role: null,
+        role_override,
+        idp_refresh_token: null,
+      });
+    }
 
     await setColumns(first.user.id, { role_override: 'blocked' });
     const blocked = await upsert(id({ groups: ['pinwall-admins'] }), 'rt-3');

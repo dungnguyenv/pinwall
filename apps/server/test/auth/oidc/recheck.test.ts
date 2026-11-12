@@ -6,13 +6,16 @@ import {
   recheckUser,
 } from '../../../src/auth/oidc/recheck.ts';
 import { openRefreshToken } from '../../../src/auth/oidc/users.ts';
+import { effectiveRole } from '../../../src/auth/roles.ts';
 import type { RoleOverride, UserRow } from '../../../src/db/schema.ts';
+import { createShareLink } from '../../../src/domain/shares.ts';
 import { FixedClock } from '../../../src/lib/clock.ts';
 import { createUserToken, setupOwner } from '../../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../../helpers/context.ts';
 import { dialects } from '../../helpers/db.ts';
 import { signInOidcUser } from '../../helpers/oidc-browser.ts';
 import { startTestIdp, type TestIdp, type TestIdpAccount } from '../../helpers/oidc-idp.ts';
+import { publishFiles } from '../../helpers/publish.ts';
 
 const T = Date.UTC(2026, 10, 10);
 const H = 3_600_000;
@@ -169,6 +172,14 @@ describe.each(dialects)('access re-check on %s', (dialect) => {
     const { sub, user } = await signIn();
     await addCredentials(user.id);
     const { db } = ctx.deps.db;
+    const { artifact } = await publishFiles(ctx, user, { 'index.html': '<p>một</p>' });
+    const shared = await createShareLink(ctx.deps, user, artifact.id, {
+      versionId: null,
+      password: null,
+      expiresAt: null,
+      allowComments: true,
+    });
+    expect((await ctx.request(`/api/v1/share/${shared.token}`)).status).toBe(200);
     const info = vi.spyOn(ctx.deps.logger, 'info');
 
     idp.setGroups(sub, ['other']);
@@ -202,6 +213,11 @@ describe.each(dialects)('access re-check on %s', (dialect) => {
       .where('grant_id', '=', 'grt_1')
       .execute();
     expect(oauthTokens).toHaveLength(0);
+    // What they shared stops opening, with the content grants a guest was given.
+    const links = await db.selectFrom('share_links').select('revoked_at').execute();
+    expect(links).toEqual([{ revoked_at: clock.now() }]);
+    expect((await ctx.request(`/api/v1/share/${shared.token}`)).status).toBe(410);
+    expect(await db.selectFrom('content_grants').select('token').execute()).toEqual([]);
     expect(info).toHaveBeenCalledWith({ user_id: user.id }, 'oidc user removed');
   });
 
@@ -385,19 +401,57 @@ describe.each(dialects)('access re-check on %s', (dialect) => {
     expect(await outcome(user.id)).toBe('ok');
   });
 
-  test('role_override keeps a user after group removal, not past a refused refresh token', async () => {
+  test('an admin override holds while the IdP still admits the person', async () => {
+    await start();
+    const { user } = await signIn();
+    await setColumns(user.id, { role_override: 'admin' satisfies RoleOverride });
+    clock.advance(12 * H);
+    const r = await recheckUser(ctx.deps, user.id);
+    expect(r.outcome).toBe('ok');
+    expect(r.user).toMatchObject({ idp_role: 'member', role_override: 'admin', disabled_at: null });
+    expect(effectiveRole(r.user ?? user)).toBe('admin');
+  });
+
+  test('a role override does not keep someone the IdP dropped from the groups', async () => {
     await start();
     const { sub, user } = await signIn();
+    await addCredentials(user.id);
     await setColumns(user.id, { role_override: 'member' satisfies RoleOverride });
     idp.setGroups(sub, ['other']);
     clock.advance(12 * H);
-    expect(await outcome(user.id)).toBe('ok');
+    expect(await outcome(user.id)).toBe('removed');
+    // Removed as anyone else would be; the override stays stored, but no longer lets them in.
     expect(await row(user.id)).toMatchObject({
       idp_role: null,
       role_override: 'member',
+      disabled_at: clock.now(),
+      disabled_reason: 'idp_removed',
+      idp_refresh_token: null,
+    });
+    const tokens = await ctx.deps.db.db.selectFrom('api_tokens').select('revoked_at').execute();
+    expect(tokens).toEqual([{ revoked_at: clock.now() }]);
+
+    // Put back in a group by the IdP, they get in again, and the admin's override applies again.
+    idp.setGroups(sub, ['pinwall-admins']);
+    const back = await signInOidcUser(ctx, idp, {
+      sub,
+      name: 'Ada Example',
+      email: 'ada@example.com',
+      email_verified: true,
+      groups: ['pinwall-admins'],
+    });
+    expect(back.user).toMatchObject({
+      idp_role: 'admin',
+      role_override: 'member',
       disabled_at: null,
     });
+    expect(effectiveRole(back.user)).toBe('member');
+  });
 
+  test('a role override does not outlast a refused refresh token either', async () => {
+    await start();
+    const { sub, user } = await signIn();
+    await setColumns(user.id, { role_override: 'member' satisfies RoleOverride });
     idp.disable(sub);
     const checkedAt = clock.now();
     clock.advance(12 * H);

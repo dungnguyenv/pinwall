@@ -10,6 +10,8 @@ import {
 } from 'openid-client';
 import type { UserRow } from '../../db/schema.ts';
 import type { AppDeps } from '../../deps.ts';
+import { endShareLinkStreams } from '../../domain/live.ts';
+import { revokeShareLinksOf } from '../../domain/shares.ts';
 import { safeEqual } from '../../lib/crypto.ts';
 import { hashSecret } from '../../lib/ids.ts';
 import { hasAccess } from '../roles.ts';
@@ -22,6 +24,7 @@ import {
   oidcRuntime,
 } from './client.ts';
 import { identityFromClaims, type OidcIdentity } from './identity.ts';
+import { lacksGroupsClaim, lacksRoleClaims } from './policy.ts';
 import { upsertOidcUser } from './users.ts';
 
 /** How long a browser has to come back from the IdP. */
@@ -170,11 +173,12 @@ export async function finishOidcSignIn(
     throw flowError(deps, failure, returnTo, error);
   }
 
+  let claims: Record<string, unknown>;
   let identity: OidcIdentity;
   try {
     const idToken = tokens.claims();
     if (idToken === undefined) throw new Error('The token response has no ID token');
-    let claims: Record<string, unknown> = { ...idToken };
+    claims = { ...idToken };
     if (configuration.serverMetadata().userinfo_endpoint !== undefined) {
       const userinfo = await fetchUserInfo(configuration, tokens.access_token, idToken.sub);
       claims = { ...claims, ...userinfo };
@@ -184,6 +188,7 @@ export async function finishOidcSignIn(
     const failure = classifyOidcError(error) === 'unavailable' ? 'unavailable' : 'failed';
     throw flowError(deps, failure, returnTo, error);
   }
+  logMissingRolesClaim(deps, claims);
 
   const result = await upsertOidcUser(deps, {
     issuer: configuration.serverMetadata().issuer,
@@ -195,6 +200,12 @@ export async function finishOidcSignIn(
     return { kind: 'admitted', user: result.user, returnTo };
   }
   deps.logger.info({ user_id: result.user.id }, 'oidc sign-in denied');
+  // The IdP's whole answer earns no role: the person is out, as the access re-check would find,
+  // and since this sign-in dropped their refresh token the re-check never will. What they shared
+  // goes now. An answer that lacks a claim the rules read proves nothing, so it only refuses.
+  if (!result.admitted && !lacksRoleClaims(config, claims)) {
+    await revokeSharesOfDenied(deps, result.user.id);
+  }
   const switchTicket = await keepForAccountSwitch(deps, configuration, {
     idToken: tokens.id_token,
     returnTo,
@@ -208,4 +219,33 @@ export async function finishOidcSignIn(
     selectAccount: pending.selectAccount,
     switchTicket,
   };
+}
+
+/**
+ * Warns, once per process, when group rules are set but a sign-in token carries no roles claim:
+ * no group rule can match that person, which is easy to miss when the IdP never sends the claim
+ * (a mapper or scope left out). Only the claim's name is logged, never a value.
+ */
+function logMissingRolesClaim(deps: AppDeps, claims: Record<string, unknown>): void {
+  const runtime = oidcRuntime(deps);
+  if (runtime.missingRolesClaimLogged || !lacksGroupsClaim(deps.config, claims)) return;
+  runtime.missingRolesClaimLogged = true;
+  deps.logger.warn(
+    { claim: deps.config.oidc?.rolesClaim },
+    'An OIDC sign-in token had no roles claim, so no group rule can match that person. ' +
+      'If nobody gets in by group, make the identity provider send the claim that ' +
+      'PINWALL_OIDC_ROLES_CLAIM names. Logged once.',
+  );
+}
+
+/** Revokes the share links of a person a sign-in found out, and ends their live streams. */
+async function revokeSharesOfDenied(deps: AppDeps, userId: string): Promise<void> {
+  const { db, dialect } = deps.db;
+  const linkIds = await db
+    .transaction()
+    .execute((trx) => revokeShareLinksOf(trx, dialect, userId, deps.clock.now()));
+  for (const linkId of linkIds) endShareLinkStreams(deps, linkId);
+  if (linkIds.length > 0) {
+    deps.logger.info({ user_id: userId, share_links: linkIds.length }, 'share links revoked');
+  }
 }

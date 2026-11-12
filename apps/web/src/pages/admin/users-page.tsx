@@ -91,7 +91,14 @@ export function UsersPage() {
         title={
           revokingSelf ? t('web.admin.revoke.selfTitle') : t('web.admin.revoke.title', { name })
         }
-        body={revokingSelf ? t('web.admin.revoke.selfBody') : t('web.admin.revoke.body', { name })}
+        body={
+          <>
+            <p>
+              {revokingSelf ? t('web.admin.revoke.selfBody') : t('web.admin.revoke.body', { name })}
+            </p>
+            <p className="mt-2">{t('web.admin.revoke.shareLinks')}</p>
+          </>
+        }
         confirmLabel={t('web.admin.revoke.button')}
         tone="danger"
         errorMessage={(error) => errorMessage(error, t)}

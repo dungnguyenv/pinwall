@@ -243,7 +243,7 @@ export async function createThread(
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const artifact = await holdArtifact(trx, dialect, artifactId, now);
-    const link = await holdGuestLink(trx, dialect, actor, now);
+    const link = await holdGuestLink(trx, deps, actor, now);
     const version =
       p.versionId === null
         ? await getCurrentVersion(trx, artifact)
@@ -284,7 +284,7 @@ export async function addReply(
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const { comment: target } = await holdComment(trx, dialect, commentId, now);
-    await holdGuestLink(trx, dialect, actor, now);
+    await holdGuestLink(trx, deps, actor, now);
     const root = target.parent_id === null ? target : await getComment(trx, target.parent_id);
     await trx
       .insertInto('comments')
@@ -317,7 +317,7 @@ export async function editComment(
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const { comment } = await holdComment(trx, dialect, commentId, now);
-    await holdGuestLink(trx, dialect, actor, now);
+    await holdGuestLink(trx, deps, actor, now);
     if (actor.kind === 'guest') {
       if (!(await guestMayChange(deps, actor, comment))) throw forbidden(t('comment.guestWindow'));
     } else if (comment.author_user_id !== actor.user.id) {
@@ -349,7 +349,7 @@ export async function deleteComment(
   const outcome = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const { comment, artifact } = await holdComment(trx, dialect, commentId, now);
-    await holdGuestLink(trx, dialect, actor, now);
+    await holdGuestLink(trx, deps, actor, now);
     if (actor.kind === 'guest') {
       if (!(await guestMayChange(deps, actor, comment))) throw forbidden(t('comment.guestWindow'));
     } else if (!canDeleteComment(actor.user, comment, artifact)) {
@@ -525,11 +525,11 @@ async function holdComment(
  */
 async function holdGuestLink(
   trx: Transaction<Database>,
-  dialect: DbDialect,
+  deps: AppDeps,
   actor: CommentActor,
   now: number,
 ): Promise<ShareLinkRow | null> {
-  return actor.kind === 'guest' ? holdCommentLink(trx, dialect, actor.shareLinkId, now) : null;
+  return actor.kind === 'guest' ? holdCommentLink(trx, deps, actor.shareLinkId, now) : null;
 }
 
 async function readThread(db: Db, threadId: string): Promise<CommentThread> {

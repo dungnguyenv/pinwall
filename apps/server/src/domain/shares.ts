@@ -5,6 +5,7 @@ import type { Db } from '../auth/passkeys.ts';
 import { normalizePassword } from '../auth/password.ts';
 import { effectiveRole } from '../auth/roles.ts';
 import type { Config } from '../config/types.ts';
+import type { DbDialect } from '../db/connect.ts';
 import type { ArtifactRow, Database, ShareLinkRow, UserRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import { publicUrl } from '../http/public-url.ts';
@@ -227,9 +228,72 @@ export async function revokeShareLink(
       .where('id', '=', link.id)
       .where('revoked_at', 'is', null)
       .execute();
-    await endGrantsOf(trx, link.id, now);
+    await endGrantsOf(trx, [link.id], now);
   });
   endShareLinkStreams(deps, linkId);
+}
+
+/**
+ * Revokes, in `trx`, every share link `userId` made that is not revoked yet, as part of ending
+ * that person's access: "Revoke now", a block, or the IdP no longer admitting them. Each link
+ * ends as `revokeShareLink` ends one, with the content grants made from it, and takes its locks
+ * in the same order: the artifact first (in id order, one artifact at a time), then its links.
+ * Call it before `trx` touches any content grant or tombstone, so a deletion waiting on one of
+ * those artifacts cannot be waiting on this transaction too. A link whose artifact a deletion
+ * took meanwhile is skipped. Returns the ids of the links revoked: once `trx` has committed,
+ * end their live streams with `endShareLinkStreams`.
+ */
+export async function revokeShareLinksOf(
+  trx: Transaction<Database>,
+  dialect: DbDialect,
+  userId: string,
+  now: number,
+): Promise<string[]> {
+  const open = await trx
+    .selectFrom('share_links')
+    .select('artifact_id')
+    .distinct()
+    .where('created_by', '=', userId)
+    .where('revoked_at', 'is', null)
+    .execute();
+  const revoked: string[] = [];
+  for (const artifactId of open.map((row) => row.artifact_id).sort()) {
+    if (!(await holdIfPresent(trx, dialect, artifactId))) continue;
+    // Read under the hold: a deletion the hold waited for has taken its links along.
+    const links = await trx
+      .selectFrom('share_links')
+      .select('id')
+      .where('artifact_id', '=', artifactId)
+      .where('created_by', '=', userId)
+      .where('revoked_at', 'is', null)
+      .execute();
+    if (links.length === 0) continue;
+    const ids = links.map((link) => link.id);
+    await trx
+      .updateTable('share_links')
+      .set({ revoked_at: now })
+      .where('id', 'in', ids)
+      .where('revoked_at', 'is', null)
+      .execute();
+    await endGrantsOf(trx, ids, now);
+    revoked.push(...ids);
+  }
+  return revoked;
+}
+
+/** Holds the artifact `id` as `holdArtifact` does; false when it no longer exists. */
+async function holdIfPresent(
+  trx: Transaction<Database>,
+  dialect: DbDialect,
+  id: string,
+): Promise<boolean> {
+  const row = await trx
+    .selectFrom('artifacts')
+    .select('id')
+    .where('id', '=', id)
+    .$if(dialect === 'postgres', (qb) => qb.forShare())
+    .executeTakeFirst();
+  return row !== undefined;
 }
 
 /** `revoked` once revoked, else `expired` from `expires_at` on, else `active`. */
@@ -259,14 +323,14 @@ async function getShareLink(db: Db, id: string): Promise<ShareLinkRow> {
 }
 
 /**
- * Deletes the content grants made from link `linkId`, tombstoning those still live until they
- * would have expired, so they answer 410 rather than 404.
+ * Deletes the content grants made from the links `linkIds` (of one artifact), tombstoning those
+ * still live until they would have expired, so they answer 410 rather than 404.
  */
-async function endGrantsOf(trx: Transaction<Database>, linkId: string, now: number) {
+async function endGrantsOf(trx: Transaction<Database>, linkIds: readonly string[], now: number) {
   const live = await trx
     .selectFrom('content_grants')
     .select(['token', 'expires_at'])
-    .where('share_link_id', '=', linkId)
+    .where('share_link_id', 'in', linkIds)
     .where('expires_at', '>', now)
     .execute();
   await addTombstones(
@@ -274,7 +338,7 @@ async function endGrantsOf(trx: Transaction<Database>, linkId: string, now: numb
     live.map((grant) => ({ kind: 'content_grant', key: grant.token, expiresAt: grant.expires_at })),
     now,
   );
-  await trx.deleteFrom('content_grants').where('share_link_id', '=', linkId).execute();
+  await trx.deleteFrom('content_grants').where('share_link_id', 'in', linkIds).execute();
 }
 
 /** The number of each version in `ids` that still exists, by id. One query. */

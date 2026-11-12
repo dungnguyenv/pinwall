@@ -40,6 +40,20 @@ describe('roles', () => {
     expect(effectiveRole({ ...member, idp_role: 'admin' })).toBe('admin');
     expect(effectiveRole({ ...member, idp_role: null })).toBeNull();
     expect(effectiveRole({ ...member, role_override: 'admin' })).toBe('admin');
+    expect(effectiveRole({ ...member, idp_role: 'admin', role_override: 'member' })).toBe('member');
+  });
+
+  test('an admin or member override holds only while the IdP admits the person; blocked always', () => {
+    for (const role_override of ['admin', 'member'] as const) {
+      const dropped = { ...member, idp_role: null, role_override };
+      expect(effectiveRole(dropped), role_override).toBeNull();
+      expect(hasAccess(dropped), role_override).toBe(false);
+    }
+    for (const idp_role of ['admin', 'member', null] as const) {
+      const blocked = { ...member, idp_role, role_override: 'blocked' as const };
+      expect(effectiveRole(blocked), String(idp_role)).toBe('blocked');
+      expect(hasAccess(blocked), String(idp_role)).toBe(false);
+    }
   });
 
   test('the owner is always an admin: an override stored on the owner is ignored', () => {

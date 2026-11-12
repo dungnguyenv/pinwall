@@ -92,6 +92,17 @@ describe.each(dialects)('the share viewer API on %s', (dialect) => {
     return { status: r.status, ...((await r.json()) as ErrorJson).error };
   }
 
+  /**
+   * Records a successful IdP check of `member` now, as the access re-check does: the links they
+   * made open only while their access is current.
+   */
+  const recheckedNow = () =>
+    ctx.deps.db.db
+      .updateTable('users')
+      .set({ idp_checked_at: clock.now() })
+      .where('id', '=', member.user.id)
+      .execute();
+
   test('share info is locked until the password is given', async () => {
     const { linkId, token } = await share();
     const r = await info(token);
@@ -181,6 +192,7 @@ describe.each(dialects)('the share viewer API on %s', (dialect) => {
     expect((await info(a.token, `${name}=garbage`)).status).toBe(401);
 
     clock.advance(86_399_999);
+    await recheckedNow();
     expect((await info(a.token, cookieA)).status).toBe(200);
     clock.advance(2);
     expect((await info(a.token, cookieA)).status).toBe(401);
@@ -256,6 +268,8 @@ describe.each(dialects)('the share viewer API on %s', (dialect) => {
   });
 
   test('share info gives a review grant when comments are allowed, raw otherwise', async () => {
+    // Checked now, the maker's access outlasts a preview, so the grant gets the whole TTL.
+    await recheckedNow();
     const discussed = await share({ password: null, allowComments: true });
     const r = await info(discussed.token);
     expect(r.status).toBe(200);

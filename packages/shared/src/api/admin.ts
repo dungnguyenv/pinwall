@@ -12,7 +12,10 @@ export const AdminUser = z.object({
   avatar_url: z.string().nullable(),
   /** The role the identity provider gave; `null` for the owner and for users it gave none. */
   idp_role: z.enum(['admin', 'member']).nullable(),
-  /** What an admin set; it wins over the identity provider's role. */
+  /**
+   * What an admin set. `admin` or `member` replaces the identity provider's role only while the
+   * provider gives one; `blocked` always applies.
+   */
   role_override: z.enum(['admin', 'member', 'blocked']).nullable(),
   /** The role Pinwall acts on; `null` when the user has no role and cannot use Pinwall. */
   effective_role: z.enum(['admin', 'member', 'blocked']).nullable(),
