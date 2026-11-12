@@ -695,5 +695,8 @@
   "restore.unknownMigrations": "This backup comes from a Pinwall with database migrations this version does not have ({{names}}). Upgrade Pinwall, then restore.",
   "restore.damaged": "The archive is damaged or incomplete: {{detail}}. Nothing was restored.",
   "restore.changed": "The target gained data while the restore was running. Nothing was restored.",
-  "restore.keyChanged": "The secret key differs from the one that made this backup, so its identity-provider refresh tokens cannot be read. {{count}} single sign-on users must sign in again. To keep them signed in, restore with the original PINWALL_SECRET_KEY (on a SQLite install it is the secret.key file in the old data directory)."
+  "restore.keyChanged": "The secret key differs from the one that made this backup, so its identity-provider refresh tokens cannot be read. {{count}} single sign-on users must sign in again. To keep them signed in, restore with the original PINWALL_SECRET_KEY (on a SQLite install it is the secret.key file in the old data directory).",
+  "backup.failed": "Backup failed: {{message}}",
+  "backup.outExists": "{{path}} already exists. A backup never overwrites a file: choose another name, or remove it first.",
+  "restore.failed": "Restore failed: {{message}}"
 }
