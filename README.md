@@ -306,7 +306,7 @@ docker exec pinwall pinwall backup --out - > pinwall-$(date +%F).tar
 ```
 
 Never add `-t` to `docker exec` here. A terminal rewrites line endings in the stream and ruins the
-archive. A backup first writes the tables to temporary files under `/data/tmp`, so keep some room
+archive, so `pinwall backup --out -` refuses to write to one. A backup first writes the tables to temporary files under `/data/tmp`, so keep some room
 in the data volume. On Kubernetes:
 
 ```sh

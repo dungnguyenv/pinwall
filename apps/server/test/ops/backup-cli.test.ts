@@ -27,22 +27,6 @@ import {
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { publishFiles } from '../helpers/publish.ts';
 
-/**
- * Runs `step` again when SQLite refuses it with "database is locked". A transaction that has read
- * and then writes fails at once, whatever the busy timeout, if the other process (the backup,
- * taking and releasing its lease) committed in between; a server would answer that one request
- * with an error. The test is about the archive, not about those retries.
- */
-async function whenUnlocked<T>(step: () => Promise<T>): Promise<T> {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return await step();
-    } catch (error) {
-      if (attempt >= 5 || !/database is locked/.test(String(error))) throw error;
-    }
-  }
-}
-
 /** The blob key of the seeded 5 MB image: its SHA-256. */
 function photoKey(seed: Seeded): string {
   const photo = seed.files['img/photo.bin'];
@@ -61,6 +45,15 @@ interface Run {
   stderr: string;
 }
 
+/** The command line that runs `pinwall <args>` from source. */
+const pinwallCommand = (args: string[]) => [
+  process.execPath,
+  '--import',
+  'tsx',
+  'src/main.ts',
+  ...args,
+];
+
 /**
  * Runs `pinwall <args>` from source with only the given environment (plus PATH and HOME), feeds
  * `stdin` to it when given, and resolves once the process has exited and its output has ended.
@@ -70,7 +63,33 @@ function pinwall(
   env: Record<string, string>,
   stdin?: Buffer,
 ): { child: ReturnType<typeof spawn>; done: Promise<Run> } {
-  const child = spawn(process.execPath, ['--import', 'tsx', 'src/main.ts', ...args], {
+  const [command = '', ...commandArgs] = pinwallCommand(args);
+  return run(command, commandArgs, env, stdin);
+}
+
+/**
+ * Runs `pinwall <args>` as `pinwall()` does, but with its standard output and error on a
+ * terminal, as `docker exec -t` gives them: a pseudo-terminal from `script`. What the terminal
+ * shows, both streams together, arrives as `stdout`.
+ */
+function pinwallOnTerminal(args: string[], env: Record<string, string>): Promise<Run> {
+  const command = pinwallCommand(args);
+  // BSD script (macOS) takes the command as arguments, util-linux script as one shell line.
+  const quoted = command.map((word) => `'${word.replaceAll("'", `'\\''`)}'`).join(' ');
+  const scriptArgs =
+    process.platform === 'darwin'
+      ? ['-q', '/dev/null', ...command]
+      : ['-q', '-e', '-c', quoted, '/dev/null'];
+  return run('script', scriptArgs, env).done;
+}
+
+function run(
+  command: string,
+  args: string[],
+  env: Record<string, string>,
+  stdin?: Buffer,
+): { child: ReturnType<typeof spawn>; done: Promise<Run> } {
+  const child = spawn(command, args, {
     cwd: serverDir,
     env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', ...env },
     stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
@@ -274,6 +293,24 @@ describe('backup --out <file>', () => {
   );
 });
 
+test(
+  'backup --out - refuses a terminal, as tar does',
+  async () => {
+    const { ctx } = await sqliteInstallation();
+    await seedInstallation(ctx);
+
+    const run = await pinwallOnTerminal(['backup', '--out', '-'], envOf(ctx));
+
+    expect(run.code).toBe(1);
+    const shown = run.stdout.toString('utf8');
+    expect(shown).toContain(`Backup failed: ${t('backup.outTerminal')}`);
+    // Not a byte of the archive: its first entry is the manifest.
+    expect(shown).not.toContain('manifest.json');
+    expect(await ctx.deps.leases.isHeld(BACKUP_LEASE)).toBe(false);
+  },
+  CLI_TIMEOUT_MS,
+);
+
 describe('restore', () => {
   test(
     '--in <file> restores into a fresh data directory',
@@ -411,18 +448,19 @@ test(
     let deleted = 0;
     for (let i = 0; i < 20; i++) {
       const expectedVersionId = current ?? '';
-      const published = await whenUnlocked(() =>
-        publishFiles(
-          ctx,
-          owner,
-          { 'index.html': `<p>Bản ${i} ${randomBytes(8).toString('hex')}</p>` },
-          { kind: 'new_version', artifactId: seed.artifactId, expectedVersionId },
-        ),
+      const published = await publishFiles(
+        ctx,
+        owner,
+        { 'index.html': `<p>Bản ${i} ${randomBytes(8).toString('hex')}</p>` },
+        { kind: 'new_version', artifactId: seed.artifactId, expectedVersionId },
       );
       current = published.version.id;
       if (i % 4 === 3) {
-        const after = await whenUnlocked(() =>
-          deleteVersion(ctx.deps, auth, seed.artifactId, published.version.number),
+        const after = await deleteVersion(
+          ctx.deps,
+          auth,
+          seed.artifactId,
+          published.version.number,
         );
         current = after.currentVersionId;
         deleted++;

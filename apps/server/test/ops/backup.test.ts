@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { buffer } from 'node:stream/consumers';
-import { sql } from 'kysely';
+import { type KyselyPlugin, sql } from 'kysely';
 import { extract, type Header } from 'tar-stream';
 import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { migrations } from '../../src/db/migrations/index.ts';
@@ -32,7 +32,7 @@ import {
   seedInstallation,
 } from '../helpers/backup.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
-import { dialects } from '../helpers/db.ts';
+import { dialects, writeElsewhere } from '../helpers/db.ts';
 
 const T = Date.UTC(2026, 10, 12);
 
@@ -327,6 +327,62 @@ describe.each(dialects)('backup on %s', (dialect) => {
     );
     expect(await spoolDirs(ctx)).toEqual([]);
   });
+
+  test.runIf(dialect === 'sqlite')(
+    'the snapshot leaves the database free for writers in other processes',
+    async () => {
+      await seedInstallation(ctx);
+      const { database } = ctx.deps.config;
+      if (database.kind !== 'sqlite') throw new Error('expected SQLite');
+      // Holds the backup inside its snapshot transaction, once the snapshot has read something.
+      let reached = () => {};
+      const inSnapshot = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      let resume = () => {};
+      const resumed = new Promise<void>((resolve) => {
+        resume = resolve;
+      });
+      let paused = false;
+      const pause: KyselyPlugin = {
+        transformQuery: ({ node }) => node,
+        transformResult: async ({ result }) => {
+          if (!paused) {
+            paused = true;
+            reached();
+            await resumed;
+          }
+          return result;
+        },
+      };
+      const db = { ...ctx.deps.db, db: ctx.deps.db.db.withPlugin(pause) };
+      const backup = backupToBuffer({ ...ctx.deps, db });
+
+      await inSnapshot;
+      // The running server, in another process, writes now and must not have to wait.
+      let write: 'committed' | 'busy';
+      try {
+        write = writeElsewhere(
+          database.path,
+          'insert into tombstones (kind, key, deleted_at, expires_at) values (?, ?, ?, ?)',
+          'artifact',
+          'written-during-backup',
+          T,
+          null,
+        );
+      } finally {
+        resume();
+      }
+
+      const { buf } = await backup;
+      expect(write).toBe('committed');
+      // The archive is the database as it was when the snapshot began.
+      const keys = jsonl(finder(await readArchive(buf))('tables/tombstones.jsonl')).map(
+        (row) => row.key,
+      );
+      expect(keys).not.toContain('written-during-backup');
+    },
+  );
 
   describe('the maintenance lease', () => {
     beforeEach(() => {

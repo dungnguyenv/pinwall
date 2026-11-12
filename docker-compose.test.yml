@@ -1,10 +1,12 @@
 # Throwaway services for integration tests (`pnpm test:integration`). Data lives in tmpfs and
-# is gone when the containers stop. Ports bind to loopback only.
+# is gone when the containers stop. Ports bind to loopback only. Every image is pinned by digest
+# (the tag is there to read); to update one, take the new index digest from
+# `docker buildx imagetools inspect <name>:<tag>`.
 name: pinwall-test
 
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:e5d2edd28b1f8d40a0a6c0c9cdc545b19b56a0d5d88f94bc11a97d970d4700d0
     environment:
       POSTGRES_DB: pinwall
       POSTGRES_USER: pinwall
@@ -24,7 +26,10 @@ services:
       retries: 60
 
   minio:
-    image: minio/minio
+    # MinIO no longer publishes container images, so this is Silo, a maintained fork of its last
+    # community release (the Compose example uses it too). It keeps MinIO's S3 API, its MINIO_*
+    # variables and its `mc` client.
+    image: pgsty/silo:RELEASE.2026-11-09T00-00-00Z@sha256:08ce1505b5eacefbad1ca07159b242b9ce045a11c2817e3bc257b25f77bbc02d
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: pinwall
@@ -41,7 +46,8 @@ services:
       retries: 60
 
   minio-init:
-    image: minio/mc
+    # The same image: it carries the `mc` client.
+    image: pgsty/silo:RELEASE.2026-11-09T00-00-00Z@sha256:08ce1505b5eacefbad1ca07159b242b9ce045a11c2817e3bc257b25f77bbc02d
     depends_on:
       minio:
         condition: service_healthy
@@ -57,7 +63,7 @@ services:
   # service waits for it to complete. This idle service does that, so `--wait` returns once
   # Postgres is healthy and the bucket exists.
   ready:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:e5d2edd28b1f8d40a0a6c0c9cdc545b19b56a0d5d88f94bc11a97d970d4700d0
     entrypoint: ["sleep", "2147483647"]
     init: true
     depends_on:

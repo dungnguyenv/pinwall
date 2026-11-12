@@ -108,7 +108,8 @@ export async function createBackup(
 /**
  * Copies every table into `<spool>/<table>.jsonl` inside one read transaction. On Postgres that
  * is `REPEATABLE READ READ ONLY`; on SQLite in WAL mode a transaction sees the database as of its
- * first read, and other processes keep writing meanwhile.
+ * first read, and other processes keep writing meanwhile. `read only` keeps it a deferred
+ * transaction there: SQLite write transactions take the write lock when they begin.
  */
 async function takeSnapshot(deps: AppDeps, spool: string): Promise<Snapshot> {
   const { db, dialect } = deps.db;
@@ -134,7 +135,7 @@ async function takeSnapshot(deps: AppDeps, spool: string): Promise<Snapshot> {
   };
   return dialect === 'postgres'
     ? db.transaction().setIsolationLevel('repeatable read').setAccessMode('read only').execute(read)
-    : db.transaction().execute(read);
+    : db.transaction().setAccessMode('read only').execute(read);
 }
 
 /**

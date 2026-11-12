@@ -175,6 +175,53 @@ describe.each(dialects)('metrics on %s', (dialect) => {
     expect(text).toContain('pinwall_publishes_total{source="api"} 2');
   });
 
+  test('a web upload refused before its first file is counted', async () => {
+    const ctx = await open({ PINWALL_MAX_UPLOAD_BYTES: '10000' });
+    const { cookie } = await createSignedInUser(ctx);
+    const boundary = 'pinwall-metrics-form';
+    /** A multipart body with these parts, in order. */
+    const form = (...parts: [name: string, filename: string | null, value: string][]) => {
+      const encoded = parts.map(([name, filename, value]) => {
+        const file = filename === null ? '' : `; filename="${filename}"`;
+        return `--${boundary}\r\nContent-Disposition: form-data; name="${name}"${file}\r\n\r\n${value}\r\n`;
+      });
+      return Buffer.from(`${encoded.join('')}--${boundary}--\r\n`);
+    };
+    const upload = (body: Buffer, headers: Record<string, string> = {}) =>
+      ctx.request('/api/v1/publish/upload', {
+        method: 'POST',
+        body,
+        headers: {
+          cookie,
+          origin: ctx.deps.config.publicOrigin,
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+          ...headers,
+        },
+      });
+
+    // A file before any target: refused while the fields before the first file are read.
+    const fileFirst = form(['file', 'index.html', '<p>x</p>'], ['target', null, '{}']);
+    expect((await upload(fileFirst)).status).toBe(400);
+    let text = await scrape(ctx);
+    expect(text).toContain('pinwall_uploads_rejected_total{reason="bad_request"} 1');
+    expect(text).toContain(`pinwall_upload_bytes_total{source="web"} ${fileFirst.length}`);
+
+    // No multipart form at all, a first field that crosses the upload limit, and a length
+    // declared over it.
+    const urlencoded = { 'content-type': 'application/x-www-form-urlencoded' };
+    expect((await upload(Buffer.from('target=%7B%7D'), urlencoded)).status).toBe(400);
+    const bigField = form(['target', null, `{"name":"${'x'.repeat(20_000)}"}`]);
+    expect((await upload(bigField)).status).toBe(413);
+    const declared = await upload(form(['target', null, '{}']), { 'content-length': '10001' });
+    expect(declared.status).toBe(413);
+    text = await scrape(ctx);
+    expect(text).toContain('pinwall_uploads_rejected_total{reason="bad_request"} 2');
+    expect(text).toContain('pinwall_uploads_rejected_total{reason="max_upload_bytes"} 2');
+    const bytes = /pinwall_upload_bytes_total\{source="web"\} (\d+)/.exec(text);
+    expect(Number(bytes?.[1])).toBeGreaterThan(fileFirst.length + 10_000);
+    expect(seriesOf(text, 'pinwall_publishes_total')).toEqual([]);
+  });
+
   test('inline and file publishes are counted with their source and size', async () => {
     const ctx = await open();
     const { user } = await createSignedInUser(ctx);
