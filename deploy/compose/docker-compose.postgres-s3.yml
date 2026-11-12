@@ -1,0 +1,160 @@
+# Pinwall with PostgreSQL for its data and an S3-compatible bucket for artifact files. This file
+# runs both next to Pinwall, with a MinIO-compatible server as the object store; for a larger
+# install, point Pinwall at a managed database and bucket instead.
+#
+# 1. In the folder that holds this file, create the five secret files once, in a folder that only
+#    you can open. Compose mounts them into the containers as plain files. The database URL is
+#    built from the same password as the database. Mode 0444 lets the non-root users inside the
+#    containers read the files, and the private folder keeps other users of this machine out. Keep
+#    the folder out of version control, and back it up with the volumes: what the secret key
+#    encrypts cannot be read without it.
+#
+#      (
+#        umask 077
+#        mkdir -p secrets && cd secrets
+#        openssl rand -hex 24 > postgres-password
+#        printf 'postgres://pinwall:%s@postgres:5432/pinwall' "$(cat postgres-password)" > database-url
+#        openssl rand -hex 32 > secret-key
+#        openssl rand -hex 8  > s3-access-key-id
+#        openssl rand -hex 24 > s3-secret-access-key
+#        chmod 0444 *
+#      )
+#
+#    To keep the folder elsewhere, set PINWALL_SECRETS_DIR to its path (the default is ./secrets).
+#
+# 2. Start it, with the address people use (https behind a TLS-terminating reverse proxy, or
+#    http://localhost:8080 for a trial on this machine):
+#
+#      PINWALL_PUBLIC_ORIGIN=https://pinwall.example.com docker compose -f docker-compose.postgres-s3.yml up -d
+#
+# Variables: PINWALL_IMAGE (default: the released image; `up --build` builds it from this
+# repository), PINWALL_PUBLIC_ORIGIN, PINWALL_PORT_PUBLISHED (the port on 127.0.0.1, default 8080)
+# and PINWALL_SECRETS_DIR.
+#
+# Any S3-compatible store works: drop the minio services, set PINWALL_S3_ENDPOINT (or leave it
+# out for Amazon S3), PINWALL_S3_REGION and the bucket, and give Pinwall its own access key. The
+# MinIO root credentials are used for Pinwall here to keep the example short; in production,
+# create a dedicated access key that can read and write only the Pinwall bucket.
+name: pinwall
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pinwall
+      POSTGRES_DB: pinwall
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+    secrets:
+      - postgres-password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # Over TCP: while the image sets itself up, the server listens on its socket only, so this
+      # turns healthy once the real server is up.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "pinwall", "-d", "pinwall"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  minio:
+    # MinIO no longer publishes container images, so this is Silo, a maintained fork of its last
+    # community release. It keeps MinIO's S3 API, its MINIO_* variables, its `mc` client and its
+    # on-disk format. Any other S3-compatible store works in its place.
+    image: pgsty/silo:RELEASE.2026-11-09T00-00-00Z
+    restart: unless-stopped
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/s3-access-key-id
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/s3-secret-access-key
+    secrets:
+      - s3-access-key-id
+      - s3-secret-access-key
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # Creates the bucket (Pinwall does not) and exits.
+  minio-init:
+    # The same image: it carries the `mc` client.
+    image: pgsty/silo:RELEASE.2026-11-09T00-00-00Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    secrets:
+      - s3-access-key-id
+      - s3-secret-access-key
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        mc alias set pinwall http://minio:9000
+        "$$(cat /run/secrets/s3-access-key-id)" "$$(cat /run/secrets/s3-secret-access-key)" &&
+        mc mb --ignore-existing pinwall/pinwall
+
+  pinwall:
+    image: ${PINWALL_IMAGE:-ghcr.io/dungnguyenv/pinwall:1.0.0}
+    build:
+      context: ../..
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      # Every link, cookie flag and redirect is built from this origin (scheme and host, no path).
+      PINWALL_PUBLIC_ORIGIN: ${PINWALL_PUBLIC_ORIGIN:-https://pinwall.example.com}
+      # The secrets are read from files, so they never show up in `docker inspect`.
+      PINWALL_DATABASE_URL_FILE: /run/secrets/database-url
+      PINWALL_SECRET_KEY_FILE: /run/secrets/secret-key
+      PINWALL_S3_ACCESS_KEY_ID_FILE: /run/secrets/s3-access-key-id
+      PINWALL_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3-secret-access-key
+      PINWALL_STORAGE: s3
+      PINWALL_S3_BUCKET: pinwall
+      PINWALL_S3_ENDPOINT: http://minio:9000
+      PINWALL_S3_FORCE_PATH_STYLE: "true"
+    secrets:
+      - database-url
+      - secret-key
+      - s3-access-key-id
+      - s3-secret-access-key
+    ports:
+      - "127.0.0.1:${PINWALL_PORT_PUBLISHED:-8080}:8080"
+    volumes:
+      # With S3 storage the data folder holds only temporary files, such as upload and backup
+      # spools, but it has to be writable and large enough for them.
+      - pinwall-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # The server allows 10 s to close its connections and the database after a stop signal.
+    stop_grace_period: 15s
+
+secrets:
+  postgres-password:
+    file: ${PINWALL_SECRETS_DIR:-./secrets}/postgres-password
+  database-url:
+    file: ${PINWALL_SECRETS_DIR:-./secrets}/database-url
+  secret-key:
+    file: ${PINWALL_SECRETS_DIR:-./secrets}/secret-key
+  s3-access-key-id:
+    file: ${PINWALL_SECRETS_DIR:-./secrets}/s3-access-key-id
+  s3-secret-access-key:
+    file: ${PINWALL_SECRETS_DIR:-./secrets}/s3-secret-access-key
+
+volumes:
+  postgres-data:
+  minio-data:
+  pinwall-data:

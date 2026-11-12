@@ -1,0 +1,24 @@
+Pinwall {{ .Chart.AppVersion }} is installed as {{ include "pinwall.fullname" . }} in the namespace {{ .Release.Namespace }}.
+
+Address: {{ .Values.publicOrigin }}
+{{- if .Values.ingress.enabled }}
+It is routed by the Ingress {{ include "pinwall.fullname" . }}. Point DNS at your ingress controller.
+{{- else }}
+No Ingress is created. To try Pinwall from this machine, install with
+--set publicOrigin=http://localhost:8080 and run
+  kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ include "pinwall.fullname" . }} 8080:{{ .Values.service.port }}
+{{- end }}
+
+On its first start Pinwall prints a one-time link in its log that creates the owner account:
+  kubectl --namespace {{ .Release.Namespace }} logs deployment/{{ include "pinwall.fullname" . }}
+{{- if not .Values.persistence.enabled }}
+
+WARNING: persistence.enabled is false. /data is an emptyDir, so the database, the stored files and
+the secret key are lost whenever the pod restarts. Use it for a trial only.
+{{- end }}
+{{- if not .Values.existingSecret }}
+
+No existingSecret is set, so Pinwall uses SQLite in /data and generates its secret key there.
+For PostgreSQL, set PINWALL_DATABASE_URL and PINWALL_SECRET_KEY (and the S3 keys, if you use S3)
+through existingSecret and secretFiles; they are never accepted in env.
+{{- end }}

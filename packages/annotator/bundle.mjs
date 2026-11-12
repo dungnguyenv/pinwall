@@ -1,5 +1,6 @@
 // Bundles the annotator (src/index.ts) into the one classic script served as
 // `<grant base>/__pinwall/annotator.js`.
+import { resolve } from 'node:path';
 import { build } from 'esbuild';
 
 const here = import.meta.dirname;
@@ -22,8 +23,7 @@ const zodMini = {
   },
 };
 
-/** The annotator as one minified IIFE (unminified with `{ minify: false }`). */
-export async function bundleAnnotator({ minify = true } = {}) {
+async function bundle({ minify }) {
   const result = await build({
     absWorkingDir: here,
     entryPoints: ['src/index.ts'],
@@ -34,11 +34,29 @@ export async function bundleAnnotator({ minify = true } = {}) {
     legalComments: 'none',
     minify,
     write: false,
+    metafile: true,
     inject: ['bundle-scope.mjs'],
     plugins: [zodMini],
     logLevel: 'silent',
   });
   const [output] = result.outputFiles;
   if (!output) throw new Error('esbuild produced no annotator bundle');
-  return output.text;
+  return {
+    code: output.text,
+    // The metafile names inputs relative to the working directory.
+    inputs: Object.keys(result.metafile.inputs).map((input) => resolve(here, input)),
+  };
+}
+
+/** The annotator as one minified IIFE (unminified with `{ minify: false }`). */
+export async function bundleAnnotator({ minify = true } = {}) {
+  return (await bundle({ minify })).code;
+}
+
+/**
+ * The minified annotator and every file esbuild read to build it, as absolute paths: what the
+ * license check needs to know which packages end up in the script.
+ */
+export function bundleAnnotatorWithInputs() {
+  return bundle({ minify: true });
 }

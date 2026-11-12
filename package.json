@@ -10,7 +10,11 @@
   "packageManager": "pnpm@12.18.0",
   "scripts": {
     "build": "pnpm --filter @pinwall/web build && pnpm --filter @pinwall/server build",
+    "chart:check": "pnpm --filter @pinwall/tools exec tsx src/check-chart.ts",
     "docs:config": "pnpm --filter @pinwall/server docs:config",
+    "image:size": "pnpm --filter @pinwall/tools exec tsx src/image-size.ts",
+    "licenses:check": "pnpm --filter @pinwall/tools exec tsx src/licenses.ts check",
+    "licenses:notices": "pnpm --filter @pinwall/tools exec tsx src/licenses.ts notices",
     "test": "pnpm -r test",
     "test:integration": "docker compose -f docker-compose.test.yml up -d --wait && PINWALL_TEST_POSTGRES_URL=postgres://pinwall:pinwall@localhost:55432/pinwall PINWALL_TEST_S3_ENDPOINT=http://localhost:59000 PINWALL_TEST_S3_BUCKET=pinwall-test PINWALL_TEST_S3_ACCESS_KEY_ID=pinwall PINWALL_TEST_S3_SECRET_ACCESS_KEY=pinwall-secret pnpm test",
     "lint": "biome check .",

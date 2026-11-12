@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "pinwall.fullname" . }}
+  labels:
+    {{- include "pinwall.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "pinwall.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- if .Values.metrics.enabled }}
+---
+# The metrics have a Service of their own, always ClusterIP, so that a LoadBalancer or NodePort
+# Service for the web app never publishes them. The ServiceMonitor selects this one.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "pinwall.metricsServiceName" . }}
+  labels:
+    {{- include "pinwall.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "pinwall.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: metrics
+      port: {{ .Values.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+{{- end }}

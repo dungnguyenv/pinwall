@@ -1,0 +1,5 @@
+# The smallest install the chart accepts: the required address and an image digest. A fixed
+# digest stands in for the one a released chart carries. Used by `pnpm chart:check`.
+publicOrigin: https://pinwall.example.com
+image:
+  digest: sha256:1111111111111111111111111111111111111111111111111111111111111111

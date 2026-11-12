@@ -1,8 +1,10 @@
 // @vitest-environment node
 // esbuild's API checks its own Uint8Arrays, which jsdom's globals would replace.
+
+import { isAbsolute } from 'node:path';
 import { JSDOM } from 'jsdom';
 import { beforeAll, expect, test } from 'vitest';
-import { bundleAnnotator } from '../bundle.mjs';
+import { bundleAnnotator, bundleAnnotatorWithInputs } from '../bundle.mjs';
 
 const PAGE =
   '<!doctype html><html><head><script data-pinwall-annotator src="http://localhost:8080/c/tok/__pinwall/annotator.js"></script></head><body><p>x</p></body></html>';
@@ -86,4 +88,13 @@ test('the bundle keeps zod settings private and uses no console, storage, networ
   expect(readable).not.toMatch(/\b(?:console|localStorage|sessionStorage|fetch|XMLHttpRequest)\b/);
   expect(readable).not.toMatch(/\.innerHTML\b/);
   expect(code.length).toBeLessThan(readable.length);
+});
+
+test('the bundle can report the files it was built from, as absolute paths', async () => {
+  const { code: bundled, inputs } = await bundleAnnotatorWithInputs();
+  expect(bundled).toBe(code);
+  expect(inputs.every((input) => isAbsolute(input))).toBe(true);
+  expect(inputs.some((input) => input.endsWith('/packages/annotator/src/index.ts'))).toBe(true);
+  // zod is bundled as zod/mini, so its files are among the inputs.
+  expect(inputs.some((input) => /\/node_modules\/zod\//.test(input))).toBe(true);
 });
