@@ -13,6 +13,7 @@ import {
   expect,
   onTestFinished,
   test,
+  vi,
 } from 'vitest';
 import { idpAccessDeadline } from '../../src/auth/oidc/gate.ts';
 import { IDP_REFRESH_TOKEN_PURPOSE, openRefreshToken } from '../../src/auth/oidc/users.ts';
@@ -310,11 +311,12 @@ async function expectServing(dst: TestContext, seeded: Seeded): Promise<void> {
 describe('restore', () => {
   /** A seeded SQLite installation and its backup, shared by the tests below; nobody changes it. */
   let src: TestContext;
+  let seed: Seeded;
   let good: Buffer;
 
   beforeAll(async () => {
     src = await storageContext('sqlite+local');
-    await seedInstallation(src);
+    seed = await seedInstallation(src);
     good = (await backupToBuffer(src.deps)).buf;
   }, RESTORE_TIMEOUT_MS);
   afterAll(() => src.close());
@@ -476,6 +478,83 @@ describe('restore', () => {
       expect(users).toEqual([{ id: intruder?.id }]);
       expect(await storedKeys(dst)).toEqual([]);
       expect(await dst.deps.leases.isHeld(BACKUP_LEASE)).toBe(false);
+    });
+
+    test('a file the target stores during the restore outlives its cleanup', async () => {
+      // The archive holds this page too, so the target's copy has the same key as the restore's.
+      const page = seed.files['index.html']?.toString('utf8') ?? '';
+      let member: UserRow | undefined;
+      await expect(
+        restoreBackup(dst.deps, Readable.from(good), {
+          beforeInsert: async () => {
+            // Someone signs in on the new installation and publishes before the rows go in.
+            member = (await createSignedInUser(dst)).user;
+            await publishFiles(dst, member, { 'index.html': page });
+          },
+        }),
+      ).rejects.toThrow(t('restore.changed'));
+
+      // The member's page is still there; every other file the restore stored is gone.
+      expect(await storedKeys(dst)).toEqual([sha(page)]);
+      const versions = await dst.deps.db.db.selectFrom('versions').select('created_by').execute();
+      expect(versions).toEqual([{ created_by: member?.id }]);
+    });
+
+    test('a file that is in the store before the restore stores it is not removed', async () => {
+      const page = seed.files['index.html']?.toString('utf8') ?? '';
+      const store = dst.deps.blobs;
+      // Another writer stores the page's bytes just before the restore comes to them, after it
+      // found the store empty.
+      let raced = false;
+      const race = async (key: string) => {
+        if (raced || key !== sha(page)) return;
+        raced = true;
+        await store.put(key, Buffer.from(page), Buffer.byteLength(page));
+      };
+      const racing: BlobStore = Object.assign(Object.create(store) as BlobStore, {
+        has: async (key: string) => {
+          await race(key);
+          return store.has(key);
+        },
+        put: async (...args: Parameters<BlobStore['put']>) => {
+          await race(args[0]);
+          return store.put(...args);
+        },
+      });
+
+      await expect(
+        restoreBackup({ ...dst.deps, blobs: racing }, Readable.from(good), {
+          beforeInsert: () => Promise.reject(new Error('the restore stops here')),
+        }),
+      ).rejects.toThrow('the restore stops here');
+
+      expect(raced).toBe(true);
+      expect(await storedKeys(dst)).toEqual([sha(page)]);
+      expect(Object.values(await rowCounts(dst.deps)).every((n) => n === 0)).toBe(true);
+    });
+
+    test('a cleanup that cannot reach the database leaves the files, and says so once', async () => {
+      const warn = vi.spyOn(dst.deps.logger, 'warn');
+
+      await expect(
+        restoreBackup(dst.deps, Readable.from(good), {
+          beforeInsert: async () => {
+            await dst.deps.db.close();
+            throw new Error('the database went away');
+          },
+        }),
+      ).rejects.toThrow('the database went away');
+
+      // Unchecked files may be the target's own, so none is deleted, and one line says so.
+      const archived = (await readArchive(good))
+        .filter((entry) => entry.name.startsWith('blobs/'))
+        .map((entry) => entry.name.slice('blobs/'.length));
+      const stored = await storedKeys(dst);
+      expect(stored.sort()).toEqual(archived.sort());
+      const left = warn.mock.calls.filter(([, message]) => String(message).includes('are left'));
+      expect(left).toEqual([
+        [expect.objectContaining({ left: stored.length }), expect.any(String)],
+      ]);
     });
 
     test('a restore that loses its lease stops and removes what it stored', async () => {

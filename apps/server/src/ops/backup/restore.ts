@@ -115,8 +115,9 @@ export async function assertEmptyTarget(deps: AppDeps): Promise<void> {
  *
  * Nothing is written to the database before the whole archive has been verified. When the secret
  * key differs from the backup's, IdP refresh tokens (the only values sealed with it) are dropped
- * and a warning says who must sign in again. If anything fails, the blobs it stored are deleted,
- * so the same target can take the archive again; the error is a `RestoreError`.
+ * and a warning says who must sign in again. If anything fails, the blobs it created are deleted,
+ * so the same target can take the archive again, except any the target itself stored meanwhile
+ * (see `removeBlobs`); the error is a `RestoreError`.
  */
 export async function restoreBackup(
   deps: AppDeps,
@@ -129,6 +130,7 @@ export async function restoreBackup(
   }
   const lease = await holdMaintenanceLease(deps, 'restore');
   const written = new Set<string>();
+  const created = new Set<string>();
   let spool: string | null = null;
   let archive: ArchiveReader | null = null;
   try {
@@ -137,7 +139,7 @@ export async function restoreBackup(
     await mkdir(tmp, { recursive: true });
     spool = await mkdtemp(join(tmp, 'restore-'));
     archive = await openArchive(input);
-    const manifest = await unpack(deps, archive, { lease, spool, written });
+    const manifest = await unpack(deps, archive, { lease, spool, written, created });
     const columns = await tableColumns(deps.db.db);
     await verifyRows(manifest, { spool, columns, written });
 
@@ -149,7 +151,7 @@ export async function restoreBackup(
     return { manifest, warnings };
   } catch (error) {
     archive?.close();
-    await removeBlobs(deps, written);
+    await removeBlobs(deps, created);
     throw asRestoreError(error);
   } finally {
     await cleanUp(deps, lease, spool);
@@ -304,6 +306,8 @@ interface UnpackTarget {
   spool: string;
   /** Every blob key stored so far. */
   written: Set<string>;
+  /** The keys of `written` that were not in the store until the restore stored them. */
+  created: Set<string>;
 }
 
 /**
@@ -314,7 +318,7 @@ interface UnpackTarget {
 async function unpack(
   deps: AppDeps,
   archive: ArchiveReader,
-  { lease, spool, written }: UnpackTarget,
+  { lease, spool, written, created }: UnpackTarget,
 ): Promise<Manifest> {
   lease.assertHeld();
   const first = await archive.next();
@@ -341,8 +345,11 @@ async function unpack(
     }
     const sha256 = type === 'file' ? blobOf(name) : null;
     if (sha256 !== null && !written.has(sha256)) {
-      // Recorded first: a store that fails after the object landed still gets it deleted.
       written.add(sha256);
+      // The store was empty when the restore began, so a key it holds now was stored by someone
+      // else meanwhile (the running server, say), and a failed restore leaves it alone. Recorded
+      // before the store: one that fails after the object landed still gets it deleted.
+      if (!(await deps.blobs.has(sha256))) created.add(sha256);
       await storeBlob(deps, archive, entry, sha256, size);
       blobCount += 1;
       blobBytes += size;
@@ -705,15 +712,57 @@ async function rebuildSearch(deps: AppDeps, trx: Transaction<Database>): Promise
   }
 }
 
-/** Deletes the blobs a failed restore stored. Failures are logged; the error that ended it stands. */
-async function removeBlobs(deps: AppDeps, written: ReadonlySet<string>): Promise<void> {
-  for (const sha256 of written) {
+/**
+ * Deletes the blobs a failed restore created, except those the target's database knows: the
+ * restore's own rows never committed, so a `blobs` or `version_files` row with the key means the
+ * target stored the same bytes itself meanwhile (someone published on the new installation).
+ * Each check and its deletion hold back the target's writes (Postgres: a SHARE lock on both
+ * tables; SQLite: the write lock), so no row lands in between: the server records a blob before
+ * it stores the bytes. Failures are logged; the error that ended the restore stands. When the
+ * database cannot answer, the remaining blobs are left, since nothing tells which are the target's.
+ */
+async function removeBlobs(deps: AppDeps, created: ReadonlySet<string>): Promise<void> {
+  const { db, dialect } = deps.db;
+  let checked = 0;
+  for (const sha256 of created) {
     try {
-      await deps.blobs.delete(sha256);
+      await db.transaction().execute(async (trx) => {
+        if (dialect === 'postgres') {
+          await sql`lock table blobs, version_files in share mode`.execute(trx);
+        }
+        if (await isKnown(trx, sha256)) return;
+        try {
+          await deps.blobs.delete(sha256);
+        } catch (err) {
+          deps.logger.warn({ err, sha256 }, 'Could not remove a file a failed restore had stored');
+        }
+      });
     } catch (err) {
-      deps.logger.warn({ err, sha256 }, 'Could not remove a file a failed restore had stored');
+      deps.logger.warn(
+        { err, left: created.size - checked },
+        'Could not check which files a failed restore had stored are in use; they are left',
+      );
+      return;
     }
+    checked += 1;
   }
+}
+
+/** Whether a `blobs` or `version_files` row of the target has the key `sha256`. */
+async function isKnown(trx: Transaction<Database>, sha256: string): Promise<boolean> {
+  const stored = await trx
+    .selectFrom('blobs')
+    .select('sha256')
+    .where('sha256', '=', sha256)
+    .executeTakeFirst();
+  if (stored !== undefined) return true;
+  const used = await trx
+    .selectFrom('version_files')
+    .select('sha256')
+    .where('sha256', '=', sha256)
+    .limit(1)
+    .executeTakeFirst();
+  return used !== undefined;
 }
 
 /** Releases the lease and removes the spool. Failures are logged: they must not hide the result. */

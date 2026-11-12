@@ -322,6 +322,10 @@ docker exec -i <new container> pinwall restore --in - < pinwall.tar
 kubectl exec -i deploy/pinwall -- pinwall restore --in - < pinwall.tar
 ```
 
+Let nobody sign in to the new installation until the restore logs `restore complete`. If someone
+signs in or publishes there meanwhile, the restore stops without restoring anything, and the target
+is no longer empty.
+
 What to know about the archive:
 
 - It holds the whole database: accounts, password hashes, passkeys, sessions, API and OAuth tokens
