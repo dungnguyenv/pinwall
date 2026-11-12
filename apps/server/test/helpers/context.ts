@@ -9,7 +9,7 @@ import type { DbDialect } from '../../src/db/connect.ts';
 import { type AppDeps, closeDeps, createDeps } from '../../src/deps.ts';
 import type { FixedClock } from '../../src/lib/clock.ts';
 import { createLogger } from '../../src/lib/logger.ts';
-import { createPostgresDatabase } from './db.ts';
+import { createPostgresDatabase, type PostgresDatabase } from './db.ts';
 
 export interface TestContext {
   app: Hono<AppEnv>;
@@ -19,9 +19,35 @@ export interface TestContext {
    * URL is used as given, to play a request that reached the server under another Host.
    */
   request(path: string, init?: RequestInit): Promise<Response>;
-  /** Closes the deps and removes what the context created. Safe to call more than once. */
+  /**
+   * Closes the deps and removes what the context created. Safe to call more than once. Fails,
+   * after removing everything, when closing the deps takes over `CLOSE_WAIT_MS`.
+   */
   close(): Promise<void>;
 }
+
+/**
+ * How long `close()` waits for the deps to close, which waits for every database connection to
+ * be released. The test is over by then, so a connection still in use belongs to work that
+ * outlived it (a request or a query): rather than wait in silence until the hook times out,
+ * `close()` says what the connections are doing, removes the database anyway and fails.
+ */
+const CLOSE_WAIT_MS = 5_000;
+
+/** Whether `work` settles, either way, within `ms`. */
+async function settlesWithin(work: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<boolean>((resolve) => {
+    timer = setTimeout(resolve, ms, false);
+  });
+  try {
+    return await Promise.race([work.then(isSettled, isSettled), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const isSettled = () => true;
 
 /**
  * A complete app on a fresh temp data dir: migrated database (SQLite in the data dir, or a new
@@ -44,6 +70,7 @@ export async function createTestContext(
     for (const cleanup of cleanups.reverse()) await cleanup();
   };
 
+  let postgres: PostgresDatabase | null = null;
   let deps: AppDeps;
   try {
     const env: Record<string, string> = {};
@@ -54,6 +81,7 @@ export async function createTestContext(
     }
     if (opts.dialect === 'postgres' && given.PINWALL_DATABASE_URL === undefined) {
       const database = await createPostgresDatabase();
+      postgres = database;
       cleanups.push(database.drop);
       env.PINWALL_DATABASE_URL = database.url;
       env.PINWALL_DATABASE_POOL_SIZE = '4';
@@ -75,6 +103,25 @@ export async function createTestContext(
   }
 
   const app = buildApp(deps);
+  const close = async (): Promise<void> => {
+    const closed = closeDeps(deps);
+    if (await settlesWithin(closed, CLOSE_WAIT_MS)) {
+      await closed.finally(cleanUp);
+      return;
+    }
+    // Dropping the database (with FORCE) ends the connections `closed` is still waiting for.
+    closed.catch(() => {});
+    const connections =
+      postgres === null
+        ? null
+        : await postgres.connections().catch((error: Error) => `unknown (${error.message})`);
+    await cleanUp();
+    throw new Error(
+      `The test context did not close within ${CLOSE_WAIT_MS} ms: work that outlived the test ` +
+        'still held a database connection or a scheduled job was still running.' +
+        (connections === null ? '' : ` Connections to its database: ${connections}`),
+    );
+  };
   let closing: Promise<void> | undefined;
   return {
     app,
@@ -84,7 +131,7 @@ export async function createTestContext(
       return app.request(url, init);
     },
     close: () => {
-      closing ??= closeDeps(deps).finally(cleanUp);
+      closing ??= close();
       return closing;
     },
   };

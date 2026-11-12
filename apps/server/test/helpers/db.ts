@@ -44,11 +44,17 @@ async function openPostgres(): Promise<DbHandle> {
   }
 }
 
-/**
- * Creates an empty Postgres database on the test server and returns its connection URL.
- * `drop()` removes it, closing any connection still open to it.
- */
-export async function createPostgresDatabase(): Promise<{ url: string; drop(): Promise<void> }> {
+/** An empty database on the test server, made by `createPostgresDatabase`. */
+export interface PostgresDatabase {
+  url: string;
+  /** What each connection to the database is doing, or waiting on, as one line. */
+  connections(): Promise<string>;
+  /** Removes the database, ending any connection still open to it. */
+  drop(): Promise<void>;
+}
+
+/** Creates an empty Postgres database on the test server. */
+export async function createPostgresDatabase(): Promise<PostgresDatabase> {
   if (!postgresUrl) throw new Error('PINWALL_TEST_POSTGRES_URL is not set');
   const name = `pinwall_test_${randomBytes(8).toString('hex')}`;
   await runAsAdmin(`create database ${name}`);
@@ -56,8 +62,26 @@ export async function createPostgresDatabase(): Promise<{ url: string; drop(): P
   url.pathname = `/${name}`;
   return {
     url: url.href,
-    drop: () => runAsAdmin(`drop database if exists ${name} with (force)`),
+    connections: () => describeConnections(name),
+    drop: async () => {
+      await runAsAdmin(`drop database if exists ${name} with (force)`);
+    },
   };
+}
+
+async function describeConnections(name: string): Promise<string> {
+  const rows = (await runAsAdmin(
+    `select pid, state, wait_event_type || '/' || wait_event as wait, left(query, 200) as query
+     from pg_stat_activity where datname = $1 order by pid`,
+    [name],
+  )) as { pid: number; state: string | null; wait: string | null; query: string }[];
+  if (rows.length === 0) return 'none (one may still be connecting)';
+  return rows
+    .map(
+      (r) =>
+        `pid ${r.pid} ${r.state ?? 'starting'}${r.wait ? `, waiting on ${r.wait}` : ''}: ${r.query}`,
+    )
+    .join('; ');
 }
 
 /**
@@ -84,12 +108,26 @@ export function writeElsewhere(
   }
 }
 
-/** Runs one statement on the test server's maintenance database. */
-export async function runAsAdmin(statement: string): Promise<void> {
-  const client = new pg.Client({ connectionString: postgresUrl });
+/**
+ * Connecting as the admin and each admin statement are bounded, so a test hook that creates or
+ * drops a database fails with the reason (a connection that never came up, or Postgres's own
+ * "canceling statement due to statement timeout") instead of hanging until the hook times out.
+ * `DROP DATABASE` waits for locks and a forced checkpoint; on the test server both take
+ * milliseconds.
+ */
+const ADMIN_CONNECT_TIMEOUT_MS = 5_000;
+const ADMIN_STATEMENT_TIMEOUT_MS = 10_000;
+
+/** Runs one statement on the test server's maintenance database and returns its rows. */
+export async function runAsAdmin(statement: string, params: unknown[] = []): Promise<unknown[]> {
+  const client = new pg.Client({
+    connectionString: postgresUrl,
+    connectionTimeoutMillis: ADMIN_CONNECT_TIMEOUT_MS,
+    statement_timeout: ADMIN_STATEMENT_TIMEOUT_MS,
+  });
   await client.connect();
   try {
-    await client.query(statement);
+    return (await client.query(statement, params)).rows;
   } finally {
     await client.end();
   }
