@@ -4,6 +4,9 @@
  *   tsx src/release.ts check <tag>                        the tag is a release tag, every
  *                                                         package.json and the chart carry its
  *                                                         version, and CHANGELOG.md has its section
+ *   tsx src/release.ts outputs <tag> <tags> --out <file>  writes the verify job's outputs (version,
+ *                                                         prerelease, latest, image tags), given a
+ *                                                         file of the repository's tags, one a line
  *   tsx src/release.ts notes <tag> <digest> --out <file>  writes the GitHub release notes
  *   tsx src/release.ts chart <tag> <digest>               sets the chart's version and image digest
  *
@@ -45,6 +48,51 @@ function assertVersion(version: string): void {
   if (!VERSION_PATTERN.test(version)) {
     throw new Error(`${JSON.stringify(version)} is not a release version`);
   }
+}
+
+/** Major, minor and patch of a version without a pre-release part: '1.10.0' → [1, 10, 0]. */
+function numbers(version: string): [number, number, number] {
+  const [major = 0, minor = 0, patch = 0] = version.split('.').map(Number);
+  return [major, minor, patch];
+}
+
+/** Below zero when `a` comes before `b`, by major, then minor, then patch. */
+function compareNumbers(a: readonly number[], b: readonly number[]): number {
+  for (let i = 0; i < 3; i++) {
+    const difference = (a[i] ?? 0) - (b[i] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+/**
+ * The image tags a release of `version` gets, given every tag of the repository: the version
+ * itself, then `<major>.<minor>`, `<major>` and `latest`, each only when no full release that it
+ * covers is newer. So a patch for an older line (1.0.5 after 1.1.0) moves `1.0` but leaves `1`
+ * and `latest` on 1.1.0. A pre-release gets its own tag only, and other pre-releases and tags
+ * that are no release tag do not count.
+ */
+export function imageTags(version: string, repositoryTags: readonly string[]): string[] {
+  assertVersion(version);
+  if (version.includes('-')) return [version];
+  const own = numbers(version);
+  const releases = repositoryTags.flatMap((tag) => {
+    const released = TAG_PATTERN.exec(tag)?.[1];
+    return released === undefined || released.includes('-') ? [] : [numbers(released)];
+  });
+  /** Whether no release that shares the first `shared` numbers with this one is newer. */
+  const newest = (shared: number) =>
+    !releases.some(
+      (other) =>
+        other.slice(0, shared).every((n, i) => n === own[i]) && compareNumbers(other, own) > 0,
+    );
+  const [major, minor] = own;
+  return [
+    version,
+    ...(newest(2) ? [`${major}.${minor}`] : []),
+    ...(newest(1) ? [`${major}`] : []),
+    ...(newest(0) ? ['latest'] : []),
+  ];
 }
 
 function assertDigest(digest: string): void {
@@ -157,7 +205,7 @@ export function releaseNotes(changelog: string, version: string, p: { digest: st
     '',
     '```sh',
     `cosign verify ${image} \\`,
-    `  --certificate-identity-regexp '^https://github.com/${REPOSITORY}/\\.github/workflows/release\\.yml@refs/tags/v' \\`,
+    `  --certificate-identity https://github.com/${REPOSITORY}/.github/workflows/release.yml@refs/tags/v${version} \\`,
     '  --certificate-oidc-issuer https://token.actions.githubusercontent.com',
     '```',
     '',
@@ -207,7 +255,7 @@ export function setChartRelease(chartDir: string, p: { version: string; digest: 
 }
 
 const USAGE =
-  'usage: release.ts check <tag> | notes <tag> <digest> --out <file> | chart <tag> <digest>';
+  'usage: release.ts check <tag> | outputs <tag> <tags-file> --out <file> | notes <tag> <digest> --out <file> | chart <tag> <digest>';
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -217,6 +265,7 @@ function messageOf(error: unknown): string {
 export function main(argv: string[], root: string = ROOT): number {
   let command: string | undefined;
   let tag: string | undefined;
+  /** The third word: an image digest, or for `outputs` the file of repository tags. */
   let digest: string | undefined;
   let out: string | undefined;
   let count: number;
@@ -249,6 +298,27 @@ export function main(argv: string[], root: string = ROOT): number {
         return 1;
       }
       console.log(`${tag}: every version is ${version}, and CHANGELOG.md has its section`);
+      return 0;
+    }
+
+    if (command === 'outputs' && tag !== undefined && digest !== undefined && count === 3 && out) {
+      const version = releaseVersion(tag);
+      const tagsFile = digest;
+      const repositoryTags = readFileSync(resolve(root, tagsFile), 'utf8')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line !== '');
+      const tags = imageTags(version, repositoryTags);
+      const lines = [
+        `version=${version}`,
+        `prerelease=${version.includes('-')}`,
+        `latest=${tags.includes('latest')}`,
+        `tags=${tags.map((name) => `${IMAGE}:${name}`).join(',')}`,
+      ];
+      const file = resolve(root, out);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, `${lines.join('\n')}\n`);
+      console.log(`${tag}: image tags ${tags.join(', ')}`);
       return 0;
     }
 

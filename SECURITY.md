@@ -61,13 +61,18 @@ per-project permissions.
 Every release image is signed with [cosign](https://github.com/sigstore/cosign) without a long-lived
 key, by the release workflow of this repository, and carries build provenance and an SBOM as
 attestations. Take the image's digest from the release notes, or from `docker buildx imagetools
-inspect ghcr.io/dungnguyenv/pinwall:<version>`, and check the signature:
+inspect ghcr.io/dungnguyenv/pinwall:<version>`, and check that the release workflow signed it for
+that version's tag:
 
 ```sh
 cosign verify ghcr.io/dungnguyenv/pinwall@sha256:<digest> \
-  --certificate-identity-regexp '^https://github.com/dungnguyenv/pinwall/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-identity https://github.com/dungnguyenv/pinwall/.github/workflows/release.yml@refs/tags/v<version> \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
+
+To accept any release instead, as an admission policy might, match the identity against the release
+tags of this repository:
+`--certificate-identity-regexp '^https://github\.com/dungnguyenv/pinwall/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'`.
 
 Check the build provenance with the GitHub CLI:
 

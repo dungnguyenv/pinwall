@@ -37,6 +37,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      latest: ${{ steps.version.outputs.latest }}
       tags: ${{ steps.version.outputs.tags }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -60,27 +61,28 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: pnpm --filter @pinwall/tools exec tsx src/release.ts check "$TAG"
 
-      # The check accepted the tag, so it is "v" and a SemVer version. A pre-release gets its own
-      # image tag only: <major>.<minor>, <major> and latest stay on the last full release.
+      # Every tag of the repository, which tells what has been released so far.
+      - name: List the repository's tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh api --paginate "repos/${GH_REPO}/git/matching-refs/tags/v" \
+            --jq '.[].ref | ltrimstr("refs/tags/")' > "${RUNNER_TEMP}/repository-tags"
+
+      # The check accepted the tag, so it is "v" and a SemVer version. <major>.<minor>, <major>
+      # and latest each move only to the newest full release they cover: a patch for an older
+      # line (1.0.5 after 1.1.0) leaves 1 and latest where they are, and so does a pre-release,
+      # which gets its own image tag only. `latest` says whether this release becomes GitHub's
+      # latest release too.
       - name: Work out the version and the image tags
         id: version
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          version="${TAG#v}"
-          if [[ "$version" == *-* ]]; then
-            prerelease=true
-            tags="${IMAGE}:${version}"
-          else
-            prerelease=false
-            IFS=. read -r major minor _ <<< "$version"
-            tags="${IMAGE}:${version},${IMAGE}:${major}.${minor},${IMAGE}:${major},${IMAGE}:latest"
-          fi
-          {
-            echo "version=${version}"
-            echo "prerelease=${prerelease}"
-            echo "tags=${tags}"
-          } >> "$GITHUB_OUTPUT"
+          pnpm --filter @pinwall/tools exec tsx src/release.ts outputs "$TAG" \
+            "${RUNNER_TEMP}/repository-tags" --out "${RUNNER_TEMP}/outputs"
+          cat "${RUNNER_TEMP}/outputs" >> "$GITHUB_OUTPUT"
 
   test:
     name: CI
@@ -338,11 +340,12 @@ jobs:
           TAG: ${{ github.ref_name }}
           VERSION: ${{ needs.verify.outputs.version }}
           PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+          LATEST: ${{ needs.verify.outputs.latest }}
         run: |
           prerelease=()
           if [ "$PRERELEASE" = true ]; then prerelease=(--prerelease); fi
           gh release create "$TAG" --verify-tag --title "Pinwall ${VERSION}" \
-            --notes-file release-files/notes.md "${prerelease[@]}" \
+            --notes-file release-files/notes.md "${prerelease[@]}" --latest="$LATEST" \
             "release-files/pinwall-${VERSION}.tgz" \
             "release-files/pinwall-${VERSION}.spdx.json" \
             release-files/THIRD_PARTY_NOTICES

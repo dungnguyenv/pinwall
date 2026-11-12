@@ -6,6 +6,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { parse } from 'yaml';
 import {
   checkVersions,
+  imageTags,
   main,
   releaseNotes,
   releaseVersion,
@@ -189,6 +190,52 @@ describe('checkVersions', () => {
   });
 });
 
+describe('imageTags', () => {
+  test('the first release gets its version, <major>.<minor>, <major> and latest', () => {
+    expect(imageTags('1.0.0', ['v1.0.0'])).toEqual(['1.0.0', '1.0', '1', 'latest']);
+  });
+
+  test('a newer release moves every alias', () => {
+    expect(imageTags('1.1.0', ['v1.0.0', 'v1.0.1', 'v1.1.0'])).toEqual([
+      '1.1.0',
+      '1.1',
+      '1',
+      'latest',
+    ]);
+  });
+
+  test('a patch for an older line moves only its own <major>.<minor>', () => {
+    expect(imageTags('1.0.5', ['v1.0.4', 'v1.1.0', 'v1.0.5'])).toEqual(['1.0.5', '1.0']);
+  });
+
+  test('a release in an older major moves its <major>.<minor> and <major>, not latest', () => {
+    expect(imageTags('1.2.0', ['v1.1.0', 'v2.0.0', 'v1.2.0'])).toEqual(['1.2.0', '1.2', '1']);
+  });
+
+  test('versions compare by number, not as text', () => {
+    expect(imageTags('1.9.1', ['v1.10.0', 'v1.9.1'])).toEqual(['1.9.1', '1.9']);
+    expect(imageTags('1.10.0', ['v1.9.1', 'v1.10.0'])).toEqual(['1.10.0', '1.10', '1', 'latest']);
+    expect(imageTags('2.0.0', ['v10.0.0', 'v2.0.0'])).toEqual(['2.0.0', '2.0', '2']);
+  });
+
+  test('a pre-release gets its own tag only', () => {
+    expect(imageTags('1.1.0-rc.1', ['v1.0.0', 'v1.1.0-rc.1'])).toEqual(['1.1.0-rc.1']);
+  });
+
+  test('pre-releases and tags that are no release do not hold an alias back', () => {
+    const tags = ['v1.0.0', 'v1.1.0-rc.1', 'v2.0', 'v9.9.9.9', 'release-3.0.0', 'v1.0.1'];
+    expect(imageTags('1.0.1', tags)).toEqual(['1.0.1', '1.0', '1', 'latest']);
+  });
+
+  test('running a release again moves its aliases again', () => {
+    expect(imageTags('1.1.0', ['v1.0.0', 'v1.1.0'])).toEqual(['1.1.0', '1.1', '1', 'latest']);
+  });
+
+  test.each(['v1.0.0', '1.0', ''])('%j is refused as a version', (version) => {
+    expect(() => imageTags(version, [])).toThrow('not a release version');
+  });
+});
+
 describe('releaseNotes', () => {
   test("the version's section, from its heading to the next release heading", () => {
     const notes = releaseNotes(CHANGELOG, '1.0.0', { digest: DIGEST });
@@ -247,7 +294,7 @@ describe('releaseNotes', () => {
     );
   });
 
-  test("SECURITY.md's verify commands, for this digest", async () => {
+  test("SECURITY.md's verify commands, for this digest and this release", async () => {
     const security = await readFile(join(ROOT, 'SECURITY.md'), 'utf8');
     const blocks = [...security.matchAll(/```sh\n([\s\S]*?)```/g)].map((match) => match[1] ?? '');
     const cosign = blocks.find((block) => block.startsWith('cosign verify '));
@@ -258,8 +305,19 @@ describe('releaseNotes', () => {
     const notes = releaseNotes(CHANGELOG, '1.0.0', { digest: DIGEST });
     for (const command of [cosign, gh]) {
       expect(command).toContain('@sha256:<digest>');
-      expect(notes).toContain(command?.replaceAll('sha256:<digest>', DIGEST));
+      const filled = command
+        ?.replaceAll('sha256:<digest>', DIGEST)
+        .replaceAll('<version>', '1.0.0');
+      expect(notes).toContain(filled);
     }
+  });
+
+  test("the cosign check accepts this release's own signing identity only", () => {
+    const notes = releaseNotes(CHANGELOG, '1.0.0', { digest: DIGEST });
+    expect(notes).toContain(
+      '  --certificate-identity https://github.com/dungnguyenv/pinwall/.github/workflows/release.yml@refs/tags/v1.0.0 \\\n',
+    );
+    expect(notes).not.toContain('--certificate-identity-regexp');
   });
 
   test.each(['', 'latest', 'sha256:abc', `sha256:${'A'.repeat(64)}`, `sha512:${'a'.repeat(64)}`])(
@@ -268,6 +326,37 @@ describe('releaseNotes', () => {
       expect(() => releaseNotes(CHANGELOG, '1.0.0', { digest })).toThrow('not an image digest');
     },
   );
+});
+
+describe("SECURITY.md's identity pattern for any release", () => {
+  async function pattern(): Promise<RegExp> {
+    const security = await readFile(join(ROOT, 'SECURITY.md'), 'utf8');
+    const quoted = /--certificate-identity-regexp '([^']+)'/.exec(security)?.[1];
+    expect(quoted).toBeDefined();
+    return new RegExp(quoted ?? '');
+  }
+
+  const WORKFLOW = 'https://github.com/dungnguyenv/pinwall/.github/workflows/release.yml';
+
+  test.each(['v1.0.0', 'v1.1.0-rc.1', 'v10.20.30'])(
+    'accepts the release workflow on the tag %s',
+    async (tag) => {
+      expect((await pattern()).test(`${WORKFLOW}@refs/tags/${tag}`)).toBe(true);
+    },
+  );
+
+  test.each([
+    `${WORKFLOW}@refs/tags/vnext`,
+    `${WORKFLOW}@refs/tags/v1.0.0/x`,
+    `${WORKFLOW}@refs/tags/v1.0`,
+    `${WORKFLOW}@refs/heads/v1.0.0`,
+    'https://github.com/dungnguyenv/pinwall/.github/workflows/ci.yml@refs/tags/v1.0.0',
+    'https://github.com/dungnguyenv/pinwall-fork/.github/workflows/release.yml@refs/tags/v1.0.0',
+    'https://github.com/someone/pinwall/.github/workflows/release.yml@refs/tags/v1.0.0',
+    `https://githubXcom/dungnguyenv/pinwall/.github/workflows/release.yml@refs/tags/v1.0.0`,
+  ])('refuses %s', async (identity) => {
+    expect((await pattern()).test(identity)).toBe(false);
+  });
 });
 
 describe('setChartRelease', () => {
@@ -374,6 +463,38 @@ describe('the command line', () => {
     });
   });
 
+  test('outputs writes what the verify job hands on, from the tags of the repository', async () => {
+    const root = await makeRepo('1.0.0');
+    await write(join(root, 'tags.txt'), 'v1.0.4\nv1.1.0\n\nv1.0.5\n');
+
+    const result = runMain(['outputs', 'v1.0.5', 'tags.txt', '--out', 'out/outputs'], root);
+
+    expect(result).toMatchObject({ code: 0, err: '' });
+    expect(await readFile(join(root, 'out/outputs'), 'utf8')).toBe(
+      [
+        'version=1.0.5',
+        'prerelease=false',
+        'latest=false',
+        'tags=ghcr.io/dungnguyenv/pinwall:1.0.5,ghcr.io/dungnguyenv/pinwall:1.0',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  test('outputs for a pre-release and for the newest release', async () => {
+    const root = await makeRepo('1.0.0');
+    await write(join(root, 'tags.txt'), 'v1.0.0\nv1.1.0-rc.1\n');
+
+    expect(runMain(['outputs', 'v1.1.0-rc.1', 'tags.txt', '--out', 'rc'], root).code).toBe(0);
+    expect(await readFile(join(root, 'rc'), 'utf8')).toContain(
+      'prerelease=true\nlatest=false\ntags=ghcr.io/dungnguyenv/pinwall:1.1.0-rc.1\n',
+    );
+    expect(runMain(['outputs', 'v1.0.0', 'tags.txt', '--out', 'full'], root).code).toBe(0);
+    expect(await readFile(join(root, 'full'), 'utf8')).toContain(
+      'prerelease=false\nlatest=true\ntags=ghcr.io/dungnguyenv/pinwall:1.0.0,ghcr.io/dungnguyenv/pinwall:1.0,ghcr.io/dungnguyenv/pinwall:1,ghcr.io/dungnguyenv/pinwall:latest\n',
+    );
+  });
+
   test.each([
     [[]],
     [['check']],
@@ -383,6 +504,8 @@ describe('the command line', () => {
     [['chart', 'v1.0.0', DIGEST, '--out', 'x']],
     [['publish', 'v1.0.0']],
     [['check', 'v1.0.0', '--force']],
+    [['outputs', 'v1.0.0', 'tags.txt']],
+    [['outputs', 'v1.0.0', '--out', 'x']],
   ])('%j is a usage error', async (argv) => {
     const result = runMain(argv, await makeRepo('1.0.0'));
     expect(result.code).toBe(2);
