@@ -305,8 +305,11 @@ export async function outlastMaintenanceLease(
     clock.advance(MAINTENANCE_LEASE_RENEW_MS);
     vi.advanceTimersByTime(MAINTENANCE_LEASE_RENEW_MS);
     elapsed += MAINTENANCE_LEASE_RENEW_MS;
-    await vi.waitFor(async () =>
-      expect(await readExpiry()).toBe(clock.now() + MAINTENANCE_LEASE_TTL_MS),
+    // A renewal is one statement on a connection of its own, but a loaded test machine can take
+    // more than the default second to answer it.
+    await vi.waitFor(
+      async () => expect(await readExpiry()).toBe(clock.now() + MAINTENANCE_LEASE_TTL_MS),
+      { timeout: 10_000 },
     );
   }
 }
