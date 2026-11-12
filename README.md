@@ -140,6 +140,15 @@ plus `/auth/oidc/callback`:
 https://pinwall.example/auth/oidc/callback
 ```
 
+Also register this post-logout redirect URI, so that **Use a different account** works when someone
+who signed in has no access to Pinwall: Pinwall signs them out at the provider first, then the
+provider asks again who is signing in. A provider that does not allow the address shows its own
+error page instead.
+
+```text
+https://pinwall.example/auth/oidc/signed-out
+```
+
 By default Pinwall asks for the scopes `openid email profile offline_access`. The refresh token
 that `offline_access` brings lets it check again, every `PINWALL_ACCESS_RECHECK_INTERVAL` (12 hours
 by default, never more than 24), that someone still has access. A person removed at the provider
@@ -155,7 +164,8 @@ over the one the provider gives.
 1. In your Zitadel project, add the roles `pinwall-admin` and `pinwall-member`, switch on **Assert
    Roles on Authentication** in the project's settings, and give each person one of the roles.
 2. Add an application of type **Web** that uses the code flow, with the grant types **Authorization
-   Code** and **Refresh Token**, and the redirect URI `https://pinwall.example/auth/oidc/callback`.
+   Code** and **Refresh Token**, the redirect URI `https://pinwall.example/auth/oidc/callback`
+   and the post logout URI `https://pinwall.example/auth/oidc/signed-out`.
    Copy the client id, and the client secret if you chose a method that has one.
 3. Give Pinwall these variables. The roles arrive in a claim whose keys are the role names.
 
@@ -174,7 +184,8 @@ PINWALL_OIDC_MEMBER_GROUPS=pinwall-member
 1. Create a client of type OpenID Connect with **Client authentication** on, so that it is
    confidential, and with the standard flow only. Add the redirect URI
    `https://pinwall.example/auth/oidc/callback`, and set the advanced setting **Proof Key for Code
-   Exchange Code Challenge Method** to `S256`. The client secret is on its **Credentials** tab.
+   Exchange Code Challenge Method** to `S256`. Under **Valid post logout redirect URIs**, add
+   `https://pinwall.example/auth/oidc/signed-out`. The client secret is on its **Credentials** tab.
 2. Create two groups, for example `pinwall-admins` and `pinwall-members`, and put people in them.
 3. Under the client's dedicated scope, add a mapper of type **Group Membership** named `groups`,
    with the token claim name `groups`, **Full group path** off, and the claim added to the ID

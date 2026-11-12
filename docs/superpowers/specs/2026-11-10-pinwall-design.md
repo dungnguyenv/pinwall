@@ -93,7 +93,10 @@ v1 ships complete before the first public release (no early public MVP).
   person's browser sessions, MCP tokens and API tokens at once.
 - Browser errors are HTML pages, never raw JSON. A sign-in that resolves to
   an identity without access shows **who** was signed in and offers **"Use a
-  different account"**, which restarts the login with `prompt=select_account`.
+  different account"**, which makes the identity provider ask again who is
+  signing in: Pinwall ends the IdP session first (OpenID Connect RP-Initiated
+  Logout) when the provider supports it, then restarts the login with
+  `prompt=select_account`.
 - Personal API tokens for scripts.
 - **MCP clients authenticate with OAuth 2.1 issued by Pinwall itself**:
   Pinwall is the authorization server for its own MCP resource (dynamic
