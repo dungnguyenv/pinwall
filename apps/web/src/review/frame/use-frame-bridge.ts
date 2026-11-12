@@ -100,9 +100,21 @@ interface Grant {
   readonly expiresAt: number | undefined;
 }
 
-/** `page` under `base`, each path segment percent-encoded. */
-function pageUrl(base: string, page: string): string {
-  return base + page.split('/').map(encodeURIComponent).join('/');
+/**
+ * `page` under `base`, each path segment percent-encoded; null when the browser would resolve
+ * the address outside `base` (a `.` or `..` segment), so an anchor's page can never point the
+ * frame at another version, another grant or an app page. A `%` is encoded like any other
+ * character: `%2e%2e` names a file of that name.
+ */
+function pageUrl(base: string, page: string): string | null {
+  const url = base + page.split('/').map(encodeURIComponent).join('/');
+  try {
+    const from = new URL(base);
+    const to = new URL(url);
+    return to.origin === from.origin && to.pathname.startsWith(from.pathname) ? url : null;
+  } catch {
+    return null;
+  }
 }
 
 function placementOf(s: Snapshot, pin: { id: string; anchor: Anchor }): PinPlacement {
@@ -157,7 +169,7 @@ class Bridge {
     this.latest = grant;
     const page = opts.startPage ?? '';
     this.snapshot = {
-      src: grant.base === '' ? '' : pageUrl(grant.base, page),
+      src: grant.base === '' ? '' : (pageUrl(grant.base, page) ?? grant.base),
       loading: true,
       annotator: 'waiting',
       topPage: page,
@@ -251,13 +263,19 @@ class Bridge {
   };
 
   readonly navigate = (page: string) => {
+    this.load(page);
+  };
+
+  /** Loads `page` of the newest grant; false, and nothing changes, when it is not under it. */
+  private load(page: string): boolean {
     const base = this.latest.base;
-    if (base === '') return;
+    if (base === '') return false;
+    const src = pageUrl(base, page);
+    if (src === null) return false;
     this.loaded = this.latest;
     this.clearReload();
     this.forgetDocument();
     this.pendingFocus = null;
-    const src = pageUrl(base, page);
     // The frame may have moved on by itself: the same address must still load again.
     if (src === this.snapshot.src && this.frame !== null) this.frame.src = src;
     this.publish({
@@ -266,7 +284,8 @@ class Bridge {
       topPage: page,
       annotator: this.snapshot.annotator === 'missing' ? 'missing' : 'waiting',
     });
-  };
+    return true;
+  }
 
   readonly focus = (id: string) => {
     const pin = this.pin(id);
@@ -282,8 +301,7 @@ class Bridge {
       if (this.snapshot.annotator !== 'missing') this.pendingFocus = id;
       return;
     }
-    this.navigate(page);
-    this.pendingFocus = id;
+    if (this.load(page)) this.pendingFocus = id;
   };
 
   readonly scrollTo = (f: { x: number; y: number }) => {
@@ -436,7 +454,7 @@ class Bridge {
     this.pendingFocus = null;
     const page = this.opts.startPage ?? '';
     this.publish({
-      src: grant.base === '' ? '' : pageUrl(grant.base, page),
+      src: grant.base === '' ? '' : (pageUrl(grant.base, page) ?? grant.base),
       loading: true,
       annotator: 'waiting',
       topPage: page,

@@ -365,6 +365,32 @@ test('navigating encodes each path segment', () => {
   expect(current.topPage).toBe('docs/über uns.html');
 });
 
+test('a page that would leave the version never becomes the frame address', () => {
+  // Stored before the protocol refused dot segments: from /c/tok/ this is an app route that
+  // redirects to another artifact. A thread's link would focus it at once.
+  const away: ViewerPin = {
+    id: 'p9',
+    number: 9,
+    resolved: false,
+    anchor: pointAnchor('../../a/art_9/raw', 0.5, 0.5),
+  };
+  const s = setup({ pins: [...PINS, away] });
+  s.top({ page: '' }).ready();
+
+  act(() => current.focus('p9'));
+  expect(s.frame()).toHaveAttribute('src', BASE);
+  for (const page of ['..', '../', '../tok2/', 'docs/../../x', '../../api/v1/me']) {
+    act(() => current.navigate(page));
+    expect(s.frame()).toHaveAttribute('src', BASE);
+  }
+  expect(current.topPage).toBe('');
+
+  // A percent sign is part of a page's name: "%2e%2e" is a file of that name, inside the version.
+  act(() => current.navigate('%2e%2e/x'));
+  expect(s.frame()).toHaveAttribute('src', `${BASE}%252e%252e/x`);
+  expect(new URL(s.frame().src).pathname).toBe('/c/tok/%252e%252e/x');
+});
+
 test('a new grant resets the bridge', () => {
   const s = setup();
   const top = s.top({ page: '' });
