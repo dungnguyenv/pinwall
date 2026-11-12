@@ -57,3 +57,8 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
   Compose examples for SQLite and for PostgreSQL with S3. Release images and charts are signed and
   come with provenance attestations. The image also has an SBOM attestation and ships a list of its
   third-party licenses.
+
+### Known limitations
+
+- On identity providers that ignore `prompt=select_account`, such as Keycloak, "Not you?" on the
+  agent consent page signs the same account back in. Sign out at the provider first.
