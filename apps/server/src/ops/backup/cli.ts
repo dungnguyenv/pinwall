@@ -94,7 +94,8 @@ export async function runBackupCommand(config: Config, logger: Logger, out: stri
   const output = await openOutput(out);
   let deps: AppDeps | null = null;
   try {
-    deps = await createDeps(config, { logger });
+    // A backup never changes the database; `createBackup` refuses one at another schema.
+    deps = await createDeps(config, { logger }, { migrate: false });
     const { manifest } = await createBackup(deps, output.stream);
     await output.commit();
     logger.info(summarize(manifest), 'backup complete');

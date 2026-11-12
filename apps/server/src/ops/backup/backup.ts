@@ -8,6 +8,8 @@ import { finished } from 'node:stream/promises';
 import { sql, type Transaction } from 'kysely';
 import { DEFAULT_MIGRATION_TABLE } from 'kysely/migration';
 import { type Pack, pack } from 'tar-stream';
+import { appliedMigrations } from '../../db/migrate.ts';
+import { migrations } from '../../db/migrations/index.ts';
 import type { Database } from '../../db/schema.ts';
 import type { AppDeps } from '../../deps.ts';
 import { AppError } from '../../lib/errors.ts';
@@ -58,8 +60,10 @@ interface Snapshot {
  * 3. the tar goes out: the manifest, each table, then each referenced blob, hashed as it is
  *    read, so a missing or altered blob fails the backup.
  *
- * The lease is held until `out` has finished. On failure the archive stream is destroyed (and
- * `out` with it); either way the lease is released and the spool removed.
+ * Before any of it, the database's migrations must be exactly this version's: a backup never
+ * migrates (see `assertSchemaMatches`). The lease is held until `out` has finished. On failure
+ * the archive stream is destroyed (and `out` with it); either way the lease is released and the
+ * spool removed.
  */
 export async function createBackup(
   deps: AppDeps,
@@ -70,6 +74,7 @@ export async function createBackup(
   if (secretKey === null) {
     throw new Error('No secret key to fingerprint the backup with: createDeps sets one');
   }
+  await assertSchemaMatches(deps);
   const lease = await holdMaintenanceLease(deps, 'backup');
   let spool: string | null = null;
   let archive: Pack | null = null;
@@ -103,6 +108,27 @@ export async function createBackup(
   } finally {
     await cleanUp(deps, lease, spool);
   }
+}
+
+/**
+ * Refuses, saying which migration the database is at and which one this version expects, unless
+ * they are the same list. An older database would have to be migrated first, under the server
+ * that runs it, and its archive would no longer restore into that server's version; a newer one
+ * has tables and columns this version does not know to copy. Either way the matching version
+ * makes the backup.
+ */
+async function assertSchemaMatches(deps: AppDeps): Promise<void> {
+  const applied = await appliedMigrations(deps.db);
+  const expected = Object.keys(migrations);
+  const isPrefix = applied.every((name, i) => name === expected[i]);
+  if (isPrefix && applied.length === expected.length) return;
+  const vars = {
+    at: applied.at(-1) ?? 'none',
+    version: PINWALL_VERSION,
+    expected: expected.at(-1) ?? 'none',
+  };
+  const behind = isPrefix && applied.length < expected.length;
+  throw new Error(t(behind ? 'backup.schemaBehind' : 'backup.schemaAhead', vars));
 }
 
 /**

@@ -1,5 +1,6 @@
 import { sql } from 'kysely';
 import {
+  DEFAULT_MIGRATION_TABLE,
   type Migration,
   type MigrationProvider,
   type MigrationResultSet,
@@ -14,6 +15,16 @@ const SQLITE_MIGRATE_BUSY_TIMEOUT_MS = 30_000;
 /** Applies every pending migration; returns the names applied, in order. */
 export function migrateToLatest(h: DbHandle): Promise<string[]> {
   return runMigrations(h, migrations);
+}
+
+/** The names of the migrations applied to the database, in order; none if it never was migrated. */
+export async function appliedMigrations(h: DbHandle): Promise<string[]> {
+  const tables = await h.db.introspection.getTables({ withInternalKyselyTables: true });
+  if (!tables.some((table) => table.name === DEFAULT_MIGRATION_TABLE)) return [];
+  const { rows } = await sql<{ name: string }>`
+    select name from ${sql.table(DEFAULT_MIGRATION_TABLE)} order by name
+  `.execute(h.db);
+  return rows.map((row) => row.name);
 }
 
 /**

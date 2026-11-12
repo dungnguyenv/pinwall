@@ -313,6 +313,9 @@ in the data volume. On Kubernetes:
 kubectl exec deploy/pinwall -- pinwall backup --out - > pinwall-$(date +%F).tar
 ```
 
+Run the backup in the server's container, as these commands do, or with the server's own image. A
+backup never migrates the database, so a newer or older Pinwall refuses to back it up.
+
 `pinwall restore` rebuilds an installation from an archive, into any storage setup, as long as the
 target is empty (a new volume, or an empty database and bucket prefix). It checks the whole archive
 before it writes anything:

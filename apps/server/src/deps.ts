@@ -43,12 +43,14 @@ export interface AppDeps {
 /**
  * Connects and migrates the database, makes sure the instance secret exists (and puts it into
  * `config.secretKey`), and builds the blob store and the in-process infrastructure. `overrides`
- * replace individual parts, mostly for tests; a given `db` is still migrated. If a step fails,
- * a database this call opened is closed again.
+ * replace individual parts, mostly for tests; a given `db` is still migrated. With
+ * `migrate: false` the schema is left as it is, for a command that must not change it
+ * (`pinwall backup`). If a step fails, a database this call opened is closed again.
  */
 export async function createDeps(
   config: Config,
   overrides: Partial<Omit<AppDeps, 'config'>> = {},
+  options: { migrate?: boolean } = {},
 ): Promise<AppDeps> {
   const logger = overrides.logger ?? createLogger(config.logLevel);
   const clock = overrides.clock ?? systemClock;
@@ -59,7 +61,7 @@ export async function createDeps(
   try {
     // A database that cannot be reached fails here, for its own reason, not as a failed migration.
     await db.ping();
-    await migrateToLatest(db);
+    if (options.migrate !== false) await migrateToLatest(db);
     const leases = overrides.leases ?? new DbLeaseManager(db, clock);
     const metrics = overrides.metrics ?? createMetrics(db, clock);
     // Unique per process, so a restarted server never takes the old one's leases for its own.

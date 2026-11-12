@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } fro
 import { migrations } from '../../src/db/migrations/index.ts';
 import { BACKUP_LEASE, sweepBlobs } from '../../src/domain/blobs.ts';
 import { deleteVersion } from '../../src/domain/deletion.ts';
+import type { LeaseManager } from '../../src/infra/index.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
 import {
@@ -334,7 +335,19 @@ describe.each(dialects)('backup on %s', (dialect) => {
       await seedInstallation(ctx);
       const { database } = ctx.deps.config;
       if (database.kind !== 'sqlite') throw new Error('expected SQLite');
-      // Holds the backup inside its snapshot transaction, once the snapshot has read something.
+      // Holds the backup inside its snapshot transaction, once the snapshot has read something:
+      // at the first query after it took its lease (it checks the schema before that).
+      let leased = false;
+      const { leases } = ctx.deps;
+      const watched: LeaseManager = {
+        acquire: async (...args) => {
+          leased = await leases.acquire(...args);
+          return leased;
+        },
+        renew: (...args) => leases.renew(...args),
+        release: (...args) => leases.release(...args),
+        isHeld: (name) => leases.isHeld(name),
+      };
       let reached = () => {};
       const inSnapshot = new Promise<void>((resolve) => {
         reached = resolve;
@@ -347,7 +360,7 @@ describe.each(dialects)('backup on %s', (dialect) => {
       const pause: KyselyPlugin = {
         transformQuery: ({ node }) => node,
         transformResult: async ({ result }) => {
-          if (!paused) {
+          if (leased && !paused) {
             paused = true;
             reached();
             await resumed;
@@ -356,7 +369,7 @@ describe.each(dialects)('backup on %s', (dialect) => {
         },
       };
       const db = { ...ctx.deps.db, db: ctx.deps.db.db.withPlugin(pause) };
-      const backup = backupToBuffer({ ...ctx.deps, db });
+      const backup = backupToBuffer({ ...ctx.deps, db, leases: watched });
 
       await inSnapshot;
       // The running server, in another process, writes now and must not have to wait.

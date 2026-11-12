@@ -926,5 +926,7 @@
   "backup.failed": "Backup failed: {{message}}",
   "backup.outExists": "{{path}} already exists. A backup never overwrites a file: choose another name, or remove it first.",
   "restore.failed": "Restore failed: {{message}}",
-  "backup.outTerminal": "Standard output is a terminal, which would ruin the archive. Send it to a file or a pipe (with docker exec, leave out -t), or use --out <file>."
+  "backup.outTerminal": "Standard output is a terminal, which would ruin the archive. Send it to a file or a pipe (with docker exec, leave out -t), or use --out <file>.",
+  "backup.schemaBehind": "The database is at migration {{at}}, older than this Pinwall ({{version}}), which expects {{expected}}. A backup never migrates the database: back up with the Pinwall version that runs it, in the server's container or with the server's image.",
+  "backup.schemaAhead": "The database is at migration {{at}}, which this Pinwall ({{version}}) does not know: it expects {{expected}}. A newer Pinwall runs this database: back up with that version, in the server's container or with the server's image."
 }

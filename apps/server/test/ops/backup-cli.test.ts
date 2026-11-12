@@ -5,12 +5,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import { sql } from 'kysely';
+import { DEFAULT_MIGRATION_TABLE } from 'kysely/migration';
 import { describe, expect, onTestFinished, test } from 'vitest';
 import { IDP_REFRESH_TOKEN_PURPOSE } from '../../src/auth/oidc/users.ts';
+import { type Config, loadConfig } from '../../src/config/load.ts';
+import { connectDb, type DbHandle } from '../../src/db/connect.ts';
+import { runMigrations } from '../../src/db/migrate.ts';
+import { migrations, type PinwallMigration } from '../../src/db/migrations/index.ts';
 import { BACKUP_LEASE } from '../../src/domain/blobs.ts';
 import { deleteVersion } from '../../src/domain/deletion.ts';
 import { deriveKey, encryptString } from '../../src/lib/crypto.ts';
 import { t } from '../../src/lib/i18n.ts';
+import { createLogger } from '../../src/lib/logger.ts';
+import { runBackupCommand } from '../../src/ops/backup/cli.ts';
 import { restoreBackup } from '../../src/ops/backup/restore.ts';
 import { PINWALL_VERSION } from '../../src/version.ts';
 import { createSignedInUser } from '../helpers/auth.ts';
@@ -25,6 +33,7 @@ import {
   storageContext,
 } from '../helpers/backup.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
+import { createPostgresDatabase, dialects } from '../helpers/db.ts';
 import { publishFiles } from '../helpers/publish.ts';
 
 /** The blob key of the seeded 5 MB image: its SHA-256. */
@@ -567,4 +576,60 @@ describe('the command line', () => {
     },
     CLI_TIMEOUT_MS,
   );
+});
+
+describe.each(dialects)('backup of a %s database another version migrated', (dialect) => {
+  const known = Object.keys(migrations);
+  const first = known[0] ?? '';
+  const last = known.at(-1) ?? '';
+
+  /**
+   * A new installation on `dialect` whose database is not migrated yet: its configuration, its
+   * database (closed after the test) and a free path for an archive.
+   */
+  async function installation(): Promise<{ config: Config; h: DbHandle; out: string }> {
+    const dir = await mkdtemp(join(tmpdir(), 'pinwall-backup-schema-'));
+    onTestFinished(() => rm(dir, { recursive: true, force: true }));
+    const env: Record<string, string> = { PINWALL_DATA_DIR: dir };
+    if (dialect === 'postgres') {
+      const database = await createPostgresDatabase();
+      onTestFinished(database.drop);
+      env.PINWALL_DATABASE_URL = database.url;
+      env.PINWALL_SECRET_KEY = randomBytes(32).toString('hex');
+    }
+    const config = loadConfig(env);
+    const h = await connectDb(config.database);
+    onTestFinished(() => h.close());
+    return { config, h, out: join(dir, 'pinwall.backup.tar') };
+  }
+
+  async function applied(h: DbHandle): Promise<string[]> {
+    const { rows } = await sql<{ name: string }>`
+      select name from ${sql.table(DEFAULT_MIGRATION_TABLE)} order by name
+    `.execute(h.db);
+    return rows.map((row) => row.name);
+  }
+
+  test('an older database is refused, and not migrated', async () => {
+    const { config, h, out } = await installation();
+    await runMigrations(h, { [first]: migrations[first] as PinwallMigration });
+
+    await expect(runBackupCommand(config, createLogger('silent'), out)).rejects.toThrow(
+      t('backup.schemaBehind', { at: first, version: PINWALL_VERSION, expected: last }),
+    );
+    expect(await applied(h)).toEqual([first]);
+    expect(await exists(out)).toBe(false);
+  });
+
+  test('a newer database is refused, and left as it is', async () => {
+    const { config, h, out } = await installation();
+    const future = '9999_from_a_newer_pinwall';
+    await runMigrations(h, { ...migrations, [future]: { up: async () => {} } });
+
+    await expect(runBackupCommand(config, createLogger('silent'), out)).rejects.toThrow(
+      t('backup.schemaAhead', { at: future, version: PINWALL_VERSION, expected: last }),
+    );
+    expect(await applied(h)).toEqual([...known, future]);
+    expect(await exists(out)).toBe(false);
+  });
 });
