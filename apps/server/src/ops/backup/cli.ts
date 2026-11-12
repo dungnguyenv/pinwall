@@ -26,12 +26,15 @@ function summarize(manifest: Manifest): { rows: number; blobs: number; bytes: nu
 }
 
 /**
- * `-` is standard output. Any other path is written as `<out>.partial` (never over an existing
- * file, readable by its owner only) and renamed to `out` once the archive is complete, so `out`
- * is either absent or a whole archive.
+ * `-` is standard output, unless it is a terminal. Any other path is written as `<out>.partial`
+ * (never over an existing file, readable by its owner only) and renamed to `out` once the archive
+ * is complete, so `out` is either absent or a whole archive.
  */
 async function openOutput(out: string): Promise<BackupOutput> {
   if (out === '-') {
+    // As tar does: a terminal would show binary noise, and the one `docker exec -t` passes the
+    // stream through rewrites line endings, so the file it ends up in is no archive.
+    if (process.stdout.isTTY) throw new Error(t('backup.outTerminal'));
     // The process owns it: there is nothing to rename or remove, and a failure ends the process.
     return { stream: process.stdout, commit: async () => {}, discard: async () => {} };
   }

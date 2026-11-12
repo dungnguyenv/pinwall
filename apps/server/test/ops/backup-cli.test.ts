@@ -45,6 +45,15 @@ interface Run {
   stderr: string;
 }
 
+/** The command line that runs `pinwall <args>` from source. */
+const pinwallCommand = (args: string[]) => [
+  process.execPath,
+  '--import',
+  'tsx',
+  'src/main.ts',
+  ...args,
+];
+
 /**
  * Runs `pinwall <args>` from source with only the given environment (plus PATH and HOME), feeds
  * `stdin` to it when given, and resolves once the process has exited and its output has ended.
@@ -54,7 +63,33 @@ function pinwall(
   env: Record<string, string>,
   stdin?: Buffer,
 ): { child: ReturnType<typeof spawn>; done: Promise<Run> } {
-  const child = spawn(process.execPath, ['--import', 'tsx', 'src/main.ts', ...args], {
+  const [command = '', ...commandArgs] = pinwallCommand(args);
+  return run(command, commandArgs, env, stdin);
+}
+
+/**
+ * Runs `pinwall <args>` as `pinwall()` does, but with its standard output and error on a
+ * terminal, as `docker exec -t` gives them: a pseudo-terminal from `script`. What the terminal
+ * shows, both streams together, arrives as `stdout`.
+ */
+function pinwallOnTerminal(args: string[], env: Record<string, string>): Promise<Run> {
+  const command = pinwallCommand(args);
+  // BSD script (macOS) takes the command as arguments, util-linux script as one shell line.
+  const quoted = command.map((word) => `'${word.replaceAll("'", `'\\''`)}'`).join(' ');
+  const scriptArgs =
+    process.platform === 'darwin'
+      ? ['-q', '/dev/null', ...command]
+      : ['-q', '-e', '-c', quoted, '/dev/null'];
+  return run('script', scriptArgs, env).done;
+}
+
+function run(
+  command: string,
+  args: string[],
+  env: Record<string, string>,
+  stdin?: Buffer,
+): { child: ReturnType<typeof spawn>; done: Promise<Run> } {
+  const child = spawn(command, args, {
     cwd: serverDir,
     env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', ...env },
     stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
@@ -257,6 +292,24 @@ describe('backup --out <file>', () => {
     CLI_TIMEOUT_MS,
   );
 });
+
+test(
+  'backup --out - refuses a terminal, as tar does',
+  async () => {
+    const { ctx } = await sqliteInstallation();
+    await seedInstallation(ctx);
+
+    const run = await pinwallOnTerminal(['backup', '--out', '-'], envOf(ctx));
+
+    expect(run.code).toBe(1);
+    const shown = run.stdout.toString('utf8');
+    expect(shown).toContain(`Backup failed: ${t('backup.outTerminal')}`);
+    // Not a byte of the archive: its first entry is the manifest.
+    expect(shown).not.toContain('manifest.json');
+    expect(await ctx.deps.leases.isHeld(BACKUP_LEASE)).toBe(false);
+  },
+  CLI_TIMEOUT_MS,
+);
 
 describe('restore', () => {
   test(
