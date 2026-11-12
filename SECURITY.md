@@ -59,8 +59,8 @@ per-project permissions.
 ## Verifying a release
 
 Every release image is signed with [cosign](https://github.com/sigstore/cosign) without a long-lived
-key, by the release workflow of this repository, and carries build provenance and an SBOM as
-attestations. Take the image's digest from the release notes, or from `docker buildx imagetools
+key, by the release workflow of this repository, and carries build provenance and an SBOM of each
+platform's image as attestations. Take the image's digest from the release notes, or from `docker buildx imagetools
 inspect ghcr.io/dungnguyenv/pinwall:<version>`, and check that the release workflow signed it for
 that version's tag:
 

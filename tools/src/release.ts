@@ -2,8 +2,10 @@
  * The release helpers that .github/workflows/release.yml runs for a tag `v<version>`:
  *
  *   tsx src/release.ts check <tag>                        the tag is a release tag, every
- *                                                         package.json and the chart carry its
- *                                                         version, and CHANGELOG.md has its section
+ *                                                         package.json, the chart, the install
+ *                                                         commands and the Compose examples carry
+ *                                                         its version, and CHANGELOG.md has its
+ *                                                         section
  *   tsx src/release.ts outputs <tag> <tags> --out <file>  writes the verify job's outputs (version,
  *                                                         prerelease, latest, image tags), given a
  *                                                         file of the repository's tags, one a line
@@ -132,9 +134,37 @@ function packageFiles(root: string): string[] {
   ];
 }
 
+/** `text` matched literally inside a regular expression. */
+function literal(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+}
+
+/** A version as the docs write one; a placeholder such as `<version>` is none. */
+const MENTIONED_VERSION = '(\\d[0-9A-Za-z.-]*)';
+
 /**
- * Each version in the repository that is not `version`: the `version` of every package.json, and
- * the chart's `version` and `appVersion`. An empty list means the repository is ready for it.
+ * Where the docs and the examples name the release to install: each file must name at least one
+ * version this way, and only the release's.
+ */
+const VERSION_MENTIONS: readonly { file: string; field: string; pattern: RegExp }[] = [
+  ...['README.md', `${CHART_DIR}/README.md`].map((file) => ({
+    file,
+    field: 'helm install --version',
+    pattern: new RegExp(`${literal(CHART)} --version ${MENTIONED_VERSION}`, 'g'),
+  })),
+  ...['deploy/compose/docker-compose.yml', 'deploy/compose/docker-compose.postgres-s3.yml'].map(
+    (file) => ({
+      file,
+      field: 'image tag',
+      pattern: new RegExp(`${literal(IMAGE)}:${MENTIONED_VERSION}`, 'g'),
+    }),
+  ),
+];
+
+/**
+ * Each version in the repository that is not `version`: the `version` of every package.json, the
+ * chart's `version` and `appVersion`, and the version that the install commands of the READMEs
+ * and the image of the Compose examples name. An empty list means the repository is ready for it.
  */
 export function checkVersions(root: string, version: string): string[] {
   const problems: string[] = [];
@@ -154,6 +184,13 @@ export function checkVersions(root: string, version: string): string[] {
   const chart = parse(readFileSync(join(root, chartFile), 'utf8')) as Record<string, unknown>;
   compare(chartFile, 'version', chart?.version);
   compare(chartFile, 'appVersion', chart?.appVersion);
+  for (const { file, field, pattern } of VERSION_MENTIONS) {
+    const mentioned = [...readFileSync(join(root, file), 'utf8').matchAll(pattern)].map(
+      (match) => match[1],
+    );
+    if (mentioned.length === 0) compare(file, field, undefined);
+    for (const actual of new Set(mentioned)) compare(file, field, actual);
+  }
   return problems;
 }
 
@@ -213,7 +250,7 @@ export function releaseNotes(changelog: string, version: string, p: { digest: st
     `gh attestation verify oci://${image} --repo ${REPOSITORY}`,
     '```',
     '',
-    `The image's SBOM (\`pinwall-${version}.spdx.json\`), its third-party notices and the chart are attached to this release.`,
+    `The SBOMs of the image for each platform (\`pinwall-${version}-linux-amd64.spdx.json\` and \`pinwall-${version}-linux-arm64.spdx.json\`), its third-party notices and the chart are attached to this release.`,
     '',
   ].join('\n');
 }

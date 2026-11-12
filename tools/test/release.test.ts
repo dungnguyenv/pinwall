@@ -69,6 +69,19 @@ async function makeRepo(version = '1.0.0'): Promise<string> {
     'image:\n  repository: ghcr.io/dungnguyenv/pinwall\n  # The image digest.\n  digest: ""\n',
   );
   await write(join(root, 'CHANGELOG.md'), CHANGELOG);
+  const install = (v: string) =>
+    `helm install pinwall oci://ghcr.io/dungnguyenv/charts/pinwall --version ${v} \\\n`;
+  await write(join(root, 'README.md'), `# Pinwall\n\n${install(version)}`);
+  await write(
+    join(root, 'deploy/helm/pinwall/README.md'),
+    `${install(version)}\nhelm upgrade pinwall oci://ghcr.io/dungnguyenv/charts/pinwall --version <new version>\n`,
+  );
+  for (const file of ['docker-compose.yml', 'docker-compose.postgres-s3.yml']) {
+    await write(
+      join(root, 'deploy/compose', file),
+      `services:\n  pinwall:\n    image: \${PINWALL_IMAGE:-ghcr.io/dungnguyenv/pinwall:${version}}\n`,
+    );
+  }
   return root;
 }
 
@@ -151,6 +164,33 @@ describe('checkVersions', () => {
       'tools/package.json: version is 1.0.0, but the tag is for 1.0.1',
       'deploy/helm/pinwall/Chart.yaml: version is 1.0.0, but the tag is for 1.0.1',
       'deploy/helm/pinwall/Chart.yaml: appVersion is 1.0.0, but the tag is for 1.0.1',
+      'README.md: helm install --version is 1.0.0, but the tag is for 1.0.1',
+      'deploy/helm/pinwall/README.md: helm install --version is 1.0.0, but the tag is for 1.0.1',
+      'deploy/compose/docker-compose.yml: image tag is 1.0.0, but the tag is for 1.0.1',
+      'deploy/compose/docker-compose.postgres-s3.yml: image tag is 1.0.0, but the tag is for 1.0.1',
+    ]);
+  });
+
+  test('the install commands and the Compose examples name the version too', async () => {
+    const root = await makeRepo('1.0.0');
+    await write(
+      join(root, 'README.md'),
+      'helm install pinwall oci://ghcr.io/dungnguyenv/charts/pinwall --version 1.0.0 \\\n' +
+        'helm install pinwall oci://ghcr.io/dungnguyenv/charts/pinwall --version 0.9.0 \\\n',
+    );
+    await write(
+      join(root, 'deploy/compose/docker-compose.yml'),
+      'services:\n  pinwall:\n    image: ghcr.io/dungnguyenv/pinwall:1.0.0-rc.1\n',
+    );
+    // A placeholder is not a version.
+    await write(
+      join(root, 'deploy/helm/pinwall/README.md'),
+      'helm install pinwall oci://ghcr.io/dungnguyenv/charts/pinwall --version <version>\n',
+    );
+    expect(checkVersions(root, '1.0.0')).toEqual([
+      'README.md: helm install --version is 0.9.0, but the tag is for 1.0.0',
+      'deploy/helm/pinwall/README.md: no helm install --version, but the tag is for 1.0.0',
+      'deploy/compose/docker-compose.yml: image tag is 1.0.0-rc.1, but the tag is for 1.0.0',
     ]);
   });
 
@@ -310,6 +350,12 @@ describe('releaseNotes', () => {
         .replaceAll('<version>', '1.0.0');
       expect(notes).toContain(filled);
     }
+  });
+
+  test("the SBOM of each platform's image is attached", () => {
+    const notes = releaseNotes(CHANGELOG, '1.0.0', { digest: DIGEST });
+    expect(notes).toContain('`pinwall-1.0.0-linux-amd64.spdx.json`');
+    expect(notes).toContain('`pinwall-1.0.0-linux-arm64.spdx.json`');
   });
 
   test("the cosign check accepts this release's own signing identity only", () => {
@@ -528,5 +574,96 @@ describe('the command line', () => {
     expect(failed?.code).toBe(1);
     expect(failed?.stderr).toContain('package.json: version is');
     expect(failed?.stderr).toContain('but the tag is for 0.0.1');
+  });
+});
+
+interface Step {
+  name?: string;
+  id?: string;
+  uses?: string;
+  run?: string;
+  with?: Record<string, unknown>;
+  env?: Record<string, unknown>;
+}
+
+interface Workflow {
+  permissions?: unknown;
+  jobs: Record<string, { permissions?: unknown; steps?: Step[] }>;
+}
+
+const workflowText = (name: string) => readFile(join(ROOT, '.github/workflows', name), 'utf8');
+const workflow = async (name: string) => parse(await workflowText(name)) as Workflow;
+/** A GitHub Actions expression, as a workflow writes it. */
+const expression = (text: string) => `\${{ ${text} }}`;
+
+describe.each(['ci.yml', 'release.yml'])('the workflow %s', (name) => {
+  test('pins every action by commit, with the version it is in a comment', async () => {
+    const uses = (await workflowText(name))
+      .split('\n')
+      .filter((line) => /^\s*(- )?uses: /.test(line) && !line.includes('uses: ./'));
+    expect(uses.length).toBeGreaterThan(0);
+    for (const line of uses) {
+      expect(line).toMatch(/uses: [\w.-]+\/[\w./-]+@[0-9a-f]{40} # v\d+(\.\d+)*$/);
+    }
+  });
+
+  test('checks out without keeping the token, and puts no expression in a script', async () => {
+    for (const [id, job] of Object.entries((await workflow(name)).jobs)) {
+      for (const step of job.steps ?? []) {
+        if (step.uses?.startsWith('actions/checkout@')) {
+          expect(step.with?.['persist-credentials'], id).toBe(false);
+        }
+        // Context values reach a script through env, never pasted into its text.
+        expect(step.run ?? '', `${id}: ${step.name ?? step.run}`).not.toContain('${{');
+      }
+    }
+  });
+});
+
+describe('the release workflow', () => {
+  test('grants nothing by default, and each job what it asks for', async () => {
+    const { permissions, jobs } = await workflow('release.yml');
+    expect(permissions).toEqual({});
+    for (const [id, job] of Object.entries(jobs)) expect(job.permissions, id).toBeDefined();
+  });
+
+  test('releases only a commit on the default branch, or on its own maintenance branch', async () => {
+    const steps = (await workflow('release.yml')).jobs.verify?.steps ?? [];
+    const check = steps.findIndex((step) => step.run?.includes('src/release.ts check'));
+    const onBranch = steps.findIndex((step) => step.run?.includes('/compare/'));
+    expect(check).toBeGreaterThanOrEqual(0);
+    // Right after the tag is known to be a release tag, before anything else.
+    expect(onBranch).toBe(check + 1);
+    const step = steps[onBranch];
+    expect(step?.env).toMatchObject({
+      SHA: expression('github.sha'),
+      TAG: expression('github.ref_name'),
+    });
+    expect(step?.run).toContain('.default_branch');
+    expect(step?.run).toContain(`release/\${BASH_REMATCH[1]}.\${BASH_REMATCH[2]}`);
+  });
+
+  test("attests and attaches an SBOM of each platform's image", async () => {
+    const { jobs } = await workflow('release.yml');
+    const steps = jobs.image?.steps ?? [];
+    for (const arch of ['amd64', 'arm64']) {
+      const file = expression(`env.SBOM_${arch.toUpperCase()}`);
+      const sbom = steps.find(
+        (step) =>
+          step.uses?.startsWith('anchore/sbom-action@') &&
+          step.with?.image ===
+            `${expression('env.IMAGE')}@${expression(`steps.platforms.outputs.${arch}`)}`,
+      );
+      expect(sbom?.with?.['output-file'], arch).toBe(file);
+      const attest = steps.find(
+        (step) =>
+          step.uses?.startsWith('actions/attest-sbom@') && step.with?.['sbom-path'] === file,
+      );
+      expect(attest?.with?.['subject-digest'], arch).toBe(expression('steps.build.outputs.digest'));
+      const upload = steps.find((step) => step.uses?.startsWith('actions/upload-artifact@'));
+      expect(String(upload?.with?.path)).toContain(file);
+      const release = jobs.release?.steps?.find((step) => step.run?.includes('gh release create'));
+      expect(release?.run).toContain(`release-files/pinwall-\${VERSION}-linux-${arch}.spdx.json`);
+    }
   });
 });

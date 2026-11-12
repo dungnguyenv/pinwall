@@ -55,8 +55,8 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
   lists every setting.
 - **Deployment and release.** A hardened Helm chart that refers to the image by digest, and Docker
   Compose examples for SQLite and for PostgreSQL with S3. Release images and charts are signed and
-  come with provenance attestations. The image also has an SBOM attestation and ships a list of its
-  third-party licenses.
+  come with provenance attestations. The image also has an SBOM attestation for each platform,
+  linux/amd64 and linux/arm64, and ships a list of its third-party licenses.
 
 ### Known limitations
 
