@@ -1,6 +1,8 @@
 import { type CommentThread, LiveEvent } from '@pinwall/shared';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { AuthContext } from '../../src/app.ts';
+import { setRoleOverride } from '../../src/auth/admin-users.ts';
+import { revokeAllCredentials } from '../../src/auth/revoke.ts';
 import { sessionCookieName } from '../../src/auth/session-cookie.ts';
 import { createSession, deleteUserSessions } from '../../src/auth/sessions.ts';
 import type { UserRow, VersionRow } from '../../src/db/schema.ts';
@@ -479,6 +481,38 @@ describe.each(dialects)('live updates on %s', (dialect) => {
     for (const s of [kept, member]) {
       expect(eventOf(await s.next())).toMatchObject({ thread: { id: thread.id } });
     }
+  });
+
+  test("a person's loss of access ends their links' streams at once", async () => {
+    // No heartbeat runs in this test: only the revokes can end the streams.
+    fakeHeartbeat();
+    const o = await createSignedInUser(ctx, { kind: 'oidc', name: 'Oanh' });
+    const shareAs = (user: UserRow) =>
+      createShareLink(ctx.deps, user, id, {
+        versionId: null,
+        password: null,
+        expiresAt: null,
+        allowComments: true,
+      });
+    const theirs = await shareAs(o.user);
+    const mine = await share();
+    const revoked = await stream(sharePath(theirs.token));
+    const kept = await stream(sharePath(mine.token));
+
+    await revokeAllCredentials(ctx.deps, o.user.id);
+    expect(await revoked.done()).toBe(true);
+    expect(bus().subscriberCount(SHARE_LINK_TOPIC(theirs.row.id))).toBe(0);
+
+    // A block ends them the same way.
+    const later = await shareAs(o.user);
+    const blocked = await stream(sharePath(later.token));
+    const owner = await createSignedInUser(ctx, { name: 'Ada' });
+    await setRoleOverride(ctx.deps, owner.user, o.user.id, 'blocked');
+    expect(await blocked.done()).toBe(true);
+
+    // The publisher's own link goes on.
+    const thread = await postThread(ctx, m.cookie, id);
+    expect(eventOf(await kept.next())).toMatchObject({ thread: { id: thread.id } });
   });
 
   test('a link ends its streams when it expires', async () => {

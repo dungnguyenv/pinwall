@@ -7,12 +7,14 @@ import {
 } from '../../../src/auth/oidc/recheck.ts';
 import { openRefreshToken } from '../../../src/auth/oidc/users.ts';
 import type { RoleOverride, UserRow } from '../../../src/db/schema.ts';
+import { createShareLink } from '../../../src/domain/shares.ts';
 import { FixedClock } from '../../../src/lib/clock.ts';
 import { createUserToken, setupOwner } from '../../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../../helpers/context.ts';
 import { dialects } from '../../helpers/db.ts';
 import { signInOidcUser } from '../../helpers/oidc-browser.ts';
 import { startTestIdp, type TestIdp, type TestIdpAccount } from '../../helpers/oidc-idp.ts';
+import { publishFiles } from '../../helpers/publish.ts';
 
 const T = Date.UTC(2026, 10, 10);
 const H = 3_600_000;
@@ -169,6 +171,14 @@ describe.each(dialects)('access re-check on %s', (dialect) => {
     const { sub, user } = await signIn();
     await addCredentials(user.id);
     const { db } = ctx.deps.db;
+    const { artifact } = await publishFiles(ctx, user, { 'index.html': '<p>một</p>' });
+    const shared = await createShareLink(ctx.deps, user, artifact.id, {
+      versionId: null,
+      password: null,
+      expiresAt: null,
+      allowComments: true,
+    });
+    expect((await ctx.request(`/api/v1/share/${shared.token}`)).status).toBe(200);
     const info = vi.spyOn(ctx.deps.logger, 'info');
 
     idp.setGroups(sub, ['other']);
@@ -202,6 +212,11 @@ describe.each(dialects)('access re-check on %s', (dialect) => {
       .where('grant_id', '=', 'grt_1')
       .execute();
     expect(oauthTokens).toHaveLength(0);
+    // What they shared stops opening, with the content grants a guest was given.
+    const links = await db.selectFrom('share_links').select('revoked_at').execute();
+    expect(links).toEqual([{ revoked_at: clock.now() }]);
+    expect((await ctx.request(`/api/v1/share/${shared.token}`)).status).toBe(410);
+    expect(await db.selectFrom('content_grants').select('token').execute()).toEqual([]);
     expect(info).toHaveBeenCalledWith({ user_id: user.id }, 'oidc user removed');
   });
 

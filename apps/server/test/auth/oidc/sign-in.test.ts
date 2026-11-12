@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Me } from '@pinwall/shared';
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
+import { createShareLink } from '../../../src/domain/shares.ts';
 import { publicUrl } from '../../../src/http/public-url.ts';
 import { FixedClock } from '../../../src/lib/clock.ts';
 import { t } from '../../../src/lib/i18n.ts';
@@ -10,6 +11,7 @@ import { createTestContext, type TestContext } from '../../helpers/context.ts';
 import { dialects } from '../../helpers/db.ts';
 import { authorizeAtIdp, signInOidcUser, signInWithIdp } from '../../helpers/oidc-browser.ts';
 import { startTestIdp, type TestIdp, type TestIdpAccount } from '../../helpers/oidc-idp.ts';
+import { publishFiles } from '../../helpers/publish.ts';
 
 const T = Date.UTC(2026, 10, 10);
 const ROLE_ENV = {
@@ -198,6 +200,35 @@ describe.each(dialects)('OIDC sign-in on %s', (dialect) => {
     expect(await sessions()).toHaveLength(0);
     const user = await userBySub(sub);
     expect(user).toMatchObject({ kind: 'oidc', idp_role: null, idp_refresh_token: null });
+  });
+
+  test('a sign-in the IdP no longer admits revokes what the person shared', async () => {
+    await start();
+    const ada = account();
+    const { user } = await signInOidcUser(ctx, idp, ada);
+    const { artifact } = await publishFiles(ctx, user, { 'index.html': '<p>một</p>' });
+    const share = () =>
+      createShareLink(ctx.deps, user, artifact.id, {
+        versionId: null,
+        password: null,
+        expiresAt: null,
+        allowComments: true,
+      });
+    const opens = async (token: string) => (await ctx.request(`/api/v1/share/${token}`)).status;
+
+    // An answer without the roles claim proves nothing: refused, but the links stay.
+    const kept = await share();
+    idp.setGroups(ada.sub, undefined);
+    expect((await signInWithIdp(ctx, idp, { as: ada.sub })).status).toBe(403);
+    expect(await opens(kept.token)).toBe(200);
+
+    // Groups that no longer earn a role: the person is out, and so is what they shared.
+    clock.advance(1000);
+    idp.setGroups(ada.sub, ['other']);
+    expect((await signInWithIdp(ctx, idp, { as: ada.sub })).status).toBe(403);
+    expect(await opens(kept.token)).toBe(410);
+    const rows = await ctx.deps.db.db.selectFrom('share_links').select('revoked_at').execute();
+    expect(rows).toEqual([{ revoked_at: clock.now() }]);
   });
 
   test('use a different account restarts with prompt=select_account and keeps return_to', async () => {

@@ -21,8 +21,10 @@ export interface RecheckSummary {
 /**
  * The IdP users of `issuer` the job should re-check now: due before the next run, still able to
  * use Pinwall, holding a refresh token and at least one live credential (a session that has not
- * expired, an API token neither revoked nor expired, or an OAuth grant not revoked). Someone with
- * no live credential cannot use Pinwall, so the IdP is not asked about them until they sign in.
+ * expired, an API token neither revoked nor expired, an OAuth grant not revoked, or a share link
+ * they made that is neither revoked nor expired, since its guests see what it shows whether or
+ * not its maker is signed in). Someone with no live credential cannot use Pinwall, so the IdP is
+ * not asked about them until they sign in.
  */
 async function dueUserIds(deps: AppDeps, issuer: string): Promise<string[]> {
   const now = deps.clock.now();
@@ -65,6 +67,19 @@ async function dueUserIds(deps: AppDeps, issuer: string): Promise<string[]> {
               .select('oauth_grants.id')
               .whereRef('oauth_grants.user_id', '=', 'users.id')
               .where('oauth_grants.revoked_at', 'is', null),
+          ),
+          eb.exists(
+            eb
+              .selectFrom('share_links')
+              .select('share_links.id')
+              .whereRef('share_links.created_by', '=', 'users.id')
+              .where('share_links.revoked_at', 'is', null)
+              .where((s) =>
+                s.or([
+                  s('share_links.expires_at', 'is', null),
+                  s('share_links.expires_at', '>', now),
+                ]),
+              ),
           ),
         ]),
       ]),

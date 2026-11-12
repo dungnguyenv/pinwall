@@ -358,6 +358,7 @@
   "web.admin.revoke.selfTitle": "Revoke your own access now?",
   "web.admin.revoke.body": "{{name}} is signed out of every browser at once, and their API tokens and agent connections stop working. They can sign in again if they still have access.",
   "web.admin.revoke.selfBody": "You will be signed out everywhere, including here.",
+  "web.admin.revoke.shareLinks": "Every share link made from this account is revoked too, for good.",
   "web.admin.revoke.done": "Revoked {{sessions}}, {{tokens}} and {{agents}}.",
   "web.admin.revoke.sessions_one": "{{count}} session",
   "web.admin.revoke.sessions_other": "{{count}} sessions",

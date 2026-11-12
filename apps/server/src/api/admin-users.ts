@@ -57,7 +57,7 @@ const putRole = createRoute({
   tags: ['admin'],
   summary: 'Set or clear a role override',
   description:
-    "An override wins over the identity provider role; `null` clears it. `blocked` locks the user out at once. You cannot change your own role, and nobody can change the owner's: the owner is always an admin.",
+    "An override wins over the identity provider role; `null` clears it. `blocked` locks the user out at once and revokes every share link they made. You cannot change your own role, and nobody can change the owner's: the owner is always an admin.",
   middleware: [requireAdmin, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
   security,
   request: {
@@ -78,7 +78,7 @@ const revokeNow = createRoute({
   tags: ['admin'],
   summary: 'Revoke now',
   description:
-    "Ends all of the user's browser sessions, API tokens and OAuth grants at once. Revoking yourself is allowed and signs you out everywhere; from a browser, the response also clears the session cookie.",
+    "Ends all of the user's browser sessions, API tokens and OAuth grants at once, and revokes every share link they made. Revoking yourself is allowed and signs you out everywhere; from a browser, the response also clears the session cookie.",
   middleware: [requireAdmin] as MiddlewareHandler<AppEnv>[],
   security,
   request: { params: UserId },
@@ -124,8 +124,11 @@ export function registerAdminUserRoutes(api: OpenAPIHono<AppEnv>): void {
     const actor = authOf(c).user;
     const { id } = c.req.valid('param');
     const { role_override } = c.req.valid('json');
-    const user = await setRoleOverride(deps, actor, id, role_override);
-    deps.logger.info({ actor_id: actor.id, user_id: id, role_override }, 'role override changed');
+    const { user, shareLinks } = await setRoleOverride(deps, actor, id, role_override);
+    deps.logger.info(
+      { actor_id: actor.id, user_id: id, role_override, share_links: shareLinks },
+      'role override changed',
+    );
     return c.json(toAdminUser(user), 200, noStore);
   });
 
@@ -147,6 +150,7 @@ export function registerAdminUserRoutes(api: OpenAPIHono<AppEnv>): void {
         api_tokens: result.apiTokens,
         oauth_grants: result.oauthGrants,
         content_grants: result.contentGrants,
+        share_links: result.shareLinks,
       },
       'credentials revoked',
     );

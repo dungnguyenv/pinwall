@@ -1,12 +1,11 @@
 import { type Configuration, fetchUserInfo, refreshTokenGrant } from 'openid-client';
-import type { Config } from '../../config/types.ts';
 import type { UserRow } from '../../db/schema.ts';
 import type { AppDeps } from '../../deps.ts';
 import { revokeAllCredentials } from '../revoke.ts';
 import { effectiveRole } from '../roles.ts';
 import { classifyOidcError, type OidcRuntime, oidcErrorCode, oidcRuntime } from './client.ts';
-import { identityFromClaims, profileClaimsIn, readClaim } from './identity.ts';
-import { accessPolicy, mapIdpRole } from './policy.ts';
+import { identityFromClaims, profileClaimsIn } from './identity.ts';
+import { accessPolicy, lacksRoleClaims, mapIdpRole } from './policy.ts';
 import { applyIdentity, openRefreshToken, sealRefreshToken } from './users.ts';
 
 /** How long one re-check holds its user's lease: well beyond its two IdP request timeouts. */
@@ -218,26 +217,6 @@ async function currentClaims(
   return claims;
 }
 
-const isAbsent = (value: unknown) => value === undefined || value === null;
-
-/**
- * Whether `claims` leave out a claim the role rules read: the roles claim when group rules are
- * configured, or the email or its verified flag when email or domain rules are.
- */
-function lacksRoleClaims(config: Config, claims: Record<string, unknown>): boolean {
-  const policy = accessPolicy(config);
-  const rolesClaim = config.oidc?.rolesClaim;
-  const groupRules = policy.adminGroups.length > 0 || policy.memberGroups.length > 0;
-  if (groupRules && rolesClaim !== undefined && isAbsent(readClaim(claims, rolesClaim))) {
-    return true;
-  }
-  const emailRules =
-    policy.adminEmails.length > 0 ||
-    policy.memberEmails.length > 0 ||
-    policy.memberDomains.length > 0;
-  return emailRules && (isAbsent(claims.email) || isAbsent(claims.email_verified));
-}
-
 /**
  * Asks the user to sign in again after an IdP answer that cannot decide their access: drops the
  * refresh token and ends their browser sessions, in one transaction. The last good check time
@@ -267,7 +246,8 @@ async function requireSignIn(
 /**
  * Disables an IdP user the IdP no longer admits: marks the row first, so every credential is
  * refused from then on even if revoking fails, drops the refresh token, then ends every session,
- * API token and OAuth grant. Returns the updated row. Only `oidc` users can be disabled this way.
+ * API token and OAuth grant, and revokes every share link they made (`revokeAllCredentials`).
+ * Returns the updated row. Only `oidc` users can be disabled this way.
  */
 export async function disableRemovedUser(deps: AppDeps, userId: string): Promise<UserRow> {
   const result = await deps.db.db

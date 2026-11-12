@@ -222,6 +222,10 @@ test('Revoke now asks, then reports what ended', async () => {
       'Grace Hopper is signed out of every browser at once, and their API tokens and agent connections stop working. They can sign in again if they still have access.',
     ),
   ).toBeInTheDocument();
+  // Revoking also ends what the person shared, which no later sign-in brings back.
+  expect(
+    dialog.getByText('Every share link made from this account is revoked too, for good.'),
+  ).toBeInTheDocument();
 
   // Cancel changes nothing.
   await user.click(dialog.getByRole('button', { name: 'Cancel' }));
@@ -289,6 +293,9 @@ test('revoking yourself signs you out', async () => {
   expect(dialog.getByText('Revoke your own access now?')).toBeInTheDocument();
   expect(
     dialog.getByText('You will be signed out everywhere, including here.'),
+  ).toBeInTheDocument();
+  expect(
+    dialog.getByText('Every share link made from this account is revoked too, for good.'),
   ).toBeInTheDocument();
   expect(dialog.queryByText(/stop working/)).not.toBeInTheDocument();
 

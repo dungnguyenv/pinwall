@@ -1,6 +1,6 @@
 import type { Config } from '../../config/types.ts';
 import type { Role } from '../roles.ts';
-import type { OidcIdentity } from './identity.ts';
+import { type OidcIdentity, readClaim } from './identity.ts';
 
 /** Who the IdP may let in, and as what. Emails and domains are lowercase. */
 export interface AccessPolicy {
@@ -59,4 +59,25 @@ export function mapIdpRole(
     return 'member';
   }
   return null;
+}
+
+const isAbsent = (value: unknown) => value === undefined || value === null;
+
+/**
+ * Whether `claims` leave out a claim the role rules read: the roles claim when group rules are
+ * configured, or the email or its verified flag when email or domain rules are. Such an answer
+ * cannot show that a person was removed, only that the IdP said less than the rules need.
+ */
+export function lacksRoleClaims(config: Config, claims: Record<string, unknown>): boolean {
+  const policy = accessPolicy(config);
+  const rolesClaim = config.oidc?.rolesClaim;
+  const groupRules = policy.adminGroups.length > 0 || policy.memberGroups.length > 0;
+  if (groupRules && rolesClaim !== undefined && isAbsent(readClaim(claims, rolesClaim))) {
+    return true;
+  }
+  const emailRules =
+    policy.adminEmails.length > 0 ||
+    policy.memberEmails.length > 0 ||
+    policy.memberDomains.length > 0;
+  return emailRules && (isAbsent(claims.email) || isAbsent(claims.email_verified));
 }

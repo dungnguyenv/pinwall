@@ -9,12 +9,14 @@ import {
 import { deleteUserSessions } from '../../../src/auth/sessions.ts';
 import { startAuth } from '../../../src/auth/startup.ts';
 import type { UserRow } from '../../../src/db/schema.ts';
+import { createShareLink, revokeShareLink } from '../../../src/domain/shares.ts';
 import { FixedClock } from '../../../src/lib/clock.ts';
 import { createUserToken } from '../../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../../helpers/context.ts';
 import { dialects } from '../../helpers/db.ts';
 import { signInOidcUser } from '../../helpers/oidc-browser.ts';
 import { startTestIdp, type TestIdp, type TestIdpAccount } from '../../helpers/oidc-idp.ts';
+import { publishFiles } from '../../helpers/publish.ts';
 
 const T = Date.UTC(2026, 10, 10);
 const H = 3_600_000;
@@ -122,6 +124,36 @@ describe.each(dialects)('access re-check job on %s', (dialect) => {
     for (const u of [a, d, f]) expect(await checkedAt(u)).toBe(clock.now());
     for (const u of [b, e]) expect(await checkedAt(u)).toBe(T);
     expect(await checkedAt(c)).toBe(T + 11 * H);
+  });
+
+  test('an open share link counts as a live credential, and removal at the IdP revokes it', async () => {
+    await start();
+    /** Signed out, with one share link that is open, revoked or expired as `link` says. */
+    async function sharer(link: 'open' | 'revoked' | 'expired') {
+      const u = await signedOut();
+      const { artifact } = await publishFiles(ctx, u.user, { 'index.html': '<p>x</p>' });
+      const { row, token } = await createShareLink(ctx.deps, u.user, artifact.id, {
+        versionId: null,
+        password: null,
+        expiresAt: link === 'expired' ? clock.now() + H : null,
+        allowComments: false,
+      });
+      if (link === 'revoked') await revokeShareLink(ctx.deps, u.user, row.id);
+      return { ...u, linkId: row.id, token };
+    }
+    const open = await sharer('open');
+    const leaver = await sharer('open');
+    const revoked = await sharer('revoked');
+    const expired = await sharer('expired');
+    idp.setGroups(leaver.sub, ['other']);
+    clock.advance(12 * H);
+
+    expect(await runAccessRecheck(ctx.deps)).toMatchObject({ checked: 2, ok: 1, removed: 1 });
+    expect(await checkedAt(open)).toBe(clock.now());
+    for (const u of [revoked, expired]) expect(await checkedAt(u)).toBe(T);
+    const page = await ctx.request(`/s/${leaver.token}`);
+    expect(page.status).toBe(410);
+    expect((await ctx.request(`/s/${open.token}`)).status).toBe(302);
   });
 
   test('the job leaves out users it must not or cannot re-check', async () => {
