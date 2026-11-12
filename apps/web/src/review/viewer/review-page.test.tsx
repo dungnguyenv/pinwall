@@ -91,6 +91,28 @@ async function menuHas(user: UserEvent, trigger: HTMLElement, name: string): Pro
   return found;
 }
 
+/** Lower-case words, with parenthesised parts dropped, as axe compares a label with a name. */
+const nameWords = (text: string) =>
+  text
+    .replace(/\([^()]*\)/g, ' ')
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+
+/**
+ * WCAG 2.5.3 Label in Name: `el` is named `name`, and the words it shows (its text less what only
+ * screen readers get) appear in that name, in order and outside any parentheses, so a person who
+ * says what they see can operate it.
+ */
+function expectLabelInName(el: HTMLElement, name: string): void {
+  expect(el).toHaveAccessibleName(name);
+  const visible = el.cloneNode(true) as HTMLElement;
+  for (const hidden of visible.querySelectorAll('.sr-only')) hidden.remove();
+  const label = nameWords(visible.textContent ?? '').join(' ');
+  expect(label, 'the control shows words').not.toBe('');
+  expect(` ${nameWords(name).join(' ')} `).toContain(` ${label} `);
+}
+
 afterEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
@@ -118,7 +140,7 @@ test('opens the current version in the sandboxed frame, with the rail', async ()
   );
   const heading = within(breadcrumb).getByRole('heading', { level: 1, name: 'Pricing' });
   expect(heading).toHaveAttribute('title', 'Pricing');
-  expect(screen.getByRole('button', { name: 'Choose version (showing v3)' })).toHaveTextContent(
+  expect(screen.getByRole('button', { name: 'Choose version, showing v3' })).toHaveTextContent(
     'v3',
   );
   expect(screen.getByRole('link', { name: 'Compare' })).toHaveAttribute(
@@ -148,7 +170,7 @@ test('a version URL shows that version and offers the latest', async () => {
 
   expect(await frameOf(1)).toHaveAttribute('src', grantUrl(1));
   expect(s.previews).toEqual([1]);
-  expect(screen.getByRole('button', { name: 'Choose version (showing v1)' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Choose version, showing v1' })).toBeInTheDocument();
   expect(
     await screen.findByText(t('web.review.olderVersion', { number: 1, latest: 3 })),
   ).toBeInTheDocument();
@@ -205,7 +227,7 @@ test('the version switcher lists versions and navigates', async () => {
   const { user, router } = renderRoute('/a/art_1', { me: reviewer });
   await frameOf(3);
 
-  await user.click(screen.getByRole('button', { name: 'Choose version (showing v3)' }));
+  await user.click(screen.getByRole('button', { name: 'Choose version, showing v3' }));
   const v3 = await screen.findByRole('menuitemradio', { name: /^v3/ });
   expect(v3).toHaveAttribute('aria-checked', 'true');
   expect(v3).toHaveTextContent('Current');
@@ -225,7 +247,7 @@ test('the version switcher lists versions and navigates', async () => {
   await waitFor(() => expect(router.state.location.pathname).toBe('/a/art_1/v/2'));
   expect(await frameOf(2)).toHaveAttribute('src', grantUrl(2));
 
-  await user.click(screen.getByRole('button', { name: 'Choose version (showing v2)' }));
+  await user.click(screen.getByRole('button', { name: 'Choose version, showing v2' }));
   await user.click(await screen.findByRole('menuitemradio', { name: /^v3/ }));
   await waitFor(() => expect(router.state.location.pathname).toBe('/a/art_1'));
   expect(await frameOf(3)).toBeInTheDocument();
@@ -284,10 +306,10 @@ test('the comments toggle shows open threads on this version and remembers its s
   const { user, router } = renderRoute('/a/art_1', { me: reviewer });
   await frameOf(3);
 
-  const toggle = screen.getByRole('button', { name: 'Comments' });
+  const toggle = screen.getByRole('button', { name: /^Comments/ });
   expect(toggle).toHaveAttribute('aria-pressed', 'true');
   await waitFor(() => expect(toggle).toHaveTextContent('2'));
-  expect(toggle).toHaveAccessibleDescription(t('web.review.openCount', { count: 2 }));
+  expect(toggle).toHaveAccessibleName('Comments, 2 open');
   expect(panel()).toBeInTheDocument();
   expect(await screen.findByRole('article', { name: 'Comment 2 by Ada' })).toBeInTheDocument();
 
@@ -310,8 +332,25 @@ test('the comments toggle shows open threads on this version and remembers its s
   serveReview({ threads: [cmtA] });
   renderRoute('/a/art_1', { me: reviewer });
   await frameOf(3);
-  expect(screen.getByRole('button', { name: 'Comments' })).toHaveAttribute('aria-pressed', 'false');
+  expect(screen.getByRole('button', { name: /^Comments/ })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  );
   expect(panel()).not.toBeInTheDocument();
+});
+
+test('the bar names its version and comment controls with the words they show', async () => {
+  serveReview({ threads: [cmtA, cmtB, cmtC] });
+  renderRoute('/a/art_1', { me: reviewer });
+  await frameOf(3);
+
+  const version = versionButton();
+  if (version === null) throw new Error('No version button');
+  expectLabelInName(version, 'Choose version, showing v3');
+
+  const toggle = screen.getByRole('button', { name: /^Comments/ });
+  await waitFor(() => expect(toggle).toHaveTextContent('2'));
+  expectLabelInName(toggle, 'Comments, 2 open');
 });
 
 test('full screen hides chrome and exits from the pill or the browser', async () => {
@@ -419,9 +458,15 @@ test('every shortcut has a visible control', async () => {
   await user.keyboard('{Escape}');
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
-  // The frame keeps the keyboard while it has focus, so each action has a control too.
+  // The frame keeps the keyboard while it has focus, so each action has a control too. A control
+  // may say more after the action's name (Comments, 2 open).
   const onPage = (name: string) =>
-    ['button', 'radio', 'link'].some((role) => screen.queryAllByRole(role, { name }).length > 0);
+    ['button', 'radio', 'link'].some(
+      (role) =>
+        screen.queryAllByRole(role, {
+          name: (accessible) => accessible === name || accessible.startsWith(`${name}, `),
+        }).length > 0,
+    );
   const missing: string[] = [];
   for (const s of REVIEW_SHORTCUTS) {
     if (s.action === 'escape' || s.action === 'shortcuts') continue;
@@ -569,7 +614,7 @@ test('on a phone the panel is a bottom sheet and devices are hidden', async () =
   expect(screen.queryByRole('button', { name: 'Custom width' })).not.toBeInTheDocument();
   expect(panel()).not.toBeInTheDocument();
 
-  await user.click(screen.getByRole('button', { name: 'Comments' }));
+  await user.click(screen.getByRole('button', { name: /^Comments/ }));
   const sheet = await screen.findByRole('dialog', { name: 'Comments' });
   expect(
     await within(sheet).findByRole('article', { name: 'Comment 1 by Ada' }),

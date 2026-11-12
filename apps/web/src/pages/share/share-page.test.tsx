@@ -287,7 +287,7 @@ test('the viewer frames the shared page with a minimal bar', async () => {
   expect(original).toHaveAttribute('target', '_blank');
   expect(original.getAttribute('rel')).toContain('noreferrer');
   expect(within(bar).getByRole('button', { name: 'Comment mode' })).toBeInTheDocument();
-  expect(within(bar).getByRole('button', { name: 'Comments' })).toBeInTheDocument();
+  expect(within(bar).getByRole('button', { name: /^Comments/ })).toBeInTheDocument();
   expect(document.title).toBe('Pricing · Pinwall');
 
   // No app around it: no sidebar, no navigation, no account.
@@ -478,7 +478,7 @@ test('a link without comments shows only the page', async () => {
   expect(within(bar).getByText('v2')).toBeInTheDocument();
   expect(within(bar).queryByText('Latest')).not.toBeInTheDocument();
   expect(within(bar).getByRole('link', { name: 'Open original' })).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Comments' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /^Comments/ })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Comment mode' })).not.toBeInTheDocument();
   expect(screen.queryByRole('region', { name: 'Comments' })).not.toBeInTheDocument();
   expect(s.gets('/share/tok/comments')).toBe(0);

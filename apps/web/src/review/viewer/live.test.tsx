@@ -193,6 +193,6 @@ test('comment events from others update the panel', async () => {
   });
   emit({ type: 'comment.created', artifact_id: 'art_1', thread: lan });
   expect(await screen.findByRole('article', { name: 'Comment 2 by Lan' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Comments' })).toHaveTextContent('2');
+  expect(screen.getByRole('button', { name: /^Comments/ })).toHaveTextContent('2');
   expect(s.gets('/artifacts/art_1/comments')).toBe(reads);
 });

@@ -1,5 +1,4 @@
 import { MessageSquare, MessageSquarePlus } from 'lucide-react';
-import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ariaKeyShortcuts, Button, cn, IconButton, Kbd, Tooltip } from '../../ui/index.ts';
 import { keysOf } from './shortcuts.ts';
@@ -29,7 +28,10 @@ export function CommentModeToggle({ on, onToggle }: { on: boolean; onToggle(): v
   );
 }
 
-/** Comments, with the open count after it; pressed while they show. */
+/**
+ * Comments, with the open count after it; pressed while they show. The count is part of the
+ * name, so the name holds every word the button shows (WCAG 2.5.3).
+ */
 export function CommentsToggle({
   open,
   count,
@@ -40,7 +42,6 @@ export function CommentsToggle({
   onToggle(): void;
 }) {
   const { t } = useTranslation();
-  const countId = useId();
   const keys = keysOf('togglePanel');
   return (
     <Tooltip
@@ -55,9 +56,10 @@ export function CommentsToggle({
       <Button
         variant="ghost"
         size="sm"
-        aria-label={t('web.review.comments')}
+        aria-label={
+          count === null ? t('web.review.comments') : t('web.review.commentsCount', { count })
+        }
         aria-pressed={open}
-        aria-describedby={count === null ? undefined : countId}
         aria-keyshortcuts={ariaKeyShortcuts(keys)}
         leadingIcon={<MessageSquare />}
         onClick={onToggle}
@@ -66,11 +68,6 @@ export function CommentsToggle({
         {count === null ? null : (
           <span className="tabular-nums" aria-hidden="true">
             {count}
-          </span>
-        )}
-        {count === null ? null : (
-          <span id={countId} className="sr-only">
-            {t('web.review.openCount', { count })}
           </span>
         )}
       </Button>
