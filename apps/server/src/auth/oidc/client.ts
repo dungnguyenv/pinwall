@@ -96,6 +96,14 @@ export function callbackUrl(config: Config): string {
 }
 
 /**
+ * Where the IdP sends the browser back after signing someone out for "Use a different account":
+ * a fixed route on the public origin, which operators register as a post-logout redirect URI.
+ */
+export function signedOutUrl(config: Config): string {
+  return publicUrl(config, '/auth/oidc/signed-out');
+}
+
+/**
  * Authorization request parameters: the configured extra parameters, then the protected ones,
  * which no extra parameter can replace, then `prompt`. `prompt` keeps the extra values except
  * `none` (an interactive sign-in must be allowed to interact), adds `select_account` when asked,

@@ -114,6 +114,8 @@ test('an unadmitted user who is already signed in at Keycloak can switch account
   await expect(page).toHaveURL(PINWALL_ORIGIN);
   await expectNoAccessPage(page);
 
-  // Reusing that session again is the one thing "Use a different account" must not do.
+  // Reusing that session again is the one thing "Use a different account" must not do. Pinwall
+  // ends it at Keycloak's logout endpoint first, which sends the browser back only because the
+  // realm's client lists Pinwall's post-logout redirect URI (`post.logout.redirect.uris`).
   await switchToBob(page);
 });

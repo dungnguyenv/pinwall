@@ -68,7 +68,7 @@ Single sign-on through an OpenID Connect identity provider. It is off unless the
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PINWALL_OIDC_ISSUER` | none; single sign-on is off | The issuer URL of your OpenID Connect identity provider. It must use `https` unless `PINWALL_OIDC_ALLOW_HTTP_ISSUER` is `true`. Register `<public origin>/auth/oidc/callback` as the redirect URI at the provider. |
+| `PINWALL_OIDC_ISSUER` | none; single sign-on is off | The issuer URL of your OpenID Connect identity provider. It must use `https` unless `PINWALL_OIDC_ALLOW_HTTP_ISSUER` is `true`. Register `<public origin>/auth/oidc/callback` as the redirect URI at the provider, and `<public origin>/auth/oidc/signed-out` as a post-logout redirect URI: "Use a different account" signs a refused person out at the provider first, when it supports that. |
 | `PINWALL_OIDC_CLIENT_ID` | none; required with the issuer | The client id Pinwall is registered under at the identity provider. |
 | `PINWALL_OIDC_CLIENT_SECRET`<br>secret · also `PINWALL_OIDC_CLIENT_SECRET_FILE` | none; Pinwall then acts as a public client | The client secret for a confidential client. Leave it unset when the provider registered Pinwall as a public client. |
 | `PINWALL_OIDC_SCOPES` | `openid email profile offline_access` | The scopes Pinwall asks for at sign-in, separated by spaces or commas. `openid` is required. `offline_access` lets Pinwall re-check someone's access with a refresh token. |

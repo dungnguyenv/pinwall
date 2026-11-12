@@ -24,7 +24,8 @@
       "serviceAccountsEnabled": false,
       "consentRequired": false,
       "attributes": {
-        "pkce.code.challenge.method": "S256"
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:18096/auth/oidc/signed-out"
       },
       "protocolMappers": [
         {

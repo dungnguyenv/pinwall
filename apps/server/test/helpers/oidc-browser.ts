@@ -1,7 +1,12 @@
 import type { UserRow } from '../../src/db/schema.ts';
 import { sessionCookieFrom } from './auth.ts';
 import type { TestContext } from './context.ts';
-import { idpBrowserAuthorize, type TestIdp, type TestIdpAccount } from './oidc-idp.ts';
+import {
+  idpBrowserAuthorize,
+  idpBrowserEndSession,
+  type TestIdp,
+  type TestIdpAccount,
+} from './oidc-idp.ts';
 
 const BINDING_SET_COOKIE = /^((?:__Host-)?pinwall_oidc)=([^;]*)/;
 
@@ -19,6 +24,55 @@ export interface OidcBrowserOptions {
   baseUrl?: string;
   /** Cookies the browser already holds for Pinwall, sent with both Pinwall requests. */
   cookie?: string;
+}
+
+/** The binding cookie `r` sets, as the `name=value` pair the browser sends back; else null. */
+export function bindingCookieFrom(r: Response): string | null {
+  const match = r.headers
+    .getSetCookie()
+    .map((line) => BINDING_SET_COOKIE.exec(line))
+    .find((m) => m?.[2]);
+  return match ? `${match[1]}=${match[2]}` : null;
+}
+
+/** The "Use a different account" link of a no-access page, on the public origin. */
+export function switchLinkOf(ctx: TestContext, page: string): URL {
+  const href = /<a class="pw-button pw-button-primary" href="([^"]*)"/.exec(page)?.[1];
+  if (href === undefined) throw new Error('The page has no "Use a different account" link');
+  return new URL(href.replaceAll('&amp;', '&'), ctx.deps.config.publicOrigin);
+}
+
+/** The `Location` of a 302 answer; throws on any other answer. */
+async function redirectTarget(r: Response, what: string): Promise<string> {
+  const location = r.headers.get('location');
+  if (r.status !== 302 || location === null) {
+    throw new Error(`${what} answered ${r.status}: ${await r.text()}`);
+  }
+  return location;
+}
+
+/**
+ * Takes "Use a different account" as a browser holding `cookie` would, and signs in as `as`:
+ * Pinwall's link; when it leads to the IdP's sign-out, that sign-out and Pinwall's signed-out
+ * route; then the IdP's sign-in. Returns the callback response.
+ */
+export async function switchAccount(
+  ctx: TestContext,
+  idp: TestIdp,
+  o: { link: URL; cookie: string; as: string },
+): Promise<Response> {
+  const switched = await ctx.request(o.link.href, { headers: { cookie: o.cookie } });
+  let location = await redirectTarget(switched, `GET ${o.link.pathname}`);
+  let cookie = bindingCookieFrom(switched) ?? o.cookie;
+  if (location.startsWith(`${idp.issuer}/session/end?`)) {
+    const back = await idpBrowserEndSession(idp, location);
+    const signedOut = await ctx.request(back.href, { headers: { cookie } });
+    location = await redirectTarget(signedOut, `GET ${back.pathname}`);
+    cookie = bindingCookieFrom(signedOut) ?? cookie;
+  }
+  idp.signInAs(o.as);
+  const callback = await idpBrowserAuthorize(idp, location);
+  return ctx.request(`${callback.pathname}${callback.search}`, { headers: { cookie } });
 }
 
 /**
@@ -44,14 +98,11 @@ export async function authorizeAtIdp(
   if (start.status !== 302 || location === null) {
     throw new Error(`GET /auth/oidc/start answered ${start.status}: ${await start.text()}`);
   }
-  const binding = start.headers
-    .getSetCookie()
-    .map((line) => BINDING_SET_COOKIE.exec(line))
-    .find((match) => match?.[2]);
+  const binding = bindingCookieFrom(start);
 
   idp.signInAs(o.as);
   const callback = await idpBrowserAuthorize(idp, location);
-  const cookie = [binding && `${binding[1]}=${binding[2]}`, o.cookie].filter(Boolean).join('; ');
+  const cookie = [binding, o.cookie].filter(Boolean).join('; ');
   return {
     url: `${base}${callback.pathname}${callback.search}`,
     init: { headers: { ...host, ...(cookie === '' ? {} : { cookie }) } },

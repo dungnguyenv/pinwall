@@ -13,6 +13,7 @@ import type { AppDeps } from '../../deps.ts';
 import { safeEqual } from '../../lib/crypto.ts';
 import { hashSecret } from '../../lib/ids.ts';
 import { hasAccess } from '../roles.ts';
+import { keepForAccountSwitch } from './account-switch.ts';
 import {
   buildAuthParams,
   callbackUrl,
@@ -65,6 +66,8 @@ export type CallbackOutcome =
       identity: OidcIdentity;
       returnTo: string;
       selectAccount: boolean;
+      /** The ticket of the "Use a different account" link that signs out at the IdP, if any. */
+      switchTicket: string | null;
     };
 
 const pendingKey = (state: string) => `oidc:login:${hashSecret(state)}`;
@@ -131,7 +134,8 @@ export async function beginOidcSignIn(
 /**
  * Finishes a sign-in from the callback's raw query: takes the pending login (once), checks the
  * browser is the one that started it, redeems the code, reads the claims (userinfo over the ID
- * token) and records the user. Throws `OidcFlowError` when the sign-in cannot finish.
+ * token) and records the user. A refused sign-in keeps its ID token for "Use a different
+ * account" (`keepForAccountSwitch`). Throws `OidcFlowError` when the sign-in cannot finish.
  */
 export async function finishOidcSignIn(
   deps: AppDeps,
@@ -143,10 +147,8 @@ export async function finishOidcSignIn(
   const pending = state ? await deps.oneTime.take<PendingLogin>(pendingKey(state)) : null;
   if (state === null || pending === null) throw flowError(deps, 'expired', '/');
   const { returnTo } = pending;
-  if (
-    p.browserSecret === undefined ||
-    !safeEqual(hashSecret(p.browserSecret), pending.browserHash)
-  ) {
+  const { browserSecret } = p;
+  if (browserSecret === undefined || !safeEqual(hashSecret(browserSecret), pending.browserHash)) {
     throw flowError(deps, 'other_browser', returnTo);
   }
 
@@ -193,11 +195,17 @@ export async function finishOidcSignIn(
     return { kind: 'admitted', user: result.user, returnTo };
   }
   deps.logger.info({ user_id: result.user.id }, 'oidc sign-in denied');
+  const switchTicket = await keepForAccountSwitch(deps, configuration, {
+    idToken: tokens.id_token,
+    returnTo,
+    browserSecret,
+  });
   return {
     kind: 'denied',
     user: result.user,
     identity,
     returnTo,
     selectAccount: pending.selectAccount,
+    switchTicket,
   };
 }
