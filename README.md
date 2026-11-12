@@ -289,7 +289,7 @@ and an image pinned by digest. Pinwall runs as a single instance in v1, so the c
 replica count.
 
 ```sh
-helm install pinwall oci://ghcr.io/dungnguyenv/charts/pinwall --version 1.0.0 \
+helm install pinwall oci://ghcr.io/dungnguyenv/charts/pinwall --version 1.0.0-rc.1 \
   --set publicOrigin=https://pinwall.example
 ```
 

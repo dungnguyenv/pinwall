@@ -2,6 +2,11 @@
 
 Every release of Pinwall, newest first. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 1.0.0-rc.1
+
+Release candidate for 1.0.0, published to rehearse the release workflow end to end. Its
+contents are those listed under 1.0.0 below.
+
 ## 1.0.0
 
 ### Added
