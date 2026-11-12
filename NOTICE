@@ -1,2 +1,4 @@
 Pinwall
 Copyright 2026 The Pinwall Authors
+
+Third-party components bundled with Pinwall and their licenses are listed in THIRD_PARTY_NOTICES, which ships in the container image and with each release.

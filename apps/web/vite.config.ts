@@ -1,6 +1,8 @@
+import { join } from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type ProxyOptions } from 'vite';
+import { bundledModules } from './vite-bundled-modules.ts';
 
 /*
  * In development the Pinwall server runs on :8080 and Vite serves the app on
@@ -25,7 +27,15 @@ const SERVER_PATHS = [
 ];
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    // Records which modules ship, for the license check (see tools/src/licenses.ts).
+    bundledModules({
+      repoRoot: join(import.meta.dirname, '../..'),
+      outFile: join(import.meta.dirname, '.build/modules.json'),
+    }),
+  ],
   build: {
     rolldownOptions: {
       output: {
