@@ -41,7 +41,7 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
   passkey or a password, needs no identity provider. Any OpenID Connect provider can be added, with
   roles mapped from a claim such as `groups`, or from lists of verified emails and domains for
   providers like Google that send no groups. Pinwall checks with the provider again at least every
-  24 hours, and an admin can end a person's sessions and tokens at once.
+  24 hours, and an admin can end a person's sessions, tokens and share links at once.
 - **Content isolation.** Two modes keep artifacts away from the app's session: a sandbox on the app's
   own host, and a separate content domain with one origin per version. The mode is an environment
   variable, and switching it leaves every artifact and share link working.

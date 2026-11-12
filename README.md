@@ -133,8 +133,9 @@ through an OpenID Connect provider, once you set `PINWALL_OIDC_ISSUER` and `PINW
 Single sign-on stays off without them.
 
 Pinwall does not manage groups. It reads them from the provider and maps them to two roles, admin
-and member. At the provider, register Pinwall with this redirect URI, which is your public origin
-plus `/auth/oidc/callback`:
+and member. Group rules read the claim that `PINWALL_OIDC_ROLES_CLAIM` names, and Pinwall refuses to
+start with group rules but no such claim. At the provider, register Pinwall with this redirect URI,
+which is your public origin plus `/auth/oidc/callback`:
 
 ```text
 https://pinwall.example/auth/oidc/callback
@@ -153,11 +154,14 @@ By default Pinwall asks for the scopes `openid email profile offline_access`. Th
 that `offline_access` brings lets it check again, every `PINWALL_ACCESS_RECHECK_INTERVAL` (12 hours
 by default, never more than 24), that someone still has access. A person removed at the provider
 loses access by the next check, with no admin action, and an admin can end a person's browser
-sessions, MCP tokens and API tokens at once with **Revoke now** under **Admin, Users**.
+sessions, MCP tokens and API tokens at once with **Revoke now** under **Admin, Users**. Revoke now,
+a block, or a check that finds the provider gives someone no role also revokes every share link that
+person made, for good.
 
 Put the client secret in a file and give its path in `PINWALL_OIDC_CLIENT_SECRET_FILE`. A person who
-signs in successfully but earns no role is refused, and a role an admin sets on the Users page wins
-over the one the provider gives.
+signs in successfully but earns no role is refused. A role an admin sets on the Users page replaces
+the provider's only while the provider still lets the person in: once it drops them they lose access
+like anyone else, and the role applies again if it takes them back. A block always applies.
 
 ### Zitadel
 
