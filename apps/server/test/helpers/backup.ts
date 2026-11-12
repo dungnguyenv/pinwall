@@ -303,13 +303,18 @@ export async function outlastMaintenanceLease(
 ): Promise<void> {
   for (let elapsed = 0; elapsed <= MAINTENANCE_LEASE_TTL_MS; ) {
     clock.advance(MAINTENANCE_LEASE_RENEW_MS);
-    vi.advanceTimersByTime(MAINTENANCE_LEASE_RENEW_MS);
     elapsed += MAINTENANCE_LEASE_RENEW_MS;
-    // A renewal is one statement on a connection of its own, but a loaded test machine can take
-    // more than the default second to answer it.
+    // The holder runs one renewal at a time and skips a tick while the previous one is still
+    // settling. The previous renewal can already show in the database while its answer has not
+    // reached the holder yet, so a single tick may be skipped. Keep ticking at this clock time
+    // until a renewal lands; renewals at the same clock time all set the same expiry. A loaded
+    // test machine can take more than the default second to answer.
     await vi.waitFor(
-      async () => expect(await readExpiry()).toBe(clock.now() + MAINTENANCE_LEASE_TTL_MS),
-      { timeout: 10_000 },
+      async () => {
+        vi.advanceTimersByTime(MAINTENANCE_LEASE_RENEW_MS);
+        expect(await readExpiry()).toBe(clock.now() + MAINTENANCE_LEASE_TTL_MS);
+      },
+      { timeout: 10_000, interval: 100 },
     );
   }
 }
