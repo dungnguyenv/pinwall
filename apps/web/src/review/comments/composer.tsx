@@ -1,5 +1,5 @@
 import type { KeyboardEvent } from 'react';
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { errorMessage } from '../../api/client.ts';
 import type { CommentThread } from '../../api/dto.ts';
@@ -16,9 +16,10 @@ const SEND_KEYS = ['mod', 'enter'];
  * Writes the comment for the spot just picked: its pin number to come, the
  * words it points at, and the text. Comment (or ⌘↵/Ctrl+↵) sends it on the
  * version the spot was picked on and selects the new thread; Cancel drops it;
- * Escape drops it only while it is empty. A failure shows the server's words
- * and keeps the text. `floating` places it beside the pin, over the page;
- * without it, it sits in the panel's flow.
+ * Escape drops it only while it is empty. It cannot be sent until that
+ * version's id is known, and says so. A failure shows the server's words and
+ * keeps the text. `floating` places it beside the pin, over the page; without
+ * it, it sits in the panel's flow.
  */
 export function Composer({
   c,
@@ -33,7 +34,8 @@ export function Composer({
 }) {
   const { t } = useTranslation();
   const box = useRef<HTMLTextAreaElement>(null);
-  const { draft, actions } = c;
+  const waitId = useId();
+  const { draft, actions, versionWait } = c;
   const create = actions.create;
   const text = c.text('new');
   const empty = text.trim() === '';
@@ -56,7 +58,7 @@ export function Composer({
 
   async function send() {
     const sent = draft;
-    if (sent === null || empty || create.isPending) return;
+    if (sent === null || empty || versionWait !== null || create.isPending) return;
     try {
       const thread = await create.mutateAsync({
         body: text.trim(),
@@ -126,6 +128,13 @@ export function Composer({
           className="max-h-48 min-h-16 text-base"
         />
         {create.error ? <SendError message={errorMessage(create.error, t)} /> : null}
+        {versionWait?.error ? (
+          <SendError message={errorMessage(versionWait.error, t)} />
+        ) : versionWait ? (
+          <p id={waitId} className="mt-2 text-fg-muted text-sm">
+            {t('web.comments.versionLoading')}
+          </p>
+        ) : null}
         <div className="mt-2.5 flex items-center gap-2">
           <span aria-hidden="true" className="mr-auto hidden sm:inline-flex">
             <Kbd keys={SEND_KEYS} />
@@ -143,7 +152,8 @@ export function Composer({
             type="submit"
             size="sm"
             loading={create.isPending}
-            disabled={empty}
+            disabled={empty || versionWait !== null}
+            aria-describedby={versionWait && !versionWait.error ? waitId : undefined}
             aria-keyshortcuts={ariaKeyShortcuts(SEND_KEYS)}
           >
             {t('web.comments.post')}

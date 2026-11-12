@@ -75,10 +75,13 @@ export interface ReviewServer {
 /**
  * Serves the review screen of `art_1` "Pricing" in project `prj_2` "Launch
  * site": the sidebar, the artifact, its versions (`versions`, default 3/2/1,
- * the newest current), a review grant for each, and `threads`. Unknown
+ * the newest current) in pages of `versionPage` (default: all on one), each
+ * version on its own, a review grant for each, and `threads`. Unknown
  * versions answer 404 in the server's words. Records every request.
  */
-export function serveReview(o: { versions?: number[]; threads?: CommentThread[] } = {}) {
+export function serveReview(
+  o: { versions?: number[]; threads?: CommentThread[]; versionPage?: number } = {},
+) {
   const numbers = o.versions ?? [3, 2, 1];
   const versions = [...numbers].sort((a, b) => b - a).map((n) => versionOf(n));
   const state: ReviewServer = {
@@ -130,7 +133,18 @@ export function serveReview(o: { versions?: number[]; threads?: CommentThread[] 
   server.use(
     http.get(`${API}/projects/prj_2`, () => HttpResponse.json(launchSite)),
     http.get(`${API}/artifacts/art_1`, () => HttpResponse.json(state.artifact)),
-    http.get(`${API}/artifacts/art_1/versions`, () => HttpResponse.json(fx.page(state.versions))),
+    http.get(`${API}/artifacts/art_1/versions`, ({ request }) => {
+      const size = o.versionPage ?? state.versions.length;
+      const from = Number(new URL(request.url).searchParams.get('cursor') ?? 0);
+      const to = from + size;
+      const next = to < state.versions.length ? String(to) : null;
+      return HttpResponse.json(fx.page(state.versions.slice(from, to), next));
+    }),
+    http.get(`${API}/artifacts/art_1/versions/:n`, ({ params }) => {
+      const version = state.versions.find((v) => v.number === Number(params.n));
+      if (version === undefined) return apiError(404, 'not_found', 'This version does not exist.');
+      return HttpResponse.json(version);
+    }),
     http.get(`${API}/artifacts/art_1/versions/:n/preview`, ({ params, request }) => {
       const n = Number(params.n);
       if (new URL(request.url).searchParams.get('mode') !== 'review') {

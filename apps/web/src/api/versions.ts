@@ -54,6 +54,29 @@ export function useVersions(
   });
 }
 
+/** Version `n` of an artifact, as the server describes it. */
+export function getVersion(artifactId: string, n: number): Promise<VersionSummary> {
+  return api(`/artifacts/${encodeURIComponent(artifactId)}/versions/${n}`, {
+    schema: VersionSummary,
+  });
+}
+
+/**
+ * Version `n` read on its own, for a version the version list does not hold
+ * (it reads 50 at a time); idle while `n` is null. A number is never reused,
+ * so what was read stays true and is not read again.
+ */
+export function useVersion(
+  artifactId: string,
+  n: number | null,
+): UseQueryResult<VersionSummary, ApiError> {
+  return useQuery<VersionSummary, ApiError>({
+    queryKey: qk.version(artifactId, n),
+    queryFn: n === null ? skipToken : () => getVersion(artifactId, n),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
 /**
  * A short-lived content URL for version `n`. `review` is what the review
  * frame loads (and counts as opening the artifact); `raw` serves the stored

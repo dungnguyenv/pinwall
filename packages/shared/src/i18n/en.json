@@ -478,6 +478,7 @@
   "web.comments.composerLabel": "Comment",
   "web.comments.composerPlaceholder": "Add a comment",
   "web.comments.post": "Comment",
+  "web.comments.versionLoading": "Loading this version…",
   "web.comments.next": "Next comment",
   "web.comments.previous": "Previous comment",
   "web.review.frameTitle": "{{name}}, v{{number}}",

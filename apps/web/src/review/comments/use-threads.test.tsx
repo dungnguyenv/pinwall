@@ -129,7 +129,7 @@ test('a response for a list that was never read leaves the cache alone', async (
   const { wrapper, queryClient } = harness();
   const { result } = renderHook(() => useCommentActions(backend), { wrapper });
   await act(() =>
-    result.current.create.mutateAsync({ body: 'hi', anchor: a.anchor, versionId: null }),
+    result.current.create.mutateAsync({ body: 'hi', anchor: a.anchor, versionId: 'ver_1' }),
   );
   // Nothing was cached, so the first real read still happens.
   expect(queryClient.getQueryData(qk.threads(backend.scope))).toBeUndefined();
@@ -162,6 +162,20 @@ test('a failed post rejects with the server error and leaves the cache alone', a
     ).rejects.toMatchObject({ code: 'gone', message: 'That version was deleted.' });
   });
   expect(ids(result.current.threads.data)).toEqual(['cmt_a']);
+});
+
+test('a member thread is never sent without the version it was written on', async () => {
+  const posts: unknown[] = [];
+  server.use(
+    http.post(`${API}/artifacts/art_1/comments`, async ({ request }) => {
+      posts.push(await request.json());
+      return HttpResponse.json(a, { status: 201 });
+    }),
+  );
+  const backend = memberBackend('art_1');
+  // Without a version the server would write it on the current one.
+  await expect(backend.create({ body: 'hi', anchor: a.anchor, versionId: null })).rejects.toThrow();
+  expect(posts).toEqual([]);
 });
 
 test('member and guest backends name their scope and event stream', () => {

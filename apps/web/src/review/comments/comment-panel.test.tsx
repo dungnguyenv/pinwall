@@ -108,6 +108,8 @@ function Harness({
     shown: 3,
     versionId: 'ver_3',
     filterPrefKey: PREF,
+    // The frame shows v3, whose id the page knows.
+    versions: { frame: 3, lookup: (n) => ({ id: `ver_${n}`, error: null }) },
   });
   return (
     <>

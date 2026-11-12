@@ -18,12 +18,21 @@ import {
 import { useCommentActions, useThreads } from './use-threads.ts';
 
 /**
- * A comment being written: the spot picked, and the id of the version shown
- * when it was picked. The thread is saved on that version, even when a newer
- * one is shown by the time it is sent.
+ * A comment being written: the spot picked, and the version whose page it was
+ * picked on. The thread is saved on that version, even when another one is
+ * shown by the time it is sent.
  */
 export interface Draft extends PickedAnchor {
+  /** The number of that version; null where the server decides (a share link's guest). */
+  version: number | null;
+  /** Its id, which a member's thread is sent with; null until it is known. */
   versionId: string | null;
+}
+
+/** What is known of a version: its id, or why it could not be read (both null while it is read). */
+export interface VersionLookup {
+  id: string | null;
+  error: ApiError | null;
 }
 
 /** Whose text a composer holds: the new comment, a thread's reply, or a comment being edited. */
@@ -53,7 +62,15 @@ export interface ReviewComments {
   /** Selects a thread, which then stays listed until the filter changes. */
   select(id: string | null): void;
   draft: Draft | null;
-  /** Starts a comment at `d`. A new pick while one is open moves it and keeps its text. */
+  /**
+   * Set while the draft names a version whose id is not known yet, so it cannot be sent:
+   * `error` once reading that version failed.
+   */
+  versionWait: { error: ApiError | null } | null;
+  /**
+   * Starts a comment at `d`, on the version the frame shows. A new pick while one is open
+   * moves it and keeps its text.
+   */
   startDraft(d: PickedAnchor): void;
   /** Drops the comment being written and its text. */
   cancelDraft(): void;
@@ -105,8 +122,14 @@ export function useReviewComments(o: {
   filterPrefKey: string | null;
   /** False where there are no comments to read: a share link that does not allow them. */
   enabled?: boolean;
+  /**
+   * For a member, whose thread names its version: `frame` is the number of the version the
+   * frame shows, which a pick is written on, and `lookup` tells a version's id by its number.
+   * Absent for a share link's guest: the server puts their thread on the version the link shows.
+   */
+  versions?: { frame: number | null; lookup(n: number): VersionLookup };
 }): ReviewComments {
-  const { backend, permissions, shown, versionId } = o;
+  const { backend, permissions, shown, versionId, versions } = o;
   const queryClient = useQueryClient();
   const query = useThreads(backend, o.enabled ?? true);
   const actions = useCommentActions(backend);
@@ -114,7 +137,7 @@ export function useReviewComments(o: {
 
   const [filter, writeFilter] = usePref<ThreadFilter>(o.filterPrefKey, FILTERS, 'open');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const [picked, setPicked] = useState<Omit<Draft, 'versionId'> | null>(null);
   const [texts, setTexts] = useState<ReadonlyMap<string, string>>(new Map());
 
   // Threads kept listed, with the list they were worked out from. Adjusted during render, so a
@@ -126,6 +149,18 @@ export function useReviewComments(o: {
     if (changed.length > 0) sticky = new Set([...sticky, ...changed]);
     setKept({ list, sticky });
   }
+
+  // The draft's version id is looked up on every render: one read after the pick fills it in.
+  const lookup =
+    picked === null || picked.version === null || versions === undefined
+      ? null
+      : versions.lookup(picked.version);
+  const draftVersionId = lookup?.id ?? null;
+  const draft = useMemo(
+    () => (picked === null ? null : { ...picked, versionId: draftVersionId }),
+    [picked, draftVersionId],
+  );
+  const versionWait = lookup !== null && draftVersionId === null ? { error: lookup.error } : null;
 
   const shownAll = useMemo(() => threadsForVersion(list ?? NO_THREADS, shown), [list, shown]);
   const visible = useMemo(
@@ -209,10 +244,11 @@ export function useReviewComments(o: {
 
   const text = useCallback((key: TextKey) => texts.get(key) ?? '', [texts]);
 
-  // The latest version id and create mutation, read by the stable callbacks below.
-  const latest = useRef({ versionId, create: actions.create });
+  // The frame's version and the create mutation, read by the stable callbacks below.
+  const frame = versions?.frame ?? null;
+  const latest = useRef({ frame, create: actions.create });
   useLayoutEffect(() => {
-    latest.current = { versionId, create: actions.create };
+    latest.current = { frame, create: actions.create };
   });
 
   // A new or dropped draft starts without the last failure's message. A post still on its way
@@ -225,14 +261,14 @@ export function useReviewComments(o: {
   const startDraft = useCallback(
     (d: PickedAnchor) => {
       clearSendError();
-      setDraft({ ...d, versionId: latest.current.versionId });
+      setPicked({ ...d, version: latest.current.frame });
     },
     [clearSendError],
   );
 
   const cancelDraft = useCallback(() => {
     clearSendError();
-    setDraft(null);
+    setPicked(null);
     setText('new', '');
   }, [clearSendError, setText]);
 
@@ -263,6 +299,7 @@ export function useReviewComments(o: {
     selectedId,
     select,
     draft,
+    versionWait,
     startDraft,
     cancelDraft,
     composing,

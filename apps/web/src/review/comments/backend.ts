@@ -39,7 +39,10 @@ export interface CommentBackend {
   /** The live-update stream for this review, for `EventSource`. */
   eventsPath: string;
   list(): Promise<CommentThread[]>;
-  /** Members send the version the anchor came from; guests cannot, the link decides. */
+  /**
+   * Members must send the version the anchor came from: without it the server would choose the
+   * current one. Guests cannot, the link decides.
+   */
   create(p: { body: string; anchor: Anchor; versionId: string | null }): Promise<CommentThread>;
   reply(threadId: string, body: string): Promise<Comment>;
   edit(commentId: string, body: string): Promise<Comment>;
@@ -56,11 +59,9 @@ export function memberBackend(artifactId: string): CommentBackend {
     eventsPath: `/api/v1/artifacts/${encodeURIComponent(artifactId)}/events`,
     list: () => listAllThreads(artifactId),
     create: ({ body, anchor, versionId }) =>
-      createThread(artifactId, {
-        body,
-        anchor,
-        ...(versionId === null ? {} : { version_id: versionId }),
-      }),
+      versionId === null
+        ? Promise.reject(new Error('A member thread is sent with the version it was written on.'))
+        : createThread(artifactId, { body, anchor, version_id: versionId }),
     reply: replyTo,
     edit: editComment,
     remove: deleteComment,

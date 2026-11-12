@@ -3,12 +3,18 @@ import { Minimize } from 'lucide-react';
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { errorMessage } from '../../api/client.ts';
-import type { ArtifactSummary, ContentGrant, LiveEvent, Me } from '../../api/dto.ts';
+import { type ApiError, errorMessage } from '../../api/client.ts';
+import type {
+  ArtifactSummary,
+  ContentGrant,
+  LiveEvent,
+  Me,
+  VersionSummary,
+} from '../../api/dto.ts';
 import { qk } from '../../api/keys.ts';
 import { useArtifact, useProject } from '../../api/library.ts';
 import { useMe } from '../../api/session.ts';
-import { reviewPath, useReviewGrant, useVersions } from '../../api/versions.ts';
+import { reviewPath, useReviewGrant, useVersion, useVersions } from '../../api/versions.ts';
 import { PageHeader } from '../../app/shell/page-header.tsx';
 import { PHONE_QUERY, useMediaQuery } from '../../lib/media.ts';
 import { usePageTitle } from '../../lib/page-title.ts';
@@ -22,7 +28,7 @@ import { CommentPanel } from '../comments/comment-panel.tsx';
 import { CommentSheet } from '../comments/comment-sheet.tsx';
 import { Composer } from '../comments/composer.tsx';
 import { composerFloats, composerPosition } from '../comments/composer-position.ts';
-import { useReviewComments } from '../comments/use-review-comments.ts';
+import { useReviewComments, type VersionLookup } from '../comments/use-review-comments.ts';
 import { ContentFrame } from '../frame/content-frame.tsx';
 import { CUSTOM_WIDTH, clampCustomWidth, type Device, frameBox } from '../frame/device.ts';
 import { type PickedAnchor, useFrameBridge } from '../frame/use-frame-bridge.ts';
@@ -187,30 +193,60 @@ function Review({
     () => versions.data?.pages.flatMap((page) => page.items) ?? [],
     [versions.data],
   );
-  const shownVersion =
-    shown === null
-      ? null
-      : artifact.current_version?.number === shown
+  /** Version n as the page holds it: the current version, or one of the list read so far. */
+  const knownVersion = (n: number | null) =>
+    n === null
+      ? undefined
+      : artifact.current_version?.number === n
         ? artifact.current_version
-        : (versionList.find((v) => v.number === shown) ?? null);
+        : versionList.find((v) => v.number === n);
+  /** `n` when it must be read on its own: the list, read once, does not hold it (it reads 50). */
+  const toRead = (n: number | null) =>
+    n !== null && !versions.isPending && knownVersion(n) === undefined ? n : null;
+  const shownRead = useVersion(artifactId, toRead(shown));
+  const shownVersion = knownVersion(shown) ?? shownRead.data ?? null;
   const older = shown === null ? null : (versionList.find((v) => v.number < shown)?.number ?? null);
   const newer =
     shown === null ? null : (versionList.findLast((v) => v.number > shown)?.number ?? null);
 
-  // Comments.
+  // The page's content grant. The page on screen stays until the next version's grant is
+  // there, so a switch never shows an empty stage.
+  const grant = useReviewGrant(artifactId, versionGone ? null : shown);
+  const grantFailed = grant.isError && grant.data === undefined;
+  const [held, setHeld] = useState<{ n: number; grant: ContentGrant } | null>(null);
+  if (grant.data && shown !== null && held?.grant !== grant.data) {
+    setHeld({ n: shown, grant: grant.data });
+  }
+  // Opening a version counts as a view of the artifact, which moves it up in Recent.
+  useEffect(() => {
+    if (grant.data) void queryClient.invalidateQueries({ queryKey: qk.recent });
+  }, [grant.data, queryClient]);
+
+  // Comments. A new one is written on the version whose page the frame shows (`held`, which
+  // during a switch is still the version before), and sent with that version's id.
   const backend = useMemo(() => memberBackend(artifactId), [artifactId]);
   const permissions = useMemo(
     () => memberPermissions(me, { created_by: artifact.created_by }),
     [me, artifact.created_by],
   );
+  const lookupVersion = (n: number): VersionLookup => {
+    const known = knownVersion(n);
+    if (known !== undefined) return { id: known.id, error: null };
+    const read = queryClient.getQueryState<VersionSummary, ApiError>(qk.version(artifactId, n));
+    return { id: read?.data?.id ?? null, error: read?.error ?? null };
+  };
   const c = useReviewComments({
     backend,
     permissions,
     shown: shown ?? 0,
     versionId: shownVersion?.id ?? null,
     filterPrefKey: `pinwall:comment-filter:${me.id}`,
+    versions: { frame: held?.n ?? null, lookup: lookupVersion },
   });
   if (c.composing !== composing) setComposing(c.composing);
+  // The draft's version, when the page does not hold it: its answer renders the page again,
+  // and `lookupVersion` then finds it in the cache.
+  useVersion(artifactId, toRead(c.draft?.version ?? null));
 
   // Layout: the panel, the sheet, the device and full screen.
   const [panelPref, setPanelPref] = usePref(`pinwall:review-panel:${me.id}`, PANEL_STATES, 'open');
@@ -229,19 +265,6 @@ function Review({
   const stageSize = useElementSize(stageRef);
   // A phone's screen is the phone: the page fills it.
   const box = frameBox(phone ? 'desktop' : device, customWidth, stageSize);
-
-  // The page's content grant. The page on screen stays until the next version's grant is
-  // there, so a switch never shows an empty stage.
-  const grant = useReviewGrant(artifactId, versionGone ? null : shown);
-  const grantFailed = grant.isError && grant.data === undefined;
-  const [held, setHeld] = useState<{ n: number; grant: ContentGrant } | null>(null);
-  if (grant.data && shown !== null && held?.grant !== grant.data) {
-    setHeld({ n: shown, grant: grant.data });
-  }
-  // Opening a version counts as a view of the artifact, which moves it up in Recent.
-  useEffect(() => {
-    if (grant.data) void queryClient.invalidateQueries({ queryKey: qk.recent });
-  }, [grant.data, queryClient]);
 
   const showComments = useCallback(() => {
     if (phone) setSheetOpen(true);

@@ -42,6 +42,11 @@ export const qk = {
   /** The versions of an artifact, newest first, a page at a time. */
   versions: (id: string) => ['versions', id] as const,
   /**
+   * One version of an artifact, read on its own (`null`: none asked for). Its
+   * own prefix: a number is never reused, so refreshing the list leaves it be.
+   */
+  version: (id: string, n: number | null) => ['version', id, n] as const,
+  /**
    * A content grant for one version (`null`: none chosen yet). Its own prefix,
    * not under `versions`: refreshing the version list must not hand the frame
    * a new URL.
