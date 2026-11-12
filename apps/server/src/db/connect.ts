@@ -37,6 +37,21 @@ pg.types.setTypeParser(20, Number);
 const SQLITE_BUSY_TIMEOUT_MS = 5000;
 
 /**
+ * How long opening a Postgres connection (TCP, TLS, authentication) or waiting for a free one in
+ * the pool may take. A server that accepts the connection and never answers would otherwise
+ * hold startup, `/readyz` and every request that needs a connection for good.
+ */
+const PG_CONNECT_TIMEOUT_MS = 10_000;
+/**
+ * After this long without traffic, TCP keepalive probes check that the Postgres server is still
+ * there, so a connection to one that vanished without closing it (a failover to a new address, a
+ * network partition) fails its queries instead of leaving them waiting for minutes.
+ */
+const PG_KEEPALIVE_DELAY_MS = 10_000;
+/** What pg-pool says when `PG_CONNECT_TIMEOUT_MS` ends a connection that never got going. */
+const PG_POOL_CONNECT_TIMEOUT = 'Connection terminated due to connection timeout';
+
+/**
  * Switches the file to WAL. When two processes open a new file at the same moment, SQLite can
  * refuse one of them with SQLITE_BUSY at once instead of waiting on busy_timeout; that one tries
  * again until the other has switched the file (the mode is stored in the file) or time runs out.
@@ -117,7 +132,13 @@ export async function connectDb(
     );
   }
 
-  const pool = new pg.Pool({ connectionString: cfg.url, max: cfg.poolSize });
+  const pool = new pg.Pool({
+    connectionString: cfg.url,
+    max: cfg.poolSize,
+    connectionTimeoutMillis: PG_CONNECT_TIMEOUT_MS,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: PG_KEEPALIVE_DELAY_MS,
+  });
   // A client that loses its connection (a Postgres restart or failover, pg_terminate_backend, a
   // proxy cutting the socket) emits 'error', and an 'error' event nobody listens for crashes the
   // process. The pool listens only while a client sits idle, so each client gets its own
@@ -138,7 +159,20 @@ export async function connectDb(
   });
   // The pool passes an idle client's error on here too; the client's own listener logged it.
   pool.on('error', () => {});
-  return handle(new Kysely<Database>({ dialect: new PostgresDialect({ pool }) }), 'postgres');
+  const h = handle(new Kysely<Database>({ dialect: new PostgresDialect({ pool }) }), 'postgres');
+  return {
+    ...h,
+    // Startup and `/readyz` report a server that never answered in words an operator acts on.
+    ping: () =>
+      h.ping().catch((error: unknown) => {
+        if (error instanceof Error && error.message === PG_POOL_CONNECT_TIMEOUT) {
+          throw new Error(`PostgreSQL did not answer within ${PG_CONNECT_TIMEOUT_MS / 1000} s`, {
+            cause: error,
+          });
+        }
+        throw error;
+      }),
+  };
 }
 
 /**

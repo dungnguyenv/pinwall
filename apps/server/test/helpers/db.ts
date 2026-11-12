@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { type AddressInfo, createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Sqlite from 'better-sqlite3';
@@ -131,6 +132,34 @@ export async function runAsAdmin(statement: string, params: unknown[] = []): Pro
   } finally {
     await client.end();
   }
+}
+
+/**
+ * A TCP server on loopback that accepts every connection and never sends a byte, as a Postgres
+ * that hangs (or a proxy in front of a dead one) does. `url` points a connection at it, with a
+ * password in it; `close()` drops the connections and stops listening.
+ */
+export async function startSilentPostgres(): Promise<{
+  url: string;
+  password: string;
+  close(): Promise<void>;
+}> {
+  const sockets = new Set<Socket>();
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  const password = `silent-${randomBytes(8).toString('hex')}`;
+  return {
+    url: `postgres://pinwall:${password}@127.0.0.1:${port}/pinwall`,
+    password,
+    close: () => {
+      for (const socket of sockets) socket.destroy();
+      return new Promise((resolve) => server.close(() => resolve()));
+    },
+  };
 }
 
 /** Wraps `close()` so it also runs `cleanup`, once, however often it is called. */

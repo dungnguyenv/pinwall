@@ -167,7 +167,7 @@ export const CONFIG_VARS: readonly ConfigVar[] = [
     secret: false,
     default: '10',
     description:
-      'The most PostgreSQL connections one Pinwall process opens, from 1 to 1000. SQLite ignores it.',
+      'The most PostgreSQL connections one Pinwall process opens, from 1 to 1000. Opening a connection, or waiting for a free one when all are busy, fails after 10 seconds. SQLite ignores it.',
   },
 
   // Storage

@@ -1,10 +1,12 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, onTestFinished, test } from 'vitest';
 import { connectDb } from '../src/db/connect.ts';
+import { startSilentPostgres } from './helpers/db.ts';
 import { readSse } from './helpers/review.ts';
 
 const serverDir = fileURLToPath(new URL('..', import.meta.url));
@@ -186,4 +188,24 @@ test('serve ends live streams at once on SIGTERM', async () => {
   expect(await stream.done()).toBe(true);
   expect(await exited).toBe(0);
   expect(Date.now() - stopping).toBeLessThan(4_000);
+}, 30_000);
+
+test('serve gives up on a PostgreSQL that never answers, and says so', async () => {
+  const silent = await startSilentPostgres();
+  onTestFinished(silent.close);
+  const { output, exited } = pinwall(['serve'], {
+    PINWALL_DATA_DIR: await tempDataDir(),
+    PINWALL_DATABASE_URL: silent.url,
+    PINWALL_SECRET_KEY: randomBytes(32).toString('hex'),
+    PINWALL_HOST: '127.0.0.1',
+    PINWALL_PORT: '0',
+    PINWALL_METRICS_PORT: '0',
+  });
+
+  expect(await exited).toBe(1);
+  expect(logLines(output.stdout).find((line) => line.level === 'fatal')).toMatchObject({
+    msg: 'Pinwall cannot start',
+    err: { message: expect.stringMatching(/^PostgreSQL did not answer within 10 s/) },
+  });
+  expect(output.stdout + output.stderr).not.toContain(silent.password);
 }, 30_000);

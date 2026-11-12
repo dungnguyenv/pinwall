@@ -57,6 +57,8 @@ export async function createDeps(
 
   const db = overrides.db ?? (await connectDb(resolved.database, logger));
   try {
+    // A database that cannot be reached fails here, for its own reason, not as a failed migration.
+    await db.ping();
     await migrateToLatest(db);
     const leases = overrides.leases ?? new DbLeaseManager(db, clock);
     const metrics = overrides.metrics ?? createMetrics(db, clock);

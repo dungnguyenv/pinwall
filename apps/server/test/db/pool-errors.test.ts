@@ -1,9 +1,15 @@
 import { spawn } from 'node:child_process';
+import { Socket } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { sql } from 'kysely';
 import { describe, expect, onTestFinished, test, vi } from 'vitest';
 import { connectDb } from '../../src/db/connect.ts';
-import { createPostgresDatabase, dialects, runAsAdmin } from '../helpers/db.ts';
+import {
+  createPostgresDatabase,
+  dialects,
+  runAsAdmin,
+  startSilentPostgres,
+} from '../helpers/db.ts';
 
 const LOSER = fileURLToPath(new URL('./pg-connection-loss.child.ts', import.meta.url));
 
@@ -42,6 +48,24 @@ function loseConnection(url: string, mode: 'query' | 'idle'): Promise<Loss> {
     });
   });
 }
+
+describe('a Postgres that never answers', () => {
+  test('fails a query within the connect timeout, on a socket with TCP keepalive', async () => {
+    const silent = await startSilentPostgres();
+    onTestFinished(silent.close);
+    const keepAlive = vi.spyOn(Socket.prototype, 'setKeepAlive');
+    onTestFinished(() => keepAlive.mockRestore());
+    const h = await connectDb({ kind: 'postgres', url: silent.url, poolSize: 2 });
+    onTestFinished(() => h.close());
+
+    const started = Date.now();
+    await expect(h.ping()).rejects.toThrow('PostgreSQL did not answer within 10 s');
+    expect(Date.now() - started).toBeLessThan(15_000);
+    // Probes start after 10 s of silence, so a peer that vanished without closing the
+    // connection (a failover, a partition) fails its queries instead of leaving them waiting.
+    expect(keepAlive).toHaveBeenCalledWith(true, 10_000);
+  });
+});
 
 describe.runIf(dialects.includes('postgres'))('Postgres pool', () => {
   test('logs an idle connection that fails, then reconnects', async () => {
