@@ -1,26 +1,30 @@
 # Pinwall on one host: SQLite and local blob storage in a named volume, nothing else to run.
 #
-#   docker compose up -d --build
+#   PINWALL_PUBLIC_ORIGIN=https://pinwall.example.com docker compose up -d
 #
-# Put a TLS-terminating reverse proxy in front of port 8080 and set PINWALL_PUBLIC_ORIGIN to the
-# address people use. For a trial on this machine, use http://localhost:8080 instead.
+# That pulls the released image. `docker compose up -d --build` builds it from this repository
+# instead. Put a TLS-terminating reverse proxy in front of the published port and set
+# PINWALL_PUBLIC_ORIGIN to the address people use (here, or in a `.env` file beside this one).
+# For a trial on this machine, use PINWALL_PUBLIC_ORIGIN=http://localhost:8080.
+#
+# Variables: PINWALL_IMAGE (default: the released image), PINWALL_PUBLIC_ORIGIN, and
+# PINWALL_PORT_PUBLISHED (the port on 127.0.0.1, default 8080).
 name: pinwall
 
 services:
   pinwall:
-    # Built from this repository until an image is published.
-    image: pinwall:local
+    image: ${PINWALL_IMAGE:-ghcr.io/dungnguyenv/pinwall:1.0.0}
     build:
       context: ../..
     restart: unless-stopped
     environment:
       # Replace the placeholder. Every link, cookie flag and redirect is built from this origin
       # (scheme and host, no path), never from the Host header.
-      PINWALL_PUBLIC_ORIGIN: https://pinwall.example.com
+      PINWALL_PUBLIC_ORIGIN: ${PINWALL_PUBLIC_ORIGIN:-https://pinwall.example.com}
       # The instance secret key is generated into the data volume on first start; back the
       # volume up. To supply your own, add PINWALL_SECRET_KEY_FILE and mount the file.
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${PINWALL_PORT_PUBLISHED:-8080}:8080"
     volumes:
       - pinwall-data:/data
     read_only: true

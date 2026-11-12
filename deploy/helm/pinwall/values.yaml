@@ -1,0 +1,160 @@
+# Values for the Pinwall chart.
+#
+# Pinwall runs as exactly one pod in v1: it keeps its state in one SQLite file or one Postgres
+# database and in process memory, so the chart has no replica count. It scales up, not out.
+#
+# Install with the address people will use, for example:
+#   helm install pinwall oci://ghcr.io/dungnguyenv/charts/pinwall --version <version> \
+#     --set publicOrigin=https://pinwall.example.com
+
+image:
+  # The image repository.
+  repository: ghcr.io/dungnguyenv/pinwall
+  # The image by content digest, as `sha256:` and 64 hex digits. The released chart carries the
+  # digest of the image it was built with, and a digest wins over `tag`.
+  digest: ""
+  # An image tag, used only while `digest` is empty. A tag can move, so prefer the digest.
+  tag: ""
+  # When the kubelet pulls the image.
+  pullPolicy: IfNotPresent
+
+# Secrets for pulling the image from a private registry: a list of `{name: <secret>}`.
+imagePullSecrets: []
+
+# The address people use to reach Pinwall: scheme and host with an optional port, no path. Every
+# link, redirect, passkey and cookie setting is built from it, and an https address turns on
+# secure cookies. Required.
+publicOrigin: ""
+
+# Settings that are not secret, as `PINWALL_*` variables (see docs/configuration.md), for example
+#   env:
+#     PINWALL_TRUST_PROXY: "true"
+#     PINWALL_ISOLATION: content-domain
+#     PINWALL_CONTENT_ORIGIN: https://pinwall-content.example.com
+# The chart sets PINWALL_PUBLIC_ORIGIN, PINWALL_METRICS_PORT, PINWALL_PORT and PINWALL_DATA_DIR
+# itself (from `publicOrigin`, `metrics.port` and the volume), so they cannot be set here. A
+# secret (the database URL, the secret key, the S3 keys, the OIDC client secret) is refused
+# here, because it would sit in plain text in the pod spec: use `existingSecret` and
+# `secretFiles`.
+env: {}
+
+# The name of a Secret you create yourself in the same namespace, for example
+#   kubectl create secret generic pinwall-secrets \
+#     --from-literal=secret-key="$(openssl rand -hex 32)" \
+#     --from-literal=database-url='postgres://pinwall:...@postgres:5432/pinwall'
+# Only the keys named in `secretFiles` are mounted, as files.
+existingSecret: ""
+
+# Which key of `existingSecret` holds which secret: the variable name, then the key. The chart
+# mounts each key as a file and sets the variable's `_FILE` form to it. For example
+#   secretFiles:
+#     PINWALL_SECRET_KEY: secret-key
+#     PINWALL_DATABASE_URL: database-url
+# The secret variables are PINWALL_SECRET_KEY, PINWALL_DATABASE_URL, PINWALL_S3_ACCESS_KEY_ID,
+# PINWALL_S3_SECRET_ACCESS_KEY and PINWALL_OIDC_CLIENT_SECRET. Pinwall with SQLite needs none of
+# them: it generates its own key into the data volume.
+secretFiles: {}
+
+persistence:
+  # Keep /data (the SQLite database, local files, the generated secret key, upload spools) on a
+  # volume. With false it is an emptyDir and everything is lost whenever the pod restarts.
+  enabled: true
+  # Use a claim you already have instead of creating one.
+  existingClaim: ""
+  # The StorageClass of the new claim; empty uses the cluster's default.
+  storageClass: ""
+  # Access modes of the new claim. One pod mounts it at a time.
+  accessModes:
+    - ReadWriteOnce
+  # The size of the new claim.
+  size: 10Gi
+  # Annotations of the new claim. Add `helm.sh/resource-policy: keep` to leave the volume in
+  # place when the release is uninstalled.
+  annotations: {}
+
+service:
+  # The Service type.
+  type: ClusterIP
+  # The Service port for the web app (the container listens on 8080).
+  port: 80
+  # Annotations of the Service.
+  annotations: {}
+
+ingress:
+  # Create an Ingress for the web app.
+  enabled: false
+  # The ingressClassName; empty uses the cluster's default class.
+  className: ""
+  # Annotations of the Ingress, for example for cert-manager or the controller's body-size limit
+  # (uploads can be as large as PINWALL_MAX_UPLOAD_BYTES).
+  annotations: {}
+  # The host names to route to Pinwall. Empty uses the host of `publicOrigin`.
+  hosts: []
+  # With PINWALL_ISOLATION=content-domain: the wildcard host that serves artifacts, for example
+  # "*.pinwall-content.example.com". It adds a rule for that host to the same Service.
+  contentHost: ""
+  # TLS entries, as the Ingress spec has them: a list of `{secretName, hosts}`. A content-domain
+  # install needs a certificate that covers the wildcard host too.
+  tls: []
+
+metrics:
+  # Serve Prometheus metrics on their own port, apart from the web app's. With false
+  # PINWALL_METRICS_PORT is 0 and there is no metrics listener.
+  enabled: true
+  # The metrics port; it must differ from the web port, 8080.
+  port: 9464
+  serviceMonitor:
+    # Create a Prometheus Operator ServiceMonitor. Needs metrics.enabled and the operator's CRDs.
+    enabled: false
+    # How often Prometheus scrapes.
+    interval: 30s
+    # Extra labels of the ServiceMonitor, for an operator that selects monitors by label.
+    labels: {}
+
+networkPolicy:
+  # Create a NetworkPolicy for the pod. It needs a network plugin that enforces policies.
+  enabled: false
+  # Who may reach the web port, as NetworkPolicy `from` entries, for example the namespace of the
+  # ingress controller. Empty lets every source reach it.
+  ingressFrom: []
+  # Who may reach the metrics port, as `from` entries, for example the namespace Prometheus runs
+  # in. Empty lets nothing reach it.
+  metricsFrom: []
+  # Limit what the pod may connect to. With true only DNS (port 53) and the rules in `egress` are
+  # allowed, so list the database, the S3 service and the identity provider there.
+  restrictEgress: false
+  # Extra egress rules, as NetworkPolicy egress entries, used with `restrictEgress`.
+  egress: []
+
+# CPU and memory of the pod. The memory limit also bounds the biggest upload that can be
+# unpacked (see PINWALL_MAX_VERSION_BYTES); raise it for larger limits.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+serviceAccount:
+  # Create a ServiceAccount for the pod. Pinwall never calls the Kubernetes API, so the pod
+  # mounts no token either way.
+  create: true
+  # The name; empty uses the release's name. With create=false, empty uses `default`.
+  name: ""
+  # Annotations of the ServiceAccount, for example for a cloud role.
+  annotations: {}
+
+# Annotations of the pod.
+podAnnotations: {}
+
+# Extra labels of the pod.
+podLabels: {}
+
+# Node selection, tolerations and affinity of the pod.
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Overrides of the names the chart gives its objects.
+nameOverride: ""
+fullnameOverride: ""

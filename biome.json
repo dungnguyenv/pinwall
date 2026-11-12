@@ -2,7 +2,15 @@
   "$schema": "https://biomejs.dev/schemas/2.6.6/schema.json",
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
-    "includes": ["**", "!**/dist", "!**/node_modules", "!**/coverage", "!**/*.md", "!docs"]
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/coverage",
+      "!**/*.md",
+      "!docs",
+      "!deploy/helm/pinwall/templates"
+    ]
   },
   "formatter": {
     "enabled": true,

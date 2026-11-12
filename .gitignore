@@ -12,3 +12,5 @@ test-results/
 e2e/test-results/
 e2e/report/
 .build/
+# The Compose example's secret files (deploy/compose/docker-compose.postgres-s3.yml).
+deploy/compose/secrets/

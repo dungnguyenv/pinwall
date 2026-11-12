@@ -1,0 +1,42 @@
+{{- if .Values.ingress.enabled }}
+{{- /* The host of publicOrigin, without a port, unless hosts are given. */ -}}
+{{- $hosts := .Values.ingress.hosts }}
+{{- if not $hosts }}
+{{- $hosts = list (urlParse .Values.publicOrigin).hostname }}
+{{- end }}
+{{- if .Values.ingress.contentHost }}
+{{- $hosts = append $hosts .Values.ingress.contentHost }}
+{{- end }}
+{{- $service := include "pinwall.fullname" . }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $service }}
+  labels:
+    {{- include "pinwall.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range $hosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $service }}
+                port:
+                  name: http
+    {{- end }}
+{{- end }}

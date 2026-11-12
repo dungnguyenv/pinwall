@@ -1,0 +1,126 @@
+# Every feature of the chart switched on, with values shaped like a PostgreSQL + S3 install in
+# content-domain mode. Used by `pnpm chart:check`.
+publicOrigin: https://pinwall.example.com:8443
+image:
+  digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+  pullPolicy: Always
+imagePullSecrets:
+  - name: registry-credentials
+
+env:
+  PINWALL_TRUST_PROXY: "true"
+  PINWALL_LOG_LEVEL: debug
+  PINWALL_ISOLATION: content-domain
+  PINWALL_CONTENT_ORIGIN: https://pinwall-content.example.com
+  PINWALL_DATABASE_POOL_SIZE: 20
+  PINWALL_STORAGE: s3
+  PINWALL_S3_BUCKET: pinwall
+  PINWALL_S3_REGION: eu-central-1
+  PINWALL_S3_ENDPOINT: https://s3.example.com
+  PINWALL_S3_FORCE_PATH_STYLE: true
+  PINWALL_S3_PREFIX: pinwall/
+  PINWALL_MAX_UPLOAD_BYTES: 95000000
+  PINWALL_OIDC_ISSUER: https://id.example.com/realms/main
+  PINWALL_OIDC_CLIENT_ID: pinwall
+existingSecret: pinwall-secrets
+secretFiles:
+  PINWALL_SECRET_KEY: secret-key
+  PINWALL_DATABASE_URL: database-url
+  PINWALL_S3_ACCESS_KEY_ID: s3-access-key-id
+  PINWALL_S3_SECRET_ACCESS_KEY: s3-secret-access-key
+  PINWALL_OIDC_CLIENT_SECRET: oidc-client-secret
+
+persistence:
+  size: 20Gi
+  storageClass: fast
+  annotations:
+    helm.sh/resource-policy: keep
+
+service:
+  port: 8080
+  annotations:
+    example.com/note: full
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 100m
+  contentHost: "*.pinwall-content.example.com"
+  tls:
+    - secretName: pinwall-tls
+      hosts:
+        - pinwall.example.com
+        - "*.pinwall-content.example.com"
+
+metrics:
+  port: 9100
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    labels:
+      release: prometheus
+
+networkPolicy:
+  enabled: true
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+  metricsFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+  restrictEgress: true
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: databases
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+      ports:
+        - port: 443
+          protocol: TCP
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+serviceAccount:
+  name: pinwall-runtime
+  annotations:
+    example.com/role: pinwall
+podAnnotations:
+  example.com/scrape: "false"
+podLabels:
+  example.com/tier: apps
+nodeSelector:
+  kubernetes.io/arch: arm64
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: apps
+    effect: NoSchedule
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 1
+        preference:
+          matchExpressions:
+            - key: topology.kubernetes.io/zone
+              operator: In
+              values:
+                - zone-a
+nameOverride: ""
+fullnameOverride: pinwall-full

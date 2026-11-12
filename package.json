@@ -10,6 +10,7 @@
   "packageManager": "pnpm@12.18.0",
   "scripts": {
     "build": "pnpm --filter @pinwall/web build && pnpm --filter @pinwall/server build",
+    "chart:check": "pnpm --filter @pinwall/tools exec tsx src/check-chart.ts",
     "docs:config": "pnpm --filter @pinwall/server docs:config",
     "image:size": "pnpm --filter @pinwall/tools exec tsx src/image-size.ts",
     "licenses:check": "pnpm --filter @pinwall/tools exec tsx src/licenses.ts check",

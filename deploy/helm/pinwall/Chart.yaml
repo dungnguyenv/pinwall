@@ -1,0 +1,17 @@
+apiVersion: v2
+name: pinwall
+description: Pinwall, a self-hosted home for the pages AI agents make, as one hardened single-instance deployment.
+type: application
+# The release workflow sets the chart version and appVersion to the release version.
+version: 0.0.0
+appVersion: "0.0.0"
+kubeVersion: ">=1.27.0-0"
+home: https://github.com/dungnguyenv/pinwall
+sources:
+  - https://github.com/dungnguyenv/pinwall
+keywords:
+  - pinwall
+  - artifacts
+  - self-hosted
+annotations:
+  artifacthub.io/license: Apache-2.0

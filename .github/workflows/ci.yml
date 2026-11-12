@@ -173,3 +173,53 @@ jobs:
       # Which packages ship is read from the build's own output, so the check follows a build.
       - run: pnpm build
       - run: pnpm licenses:check
+
+  chart:
+    name: Helm chart
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v4.3.1
+          checksum-policy: required
+
+      # kubeconform validates the rendered manifests against the Kubernetes schemas. The tarball
+      # is checked against the release's CHECKSUMS and against the hash pinned here, so a changed
+      # release asset cannot slip in. To update: change both values from the new release.
+      - name: Install kubeconform
+        env:
+          KUBECONFORM_VERSION: v0.8.0
+          KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+        run: |
+          set -euo pipefail
+          base="https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}"
+          curl --fail --silent --show-error --location --output kubeconform.tar.gz \
+            "${base}/kubeconform-linux-amd64.tar.gz"
+          curl --fail --silent --show-error --location --output CHECKSUMS "${base}/CHECKSUMS"
+          listed="$(awk '$2 == "kubeconform-linux-amd64.tar.gz" { print $1 }' CHECKSUMS)"
+          [ "${listed}" = "${KUBECONFORM_SHA256}" ]
+          echo "${listed}  kubeconform.tar.gz" | sha256sum --check
+          mkdir -p "${RUNNER_TEMP}/bin"
+          tar -xzf kubeconform.tar.gz -C "${RUNNER_TEMP}/bin" kubeconform
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+
+      # The pnpm version comes from "packageManager" in package.json.
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          cache: true
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - run: pnpm install --frozen-lockfile
+
+      # Lints the chart, renders it for every file in deploy/helm/pinwall/ci, validates the output
+      # (the ServiceMonitor schema is fetched from the CRDs catalog) and checks the hardening
+      # rules, including that every unsafe set of values is refused.
+      - run: pnpm chart:check

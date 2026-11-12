@@ -1,0 +1,46 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "pinwall.fullname" . }}
+  labels:
+    {{- include "pinwall.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pinwall.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    {{- if .Values.networkPolicy.restrictEgress }}
+    - Egress
+    {{- end }}
+  ingress:
+    # The web app: from the listed sources, or from everywhere when none are listed.
+    - ports:
+        - port: {{ include "pinwall.httpPort" . }}
+          protocol: TCP
+      {{- with .Values.networkPolicy.ingressFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- if and .Values.metrics.enabled .Values.networkPolicy.metricsFrom }}
+    # The metrics: only from the listed sources.
+    - ports:
+        - port: {{ .Values.metrics.port }}
+          protocol: TCP
+      from:
+        {{- toYaml .Values.networkPolicy.metricsFrom | nindent 8 }}
+    {{- end }}
+  {{- if .Values.networkPolicy.restrictEgress }}
+  egress:
+    # DNS, wherever the cluster's resolver is.
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- with .Values.networkPolicy.egress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+{{- end }}

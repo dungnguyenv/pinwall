@@ -1,0 +1,11 @@
+# Files that stay out of the packaged chart. The ci/ values files are for the repository's own
+# chart check (pnpm chart:check), not for installs.
+.DS_Store
+.git/
+.gitignore
+.vscode/
+*.swp
+*.bak
+*.tmp
+*~
+ci/
