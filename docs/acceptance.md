@@ -4,6 +4,47 @@ Pinwall 1.0 is done when every item of the design's acceptance list (§9 of the 
 either proven by an automated suite that passes or by a manual check recorded below. This page
 holds the record, the steps of each manual check, and how the automated part runs.
 
+## Before tagging 1.0.0
+
+As of the 1.0.0 release candidate, this definition is not met yet. Nothing below counts until it is
+run against the commit that will be tagged, and recorded on this page.
+
+1. **Every automated suite, at the tag candidate.** The last full run was at `b40e80d`, and later
+   fixes changed the PostgreSQL connection handling, backup and restore. Run, from a clean checkout
+   of the candidate commit, `pnpm lint`, `pnpm typecheck`, `pnpm test:integration`, `pnpm test:e2e`,
+   `pnpm test:e2e:keycloak` and `pnpm test:acceptance`, and add a row to
+   [Automated runs](#automated-runs). `e2e/acceptance-report.md` is not kept in the repository, and
+   a copy of it from an earlier commit proves nothing about this one.
+2. **The manual checks, on the image built from that commit** (`pnpm test:acceptance` leaves it as
+   `pinwall:acceptance`). None of them has been run on a release image yet:
+   - [claude-code](#claude-code) (item 2). The one recorded run was from source on an earlier
+     branch, so it has to be repeated on the image.
+   - [review-loop](#review-loop) (item 4), right after it, in the same Claude Code session.
+   - [claude-desktop](#claude-desktop) (item 3a) and then [cloudflare-tunnel](#cloudflare-tunnel)
+     (item 8), over one quick tunnel. They need `cloudflared`, Claude Desktop and an internet
+     connection.
+   - [fresh-install](#fresh-install) (item 1). Its timing includes the image pull, so it needs a
+     published image: run it on a pre-release such as `v1.0.0-rc.1` once one is pushed, or on
+     1.0.0 itself right after the release, and record which.
+   - [zitadel](#zitadel) and [google](#google) (items 3 and 3b), each with an account at that
+     provider. The automated suites cover these items with simulated providers and a real
+     Keycloak, so these two checks are strongly advised rather than required.
+   - [two-machines](#two-machines) (item 6) stays optional.
+3. **The release workflow has never run on GitHub.** The first run of `release.yml` (the signing,
+   the attestations, the chart push, the image tags and the GitHub release) would be the 1.0.0 tag
+   itself, unless it is rehearsed first with a pre-release tag on a fork. Whether to rehearse is
+   the owner's decision; record a rehearsal under [Automated runs](#automated-runs) when there is
+   one.
+
+## Automated runs
+
+One row per run of the automated suites, or of the release workflow, that counts for a release:
+the date, the commit, what ran, who ran it and the outcome. Keep older rows.
+
+| Date | Commit | What ran | Who | Result |
+| --- | --- | --- | --- | --- |
+| | | | | not run yet at the 1.0.0 candidate |
+
 ## Results
 
 One row per manual check. Fill in a row each time a check is run against a release candidate:
@@ -24,8 +65,9 @@ outcome. Keep older rows; add new ones below them.
 The `claude-code` run above was the M6 live check: `claude mcp add --transport http pinwall
 http://localhost:8080/mcp` showed "Needs authentication", the browser sign-in registered the
 client and showed the consent page, and `publish ./site to Pinwall` returned the review link on the
-first line of the answer 16 seconds after the request. Repeat it on the release image with the
-steps in [claude-code](#claude-code).
+first line of the answer 16 seconds after the request. It was run from source, before the release
+image existed, so it does not count for 1.0.0: repeat it on the release image with the steps in
+[claude-code](#claude-code) and add a row.
 
 ## The automated part
 
