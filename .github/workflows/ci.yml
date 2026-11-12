@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release workflow runs these checks before it builds anything.
+  workflow_call:
 
 # A newer run of the same branch or pull request makes the older one pointless.
 concurrency:
@@ -223,3 +225,19 @@ jobs:
       # (the ServiceMonitor schema is fetched from the CRDs catalog) and checks the hardening
       # rules, including that every unsafe set of values is refused.
       - run: pnpm chart:check
+
+  workflows:
+    name: Workflows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # actionlint (with shellcheck for the run scripts) checks every workflow. The image is
+      # rhysd/actionlint 1.7.12, pinned by the digest of its multi-platform index.
+      - run: >-
+          docker run --rm -v "$PWD:/repo" -w /repo
+          rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+          -color

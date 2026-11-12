@@ -2,9 +2,10 @@ apiVersion: v2
 name: pinwall
 description: Pinwall, a self-hosted home for the pages AI agents make, as one hardened single-instance deployment.
 type: application
-# The release workflow sets the chart version and appVersion to the release version.
-version: 0.0.0
-appVersion: "0.0.0"
+# The release version, as in every package.json: the release workflow stops on a tag that does
+# not match it, and puts the released image's digest into values.yaml.
+version: 1.0.0
+appVersion: "1.0.0"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/dungnguyenv/pinwall
 sources:
