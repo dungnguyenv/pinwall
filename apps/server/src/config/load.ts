@@ -314,6 +314,16 @@ export function loadConfig(
             'PINWALL_CONTENT_ORIGIN',
             "must not be the app host or a parent domain of it, or artifacts could reach the app's cookies",
           );
+        } else if (
+          publicOriginValid &&
+          publicOrigin.scheme === 'https' &&
+          content.scheme === 'http'
+        ) {
+          r.fail(
+            'PINWALL_CONTENT_ORIGIN',
+            'must use https when PINWALL_PUBLIC_ORIGIN does: browsers block http frames inside an https page, ' +
+              'so every review would show a blank viewer',
+          );
         } else {
           const contentDomain = getDomain(content.host, { allowPrivateDomains: true });
           const appDomain = getDomain(appHost, { allowPrivateDomains: true });

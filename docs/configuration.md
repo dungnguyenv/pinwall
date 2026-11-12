@@ -36,7 +36,7 @@ Artifacts are untrusted pages, so Pinwall serves them apart from the app's own p
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PINWALL_ISOLATION` | `single-domain` | Where artifact pages are served from. `single-domain` serves them from the app's own host inside a sandbox and needs nothing extra. `content-domain` gives each version its own host under `PINWALL_CONTENT_ORIGIN`, which isolates artifacts fully but needs a second domain with a wildcard certificate. |
-| `PINWALL_CONTENT_ORIGIN` | none; required with `content-domain` | The origin artifacts are served under in `content-domain` mode, such as `https://pinwall-content.example`; each version gets `<token>.<host>`. It must be a domain name, not an IP address, and not the app host or a parent of it. A warning is logged when it shares the app's registrable domain. |
+| `PINWALL_CONTENT_ORIGIN` | none; required with `content-domain` | The origin artifacts are served under in `content-domain` mode, such as `https://pinwall-content.example`; each version gets `<token>.<host>`. It must be a domain name, not an IP address, and not the app host or a parent of it, and it must use https when `PINWALL_PUBLIC_ORIGIN` does. A warning is logged when it shares the app's registrable domain. |
 
 ## Database
 

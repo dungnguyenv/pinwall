@@ -148,7 +148,7 @@ export const CONFIG_VARS: readonly ConfigVar[] = [
     default: null,
     defaultNote: 'none; required with `content-domain`',
     description:
-      "The origin artifacts are served under in `content-domain` mode, such as `https://pinwall-content.example`; each version gets `<token>.<host>`. It must be a domain name, not an IP address, and not the app host or a parent of it. A warning is logged when it shares the app's registrable domain.",
+      "The origin artifacts are served under in `content-domain` mode, such as `https://pinwall-content.example`; each version gets `<token>.<host>`. It must be a domain name, not an IP address, and not the app host or a parent of it, and it must use https when `PINWALL_PUBLIC_ORIGIN` does. A warning is logged when it shares the app's registrable domain.",
   },
 
   // Database

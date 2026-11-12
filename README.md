@@ -117,7 +117,8 @@ PINWALL_CONTENT_ORIGIN=https://pinwall-content.example
 ```
 
 The content origin must be a domain name, not an IP address, and not the app's host or a parent of
-it. Pinwall logs a warning when it shares the app's registrable domain, which weakens the
+it. When the app is on https, the content origin must be on https too: a browser blocks http frames
+inside an https page, so Pinwall refuses to start rather than show blank reviews. Pinwall logs a warning when it shares the app's registrable domain, which weakens the
 separation.
 
 Switching is a change of those variables and a restart. The links people hold, to an artifact or

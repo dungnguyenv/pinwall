@@ -220,6 +220,32 @@ describe('origins', () => {
     expect(() => loadConfig({ PINWALL_ISOLATION: 'sideways' })).toThrow(/PINWALL_ISOLATION/);
   });
 
+  test('an https app refuses an http content origin, whose frames the browser would block', () => {
+    const base = { PINWALL_ISOLATION: 'content-domain' };
+    expect(
+      issuesOf({
+        ...base,
+        PINWALL_PUBLIC_ORIGIN: 'https://pinwall.example',
+        PINWALL_CONTENT_ORIGIN: 'http://pw-content.net',
+      }),
+    ).toEqual([expect.stringMatching(/^PINWALL_CONTENT_ORIGIN: must use https/)]);
+    // Framing https content from an http app is not mixed content.
+    expect(
+      loadConfig({
+        ...base,
+        PINWALL_PUBLIC_ORIGIN: 'http://pinwall.localhost:8080',
+        PINWALL_CONTENT_ORIGIN: 'https://pw-content.net',
+      }).isolation,
+    ).toMatchObject({ contentOrigin: { scheme: 'https' } });
+    expect(
+      loadConfig({
+        ...base,
+        PINWALL_PUBLIC_ORIGIN: 'https://pinwall.example',
+        PINWALL_CONTENT_ORIGIN: 'https://pw-content.net',
+      }).isolation,
+    ).toMatchObject({ contentOrigin: { scheme: 'https' } });
+  });
+
   test('a registrable domain under a private suffix counts as shared', () => {
     const c = loadConfig({
       PINWALL_PUBLIC_ORIGIN: 'https://app.team.github.io',
