@@ -92,10 +92,13 @@ const notBackup = () => new RestoreError(t('restore.notBackup'));
 /**
  * Throws `restore.notEmpty`, listing what it found, unless the target is empty: no row in any
  * backed-up table but the default project a server creates when it first starts, and nothing in
- * the blob store.
+ * the blob store. It only reads, and a table the database does not have (it was never migrated,
+ * or an older version migrated it) holds nothing, so it can run before the target is migrated.
  */
 export async function assertEmptyTarget(deps: AppDeps): Promise<void> {
+  const existing = new Set((await deps.db.db.introspection.getTables()).map((table) => table.name));
   const found = await targetContents(deps.db.db, deps.blobs, {
+    tables: BACKUP_TABLES.filter((table) => existing.has(table)),
     defaultProject: true,
     blobs: new Set(),
   });
@@ -164,18 +167,24 @@ export async function restoreBackup(
   }
 }
 
-/** Counts like "2 users" for whatever the target holds; empty when it holds nothing. */
+/**
+ * Counts like "2 users" for the rows of `scope.tables` and the files in the blob store; empty when
+ * there are none. The default project does not count when `scope.defaultProject` is set, nor do
+ * the files whose keys are in `scope.blobs`.
+ */
 async function targetContents(
   db: Kysely<Database>,
   blobs: BlobStore,
-  ignore: { defaultProject: boolean; blobs: ReadonlySet<string> },
+  scope: {
+    tables: readonly BackupTable[];
+    defaultProject: boolean;
+    blobs: ReadonlySet<string>;
+  },
 ): Promise<string[]> {
   const found: string[] = [];
-  for (const table of BACKUP_TABLES) {
+  for (const table of scope.tables) {
     const where =
-      ignore.defaultProject && table === 'projects'
-        ? sql`where id <> ${DEFAULT_PROJECT_ID}`
-        : sql``;
+      scope.defaultProject && table === 'projects' ? sql`where id <> ${DEFAULT_PROJECT_ID}` : sql``;
     const { rows } = await sql<{ n: number | string }>`
       select count(*) as n from ${sql.table(table)} ${where}
     `.execute(db);
@@ -183,7 +192,7 @@ async function targetContents(
   }
   let stored = 0;
   for await (const key of blobs.list()) {
-    if (!ignore.blobs.has(key)) stored += 1;
+    if (!scope.blobs.has(key)) stored += 1;
   }
   found.push(...counted(stored, STORED_FILES));
   return found;
@@ -595,6 +604,7 @@ async function insertEverything(
   return source.lease.writeTransaction(db, async (trx) => {
     await takeTarget(trx, dialect);
     const found = await targetContents(trx, deps.blobs, {
+      tables: BACKUP_TABLES,
       defaultProject: false,
       blobs: source.written,
     });

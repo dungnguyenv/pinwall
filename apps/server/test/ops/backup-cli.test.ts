@@ -10,7 +10,7 @@ import { DEFAULT_MIGRATION_TABLE } from 'kysely/migration';
 import { describe, expect, onTestFinished, test } from 'vitest';
 import { IDP_REFRESH_TOKEN_PURPOSE } from '../../src/auth/oidc/users.ts';
 import { type Config, loadConfig } from '../../src/config/load.ts';
-import { connectDb, type DbHandle } from '../../src/db/connect.ts';
+import { connectDb, type DbDialect, type DbHandle } from '../../src/db/connect.ts';
 import { runMigrations } from '../../src/db/migrate.ts';
 import { migrations, type PinwallMigration } from '../../src/db/migrations/index.ts';
 import { BACKUP_LEASE } from '../../src/domain/blobs.ts';
@@ -18,7 +18,7 @@ import { deleteVersion } from '../../src/domain/deletion.ts';
 import { deriveKey, encryptString } from '../../src/lib/crypto.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { createLogger } from '../../src/lib/logger.ts';
-import { runBackupCommand } from '../../src/ops/backup/cli.ts';
+import { runBackupCommand, runRestoreCommand } from '../../src/ops/backup/cli.ts';
 import { restoreBackup } from '../../src/ops/backup/restore.ts';
 import { PINWALL_VERSION } from '../../src/version.ts';
 import { createSignedInUser } from '../helpers/auth.ts';
@@ -578,40 +578,42 @@ describe('the command line', () => {
   );
 });
 
+const known = Object.keys(migrations);
+const first = known[0] ?? '';
+const last = known.at(-1) ?? '';
+
+/**
+ * A new installation on `dialect` whose database is not migrated yet: its configuration, its
+ * database (closed after the test) and a free path for an archive.
+ */
+async function installation(
+  dialect: DbDialect,
+): Promise<{ config: Config; h: DbHandle; out: string }> {
+  const dir = await mkdtemp(join(tmpdir(), 'pinwall-backup-schema-'));
+  onTestFinished(() => rm(dir, { recursive: true, force: true }));
+  const env: Record<string, string> = { PINWALL_DATA_DIR: dir };
+  if (dialect === 'postgres') {
+    const database = await createPostgresDatabase();
+    onTestFinished(database.drop);
+    env.PINWALL_DATABASE_URL = database.url;
+    env.PINWALL_SECRET_KEY = randomBytes(32).toString('hex');
+  }
+  const config = loadConfig(env);
+  const h = await connectDb(config.database);
+  onTestFinished(() => h.close());
+  return { config, h, out: join(dir, 'pinwall.backup.tar') };
+}
+
+async function applied(h: DbHandle): Promise<string[]> {
+  const { rows } = await sql<{ name: string }>`
+    select name from ${sql.table(DEFAULT_MIGRATION_TABLE)} order by name
+  `.execute(h.db);
+  return rows.map((row) => row.name);
+}
+
 describe.each(dialects)('backup of a %s database another version migrated', (dialect) => {
-  const known = Object.keys(migrations);
-  const first = known[0] ?? '';
-  const last = known.at(-1) ?? '';
-
-  /**
-   * A new installation on `dialect` whose database is not migrated yet: its configuration, its
-   * database (closed after the test) and a free path for an archive.
-   */
-  async function installation(): Promise<{ config: Config; h: DbHandle; out: string }> {
-    const dir = await mkdtemp(join(tmpdir(), 'pinwall-backup-schema-'));
-    onTestFinished(() => rm(dir, { recursive: true, force: true }));
-    const env: Record<string, string> = { PINWALL_DATA_DIR: dir };
-    if (dialect === 'postgres') {
-      const database = await createPostgresDatabase();
-      onTestFinished(database.drop);
-      env.PINWALL_DATABASE_URL = database.url;
-      env.PINWALL_SECRET_KEY = randomBytes(32).toString('hex');
-    }
-    const config = loadConfig(env);
-    const h = await connectDb(config.database);
-    onTestFinished(() => h.close());
-    return { config, h, out: join(dir, 'pinwall.backup.tar') };
-  }
-
-  async function applied(h: DbHandle): Promise<string[]> {
-    const { rows } = await sql<{ name: string }>`
-      select name from ${sql.table(DEFAULT_MIGRATION_TABLE)} order by name
-    `.execute(h.db);
-    return rows.map((row) => row.name);
-  }
-
   test('an older database is refused, and not migrated', async () => {
-    const { config, h, out } = await installation();
+    const { config, h, out } = await installation(dialect);
     await runMigrations(h, { [first]: migrations[first] as PinwallMigration });
 
     await expect(runBackupCommand(config, createLogger('silent'), out)).rejects.toThrow(
@@ -622,7 +624,7 @@ describe.each(dialects)('backup of a %s database another version migrated', (dia
   });
 
   test('a newer database is refused, and left as it is', async () => {
-    const { config, h, out } = await installation();
+    const { config, h, out } = await installation(dialect);
     const future = '9999_from_a_newer_pinwall';
     await runMigrations(h, { ...migrations, [future]: { up: async () => {} } });
 
@@ -632,4 +634,39 @@ describe.each(dialects)('backup of a %s database another version migrated', (dia
     expect(await applied(h)).toEqual([...known, future]);
     expect(await exists(out)).toBe(false);
   });
+});
+
+describe.each(dialects)('restore into a %s database', (dialect) => {
+  test('one an older version runs is refused before it is migrated', async () => {
+    const { config, h, out } = await installation(dialect);
+    await runMigrations(h, { [first]: migrations[first] as PinwallMigration });
+    await sql`
+      insert into projects (id, name, instructions, is_default, created_at, updated_at)
+      values ('prj_in_use', 'In use', '', 0, 1, 1)
+    `.execute(h.db);
+    // Never read: the target is refused first.
+    await writeFile(out, 'not an archive');
+
+    await expect(runRestoreCommand(config, createLogger('silent'), out)).rejects.toThrow(
+      t('restore.notEmpty', { found: '1 project' }),
+    );
+    expect(await applied(h)).toEqual([first]);
+  });
+
+  test(
+    'one that was never migrated is migrated, then restored',
+    async () => {
+      const source = await seeded('sqlite+local');
+      const { config, h, out } = await installation(dialect);
+      await writeFile(out, (await backupToBuffer(source.ctx.deps)).buf);
+
+      await runRestoreCommand(config, createLogger('silent'), out);
+
+      expect(await applied(h)).toEqual(known);
+      const artifacts = (db: DbHandle['db']) =>
+        db.selectFrom('artifacts').select('id').orderBy('id').execute();
+      expect(await artifacts(h.db)).toEqual(await artifacts(source.ctx.deps.db.db));
+    },
+    CLI_TIMEOUT_MS,
+  );
 });

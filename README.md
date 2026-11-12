@@ -318,8 +318,9 @@ Run the backup in the server's container, as these commands do, or with the serv
 backup never migrates the database, so a newer or older Pinwall refuses to back it up.
 
 `pinwall restore` rebuilds an installation from an archive, into any storage setup, as long as the
-target is empty (a new volume, or an empty database and bucket prefix). It checks the whole archive
-before it writes anything:
+target is empty (a new volume, or an empty database and bucket prefix). It refuses a target that is
+not empty before it changes anything there, so a restore pointed at a database in use by mistake
+does not even migrate it. It checks the whole archive before it writes anything:
 
 ```sh
 docker exec -i <new container> pinwall restore --in - < pinwall.tar

@@ -3,12 +3,13 @@ import { createWriteStream } from 'node:fs';
 import { lstat, open, rename, rm } from 'node:fs/promises';
 import type { Readable, Writable } from 'node:stream';
 import type { Config } from '../../config/load.ts';
+import { migrateToLatest } from '../../db/migrate.ts';
 import { type AppDeps, closeDeps, createDeps } from '../../deps.ts';
 import { t } from '../../lib/i18n.ts';
 import type { Logger } from '../../lib/logger.ts';
 import { createBackup } from './backup.ts';
 import type { Manifest } from './format.ts';
-import { restoreBackup } from './restore.ts';
+import { assertEmptyTarget, restoreBackup } from './restore.ts';
 
 /** Where `runBackupCommand` writes the archive, and what to do once it is complete or failed. */
 interface BackupOutput {
@@ -111,7 +112,8 @@ export async function runBackupCommand(config: Config, logger: Logger, out: stri
 
 /**
  * Restores the archive in the file `input`, or on standard input when `input` is `-`, into the
- * empty installation `config` describes, then logs `restore complete`. Each warning is logged
+ * empty installation `config` describes, then logs `restore complete`. The target is migrated
+ * only once it was found empty. Each warning is logged
  * and, so that an operator who watches the terminal sees it, also printed as plain text on
  * standard error. The caller turns a thrown error into the exit code.
  */
@@ -126,7 +128,11 @@ export async function runRestoreCommand(
   const stream: Readable = file === null ? process.stdin : file.createReadStream();
   let deps: AppDeps | null = null;
   try {
-    deps = await createDeps(config, { logger });
+    // Checked before the target is migrated: a restore pointed at a database in use by mistake,
+    // perhaps by an older Pinwall, must leave it as it is.
+    deps = await createDeps(config, { logger }, { migrate: false });
+    await assertEmptyTarget(deps);
+    await migrateToLatest(deps.db);
     const { manifest, warnings } = await restoreBackup(deps, stream);
     for (const warning of warnings) logger.warn(warning);
     logger.info({ ...summarize(manifest), warnings }, 'restore complete');
