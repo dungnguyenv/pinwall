@@ -325,7 +325,7 @@ test('a comment pinned on v1 follows the artifact to v2 and shows resolved in v2
   await expect(pin).toHaveText('1');
   const before = await page.locator('iframe[sandbox]').getAttribute('src');
   await publishInline(api, { 'index.html': PAGE('#c00000') }, { artifact_id: v1.artifact_id, expected_version_id: v1.version_id });
-  await expect(page.getByRole('button', { name: 'Choose version (showing v2)' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Choose version, showing v2' })).toBeVisible();
   expect(await page.evaluate(() => (window as any).__noReload)).toBe(true);
   expect(await page.locator('iframe[sandbox]').getAttribute('src')).not.toBe(before);
   await expect(pin).toHaveText('1');
