@@ -89,8 +89,8 @@ class ImmediateSqliteDialect extends SqliteDialect {
 }
 
 /**
- * Opens the configured database. `logger` receives errors that happen outside any query, such as
- * an idle Postgres connection dropped by the server. On SQLite, write transactions take the
+ * Opens the configured database. `logger` hears of each Postgres connection that is lost, idle
+ * or in use (the query that was running fails on its own). On SQLite, write transactions take the
  * write lock when they begin (see `ImmediateSqliteDriver`); a transaction that only reads should
  * say so with `setAccessMode('read only')`.
  */
@@ -118,13 +118,36 @@ export async function connectDb(
   }
 
   const pool = new pg.Pool({ connectionString: cfg.url, max: cfg.poolSize });
-  // Without a listener, an idle client losing its connection (server restart, network blip)
-  // would crash the process. The pool discards that client and the next query reconnects;
-  // a lasting outage surfaces as query errors and a failing `ping()`.
-  pool.on('error', (err) => {
-    logger?.error({ err }, 'An idle PostgreSQL connection failed; the pool will open a new one');
+  // A client that loses its connection (a Postgres restart or failover, pg_terminate_backend, a
+  // proxy cutting the socket) emits 'error', and an 'error' event nobody listens for crashes the
+  // process. The pool listens only while a client sits idle, so each client gets its own
+  // listener for its whole life, the time it is checked out included. Whatever query or
+  // transaction ran on it fails with the error, the pool discards the client when it comes back,
+  // and the next query opens a new connection; a lasting outage surfaces as query errors and a
+  // failing `ping()`. One line per connection, however many errors it emits.
+  pool.on('connect', (client) => {
+    let reported = false;
+    client.on('error', (err) => {
+      if (reported) return;
+      reported = true;
+      logger?.error(
+        connectionFailure(err),
+        'A PostgreSQL connection was lost; the pool will open a new one',
+      );
+    });
   });
+  // The pool passes an idle client's error on here too; the client's own listener logged it.
+  pool.on('error', () => {});
   return handle(new Kysely<Database>({ dialect: new PostgresDialect({ pool }) }), 'postgres');
+}
+
+/**
+ * What a log line says about a lost connection: the message and SQLSTATE only. pg attaches the
+ * client to an idle client's error, and a client holds the connection's cancel key.
+ */
+function connectionFailure(err: Error): { err: { message: string; code?: string } } {
+  const { code } = err as { code?: unknown };
+  return { err: { message: err.message, ...(typeof code === 'string' ? { code } : {}) } };
 }
 
 function handle(db: Kysely<Database>, dialect: DbDialect): DbHandle {
