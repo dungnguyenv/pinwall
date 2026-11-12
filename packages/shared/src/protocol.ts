@@ -62,11 +62,19 @@ const CLIENT_MAX = 100_000;
 /** A comment or frame id inside a message. */
 const MessageId = z.string().check(z.minLength(1), z.maxLength(64));
 
+/** A `.` or `..` path segment. */
+const DOT_SEGMENT = /(?:^|\/)\.{1,2}(?:\/|$)/;
+
 /**
  * The frame's path under the grant base, decoded and NFC, with a final `index.html` dropped:
- * `""` is the entry page, `"docs/"` is `docs/index.html`.
+ * `""` is the entry page, `"docs/"` is `docs/index.html`. It never has a `.` or `..` segment:
+ * a browser never names a page so, and the viewer turns a page into the frame's address, which
+ * must stay among the version's own files.
  */
-const PagePath = z.string().check(z.maxLength(PAGE_MAX_CHARS));
+const PagePath = z.string().check(
+  z.maxLength(PAGE_MAX_CHARS),
+  z.refine((page) => !DOT_SEGMENT.test(page), { message: 'A page has no . or .. segment' }),
+);
 
 /** The text a comment points at, with a little of the text before and after it. */
 export const Quote = z.object({

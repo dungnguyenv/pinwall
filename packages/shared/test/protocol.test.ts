@@ -71,6 +71,35 @@ test('Anchor keeps its numbers and strings within bounds', () => {
   expect(Anchor.safeParse({ ...text, viewport: { width: 100_000 } }).success).toBe(true);
 });
 
+test('a page has no . or .. segment, which would lead out of the version', () => {
+  for (const page of ['.', '..', './', '../', '../x', 'a/../b', 'a/./b', 'a/..', 'docs/.']) {
+    expect(Anchor.safeParse({ ...text, page }).error?.issues.map((i) => i.path)).toEqual([
+      ['page'],
+    ]);
+    expect(parsePageMessage({ pinwall: 1, type: 'ready', page, frameId: 'f1' })).toBeNull();
+    expect(parsePageMessage({ pinwall: 1, type: 'navigated', page, frameId: 'f1' })).toBeNull();
+    expect(
+      parseViewerMessage({
+        pinwall: 1,
+        type: 'show-anchors',
+        anchors: [{ id: 'c1', number: 1, resolved: false, anchor: { ...text, page } }],
+      }),
+    ).toBeNull();
+  }
+  // Dots inside a name are fine, and a page is decoded: "%2e%2e" is a file of that name.
+  for (const page of [
+    '',
+    'docs/',
+    '...',
+    '.well-known/x',
+    'a..b/',
+    'v1.2/notes.html',
+    '%2e%2e/x',
+  ]) {
+    expect(Anchor.safeParse({ ...text, page }).success).toBe(true);
+  }
+});
+
 test('messages need pinwall: 1 and a known type for their direction', () => {
   expect(parsePageMessage({ pinwall: 1, type: 'ready', page: '', frameId: 'f1' })).toEqual({
     pinwall: 1,
