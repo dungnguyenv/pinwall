@@ -287,3 +287,81 @@ jobs:
             apps/server/e2e/annotator/test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+  acceptance:
+    name: Acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      # The test stack below, so the OIDC and MCP flow suites also run on Postgres; the same names
+      # and values as `pnpm test:integration`.
+      PINWALL_TEST_POSTGRES_URL: postgres://pinwall:pinwall@localhost:55432/pinwall
+      PINWALL_TEST_S3_ENDPOINT: http://localhost:59000
+      PINWALL_TEST_S3_BUCKET: pinwall-test
+      PINWALL_TEST_S3_ACCESS_KEY_ID: pinwall
+      PINWALL_TEST_S3_SECRET_ACCESS_KEY: pinwall-secret
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The pnpm version comes from "packageManager" in package.json.
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          cache: true
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+
+      - name: Start Postgres and MinIO
+        run: docker compose -f docker-compose.test.yml up -d --wait
+
+      # The image the acceptance specs run, built once here and loaded into the local Docker. It
+      # reads the amd64 build cache that the image job writes.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: pinwall:acceptance
+          build-args: PINWALL_REVISION=${{ github.sha }}
+          cache-from: type=gha,scope=amd64
+          provenance: false
+          sbom: false
+
+      # Every automated acceptance item; the images the specs start besides Pinwall (Keycloak,
+      # Postgres, Silo) are pinned by digest in the specs.
+      - name: Acceptance suites
+        env:
+          PINWALL_ACCEPTANCE_IMAGE: pinwall:acceptance
+        run: pnpm test:acceptance
+
+      - name: Upload the acceptance report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: acceptance-report
+          path: e2e/acceptance-report.md
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload Playwright reports after a failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: acceptance-playwright-reports
+          path: |
+            e2e/report/
+            e2e/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Show service logs after a failure
+        if: failure()
+        run: docker compose -f docker-compose.test.yml logs --no-color --tail=100

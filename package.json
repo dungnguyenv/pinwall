@@ -22,7 +22,8 @@
     "typecheck": "pnpm -r exec tsc --noEmit && tsc --noEmit -p e2e",
     "test:e2e": "pnpm --filter @pinwall/web build && playwright test -c e2e/playwright.config.ts && playwright test -c e2e/review.config.ts",
     "test:e2e:review": "pnpm --filter @pinwall/web build && playwright test -c e2e/review.config.ts",
-    "test:e2e:keycloak": "pnpm --filter @pinwall/web build && playwright test -c e2e/keycloak/keycloak.config.ts"
+    "test:e2e:keycloak": "pnpm --filter @pinwall/web build && playwright test -c e2e/keycloak/keycloak.config.ts",
+    "test:acceptance": "pnpm --filter @pinwall/web build && pnpm --filter @pinwall/tools exec tsx src/acceptance.ts"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",

@@ -11,6 +11,8 @@ playwright-report/
 test-results/
 e2e/test-results/
 e2e/report/
+# Written by pnpm test:acceptance.
+e2e/acceptance-report.md
 .build/
 # The Compose example's secret files (deploy/compose/docker-compose.postgres-s3.yml).
 deploy/compose/secrets/

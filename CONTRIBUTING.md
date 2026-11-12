@@ -35,6 +35,9 @@ pnpm test:e2e           # Playwright, in a browser, against a real server; run `
 pnpm test:acceptance    # builds the image and checks the acceptance list of the design, end to end
 ```
 
+[docs/acceptance.md](docs/acceptance.md) says which suite proves each acceptance item, and holds the
+checks that are done by hand, such as signing in through a real identity provider.
+
 Write the test first, watch it fail for the reason you expect, then make it pass. A test should
 check what the code does, not what a mock returns. A change to the Helm chart needs
 `pnpm chart:check`, which uses `helm` and `kubeconform`.
