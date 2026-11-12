@@ -176,6 +176,31 @@ describe.each([
     expect(await r.text()).toBe(html);
   });
 
+  test('a page in a legacy encoding is labelled with the encoding it declares', async () => {
+    // "Báo cáo" in windows-1258, where á is the single byte 0xE1: not valid UTF-8.
+    const page = Buffer.from(
+      '<!doctype html><meta charset="windows-1258"><title>B\xe1o c\xe1o</title><p>B\xe1o c\xe1o',
+      'latin1',
+    );
+    const raw = await grantFor({ 'index.html': page });
+    const r = await get(raw.token, 'index.html');
+    expect(r.headers.get('content-type')).toBe('text/html; charset=windows-1258');
+    expect(Buffer.from(await r.arrayBuffer()).equals(page)).toBe(true);
+
+    const review = await grantFor({ 'index.html': page }, 'review');
+    const framed = await get(review.token, 'index.html');
+    expect(framed.headers.get('content-type')).toBe('text/html; charset=windows-1258');
+    // The annotator tag is ASCII, added between the bytes, which are otherwise left as they are.
+    const body = Buffer.from(await framed.arrayBuffer());
+    expect(body.includes(page.subarray(page.indexOf('<title>')))).toBe(true);
+
+    // With no declaration, a page is UTF-8.
+    const plain = await grantFor({ 'index.html': '<!doctype html><p>Xin chào' });
+    expect((await get(plain.token, 'index.html')).headers.get('content-type')).toBe(
+      'text/html; charset=utf-8',
+    );
+  });
+
   test('error responses are never cached and successes keep the spec header', async () => {
     const video = Buffer.from(Array.from({ length: 100 }, (_, i) => i));
     const { token } = await grantFor({ 'index.html': '<p>x</p>', 'v.mp4': video });

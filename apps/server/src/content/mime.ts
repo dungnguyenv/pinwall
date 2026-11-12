@@ -1,3 +1,5 @@
+import { htmlCharset } from './html-charset.ts';
+
 const UTF8 = '; charset=utf-8';
 
 /** Lower-case extension → Content-Type. Text types carry their charset. */
@@ -55,6 +57,15 @@ export function contentTypeFor(path: string): string {
   if (dot <= 0) return FALLBACK;
   const extension = basename.slice(dot + 1).toLowerCase();
   return Object.hasOwn(TYPES, extension) ? (TYPES[extension] ?? FALLBACK) : FALLBACK;
+}
+
+/**
+ * The Content-Type a stored file is served with: `contentTypeFor` its path, except that an HTML
+ * file's charset is the one its bytes declare (`htmlCharset`), UTF-8 when they declare none.
+ */
+export function contentTypeOf(path: string, bytes: Buffer): string {
+  const type = contentTypeFor(path);
+  return isHtmlType(type) ? `text/html; charset=${htmlCharset(bytes)}` : type;
 }
 
 /** Types whose bytes are text: `text/*`, JavaScript, JSON, XML and SVG. */

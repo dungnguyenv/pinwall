@@ -9,6 +9,7 @@ the short version of them to Claude Code.
 - [Links, frames and anchors](#links-frames-and-anchors)
 - [What a page can keep](#what-a-page-can-keep)
 - [The page's own Content-Security-Policy](#the-pages-own-content-security-policy)
+- [Text encoding](#text-encoding)
 - [Size and file limits](#size-and-file-limits)
 - [Markdown](#markdown)
 
@@ -106,6 +107,17 @@ as published. The script tag is placed right after the page's last policy tag, s
 decides whether it may run. When the policy blocks it, as `script-src 'none'` does, the page still
 takes point comments: a person clicks a spot on the page and the viewer pins the comment on its own
 overlay. Only the comments on a selected text or a chosen element need the annotator.
+
+## Text encoding
+
+Write pages in UTF-8. Pinwall labels an HTML file UTF-8 unless its own bytes say otherwise, the way
+a browser reads them: a byte order mark, or a `<meta charset="…">` or
+`<meta http-equiv="Content-Type" content="text/html; charset=…">` within its first 1024 bytes. A
+page in Shift_JIS or windows-1258 that declares its encoding like that is served with that charset,
+on the raw link and in review, and its bytes are never changed. Pinwall still reads every page as
+UTF-8 for its title and for search, so a page in another encoding can show a garbled title in the
+list and be hard to find by its words. CSS, JavaScript, JSON, Markdown and other text files are
+always served as UTF-8.
 
 ## Size and file limits
 

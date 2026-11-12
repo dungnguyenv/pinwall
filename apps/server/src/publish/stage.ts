@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Readable } from 'node:stream';
-import { contentTypeFor } from '../content/mime.ts';
+import { contentTypeOf } from '../content/mime.ts';
 import type { AppDeps } from '../deps.ts';
 import { type BlobRegistry, blobRegistry, collectBlobs } from '../domain/blobs.ts';
 import { newSecret } from '../lib/ids.ts';
@@ -64,7 +64,7 @@ export class BlobStager {
       path,
       sha256,
       size: bytes.length,
-      contentType: contentTypeFor(path),
+      contentType: contentTypeOf(path, bytes),
     };
     this.files.push(file);
     return file;
