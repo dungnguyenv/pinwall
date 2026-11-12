@@ -16,10 +16,10 @@ run against the commit that will be tagged, and recorded on this page.
    [Automated runs](#automated-runs). `e2e/acceptance-report.md` is not kept in the repository, and
    a copy of it from an earlier commit proves nothing about this one.
 2. **The manual checks, on the image built from that commit** (`pnpm test:acceptance` leaves it as
-   `pinwall:acceptance`). None of them has been run on a release image yet:
-   - [claude-code](#claude-code) (item 2). The one recorded run was from source on an earlier
-     branch, so it has to be repeated on the image.
-   - [review-loop](#review-loop) (item 4), right after it, in the same Claude Code session.
+   `pinwall:acceptance`). Only [claude-code](#claude-code) (item 2) has been run on an image built
+   from the candidate (see [Results](#results)); the others are still to do:
+   - [review-loop](#review-loop) (item 4), after a fresh [claude-code](#claude-code) run, in the
+     same Claude Code session.
    - [claude-desktop](#claude-desktop) (item 3a) and then [cloudflare-tunnel](#cloudflare-tunnel)
      (item 8), over one quick tunnel. They need `cloudflared`, Claude Desktop and an internet
      connection.
@@ -43,7 +43,7 @@ the date, the commit, what ran, who ran it and the outcome. Keep older rows.
 
 | Date | Commit | What ran | Who | Result |
 | --- | --- | --- | --- | --- |
-| | | | | not run yet at the 1.0.0 candidate |
+| 2026-11-12 | `3df932a` | `pnpm lint`, `pnpm typecheck`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm test:e2e:keycloak`, `pnpm test:acceptance` | controller | pass |
 
 ## Results
 
@@ -54,6 +54,7 @@ outcome. Keep older rows; add new ones below them.
 | Check | Item | Date | Pinwall version or digest | Who | Result |
 | --- | --- | --- | --- | --- | --- |
 | [claude-code](#claude-code) | 2 | 2026-11-12 | branch `m6-mcp` at `b006d69`, run from source (SQLite, single-domain), Claude Code 2.1.263 | controller | pass |
+| [claude-code](#claude-code) | 2 | 2026-11-12 | 1.0.0 image built locally from `3df932a` (`--read-only`, `--cap-drop ALL`, SQLite, single-domain), Claude Code 2.1.263 | controller | pass |
 | [claude-desktop](#claude-desktop) | 3a | | | | not run yet |
 | [zitadel](#zitadel) | 3, 3b | | | | not run yet |
 | [google](#google) | 3 | | | | not run yet |
@@ -66,8 +67,12 @@ The `claude-code` run above was the M6 live check: `claude mcp add --transport h
 http://localhost:8080/mcp` showed "Needs authentication", the browser sign-in registered the
 client and showed the consent page, and `publish ./site to Pinwall` returned the review link on the
 first line of the answer 16 seconds after the request. It was run from source, before the release
-image existed, so it does not count for 1.0.0: repeat it on the release image with the steps in
-[claude-code](#claude-code) and add a row.
+image existed, so it does not count for 1.0.0.
+
+The second `claude-code` row repeats it on an image built from the candidate commit, run read-only
+with every capability dropped. The sign-in, consent and publish steps behaved the same. The review
+link opened the review screen with the page in its frame 20 seconds after the request. The
+container's log held no token, code, upload address or consent request id.
 
 ## The automated part
 
