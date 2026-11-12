@@ -23,13 +23,14 @@
 #    To keep the folder elsewhere, set PINWALL_SECRETS_DIR to its path (the default is ./secrets).
 #
 # 2. Start it, with the address people use (https behind a TLS-terminating reverse proxy, or
-#    http://localhost:8080 for a trial on this machine):
+#    http://localhost:8080 for a trial on this machine), and PINWALL_TRUST_PROXY=true behind
+#    the proxy:
 #
-#      PINWALL_PUBLIC_ORIGIN=https://pinwall.example.com docker compose -f docker-compose.postgres-s3.yml up -d
+#      PINWALL_PUBLIC_ORIGIN=https://pinwall.example.com PINWALL_TRUST_PROXY=true docker compose -f docker-compose.postgres-s3.yml up -d
 #
 # Variables: PINWALL_IMAGE (default: the released image; `up --build` builds it from this
-# repository), PINWALL_PUBLIC_ORIGIN, PINWALL_PORT_PUBLISHED (the port on 127.0.0.1, default 8080)
-# and PINWALL_SECRETS_DIR.
+# repository), PINWALL_PUBLIC_ORIGIN, PINWALL_TRUST_PROXY (default false), PINWALL_PORT_PUBLISHED
+# (the port on 127.0.0.1, default 8080) and PINWALL_SECRETS_DIR.
 #
 # Any S3-compatible store works: drop the minio services, set PINWALL_S3_ENDPOINT (or leave it
 # out for Amazon S3), PINWALL_S3_REGION and the bucket, and give Pinwall its own access key. The
@@ -112,6 +113,9 @@ services:
     environment:
       # Every link, cookie flag and redirect is built from this origin (scheme and host, no path).
       PINWALL_PUBLIC_ORIGIN: ${PINWALL_PUBLIC_ORIGIN:-https://pinwall.example.com}
+      # Set it to true behind the reverse proxy, so that the limits per visitor address (rate
+      # limits, and 20 open live-update streams) see each visitor instead of the proxy.
+      PINWALL_TRUST_PROXY: ${PINWALL_TRUST_PROXY:-false}
       # The secrets are read from files, so they never show up in `docker inspect`.
       PINWALL_DATABASE_URL_FILE: /run/secrets/database-url
       PINWALL_SECRET_KEY_FILE: /run/secrets/secret-key

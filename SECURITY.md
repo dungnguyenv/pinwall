@@ -44,7 +44,9 @@ choices behind them: [README.md](README.md) and [docs/configuration.md](docs/con
   on https. Pinwall builds every absolute address from `PINWALL_PUBLIC_ORIGIN` and trusts forwarded
   headers only when `PINWALL_TRUST_PROXY` says so.
 - **Access follows the identity provider.** Someone removed at the provider loses access by the next
-  re-check (12 hours by default, 24 at most), and an admin can end a person's access at once.
+  re-check (12 hours by default, 24 at most), and an admin can end a person's access with
+  **Revoke now**: their next request is refused, and a live-update stream they have open ends
+  within 25 seconds.
 - **No telemetry.** Pinwall makes no request to any third party except the identity provider and the
   storage you configure.
 - **The image** runs as a non-root user with a read-only root filesystem, and is built from a base
@@ -53,8 +55,12 @@ choices behind them: [README.md](README.md) and [docs/configuration.md](docs/con
 Things that are by design, and not vulnerabilities: everyone who can open an artifact can read every
 file in it, so a secret that an agent publishes is visible until someone deletes it (and it stays in
 older backups); a single-domain installation is weaker than one with a separate content domain, as
-the README says; and every member can open every artifact of the installation, because Pinwall has no
-per-project permissions.
+the README says; every member can open every artifact of the installation, because Pinwall has no
+per-project permissions; adding a passkey, a password or an API token does not ask the person to
+sign in again, so whoever holds a signed-in session can add a lasting credential; and an OAuth
+refresh token used a second time within 120 seconds gets a new pair instead of ending the grant, so
+agents that share a sign-in do not sign each other out, which also means that a stolen refresh
+token replayed within those 120 seconds goes unnoticed.
 
 ## Verifying a release
 

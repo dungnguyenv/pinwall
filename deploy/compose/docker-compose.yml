@@ -3,12 +3,14 @@
 #   PINWALL_PUBLIC_ORIGIN=https://pinwall.example.com docker compose up -d
 #
 # That pulls the released image. `docker compose up -d --build` builds it from this repository
-# instead. Put a TLS-terminating reverse proxy in front of the published port and set
-# PINWALL_PUBLIC_ORIGIN to the address people use (here, or in a `.env` file beside this one).
-# For a trial on this machine, use PINWALL_PUBLIC_ORIGIN=http://localhost:8080.
+# instead. Put a TLS-terminating reverse proxy in front of the published port, set
+# PINWALL_PUBLIC_ORIGIN to the address people use and PINWALL_TRUST_PROXY=true (here, or in a
+# `.env` file beside this one). For a trial on this machine, use
+# PINWALL_PUBLIC_ORIGIN=http://localhost:8080.
 #
-# Variables: PINWALL_IMAGE (default: the released image), PINWALL_PUBLIC_ORIGIN, and
-# PINWALL_PORT_PUBLISHED (the port on 127.0.0.1, default 8080).
+# Variables: PINWALL_IMAGE (default: the released image), PINWALL_PUBLIC_ORIGIN,
+# PINWALL_TRUST_PROXY (default false) and PINWALL_PORT_PUBLISHED (the port on 127.0.0.1, default
+# 8080).
 name: pinwall
 
 services:
@@ -21,6 +23,9 @@ services:
       # Replace the placeholder. Every link, cookie flag and redirect is built from this origin
       # (scheme and host, no path), never from the Host header.
       PINWALL_PUBLIC_ORIGIN: ${PINWALL_PUBLIC_ORIGIN:-https://pinwall.example.com}
+      # Set it to true behind the reverse proxy, so that the limits per visitor address (rate
+      # limits, and 20 open live-update streams) see each visitor instead of the proxy.
+      PINWALL_TRUST_PROXY: ${PINWALL_TRUST_PROXY:-false}
       # The instance secret key is generated into the data volume on first start; back the
       # volume up. To supply your own, add PINWALL_SECRET_KEY_FILE and mount the file.
     ports:

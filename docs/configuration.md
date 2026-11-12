@@ -24,7 +24,7 @@ Where Pinwall listens, what address it presents to the world, and where it keeps
 | `PINWALL_PORT` | `8080` | The port the app listens on, from 0 to 65535 (0 lets the system pick a free one). The metrics listener must use a different port, see `PINWALL_METRICS_PORT`. |
 | `PINWALL_DATA_DIR` | `/data` | The folder for what Pinwall keeps on disk: the SQLite database, locally stored files, the generated secret key and temporary files such as backup spools. It must be writable, and persistent when you use SQLite or local storage. |
 | `PINWALL_SECRET_KEY`<br>secret · also `PINWALL_SECRET_KEY_FILE` | generated into `<data dir>/secret.key` (SQLite only) | The key that Pinwall derives its encryption and signing keys from: 64 hex characters or base64 that decodes to at least 32 bytes (`openssl rand -hex 32` makes one). Required with PostgreSQL. Keep it with your backups, because what it encrypts cannot be read without it. |
-| `PINWALL_TRUST_PROXY` | `false` | Which reverse proxies to believe about the visitor address. `false` trusts none and ignores `X-Forwarded-For`. `true` trusts exactly one proxy in front of Pinwall. A comma-separated list of IP addresses or CIDR ranges trusts those proxies. |
+| `PINWALL_TRUST_PROXY` | `false` | Which reverse proxies to believe about the visitor address. `false` trusts none and ignores `X-Forwarded-For`. `true` trusts exactly one proxy. A comma-separated list of IP addresses or CIDR ranges trusts those proxies, for two or more in a row. Without a match, every visitor has the proxy's address and shares its limits per address: rate limits, and 20 open live-update streams. |
 | `PINWALL_METRICS_PORT` | `9464` | The port of the separate listener that serves Prometheus metrics at `/metrics`; the app port never serves them. 0 turns metrics off. It must differ from `PINWALL_PORT`. Keep this port off the public network. |
 | `PINWALL_LOG_LEVEL` | `info` | How much the server logs, from least to most: `fatal`, `error`, `warn`, `info`, `debug`, `trace`. Logs are JSON lines. |
 | `PINWALL_WEB_DIR` | the web app bundled with the server | The folder the web app is served from. Leave it unset to use the copy bundled with Pinwall; set it only to serve a build of your own. |
@@ -64,7 +64,7 @@ Artifact files live on the local disk (the default) or in an S3-compatible bucke
 
 ## Single sign-on
 
-Single sign-on through an OpenID Connect identity provider. It is off unless the issuer and the client id are both set.
+Single sign-on through an OpenID Connect identity provider. It is on when the issuer and the client id are set, and off when neither is. Setting only one of them, or a client secret without them, stops Pinwall at startup.
 
 | Variable | Default | Description |
 | --- | --- | --- |

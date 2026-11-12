@@ -131,7 +131,8 @@ a long token in it, is short-lived, so share the artifact's link from the app in
 The built-in **owner account** needs no identity provider. You create it with the setup link from
 the quick start, with a passkey or a password, and it is always an admin. Everyone else signs in
 through an OpenID Connect provider, once you set `PINWALL_OIDC_ISSUER` and `PINWALL_OIDC_CLIENT_ID`.
-Single sign-on stays off without them.
+Single sign-on stays off while neither is set. Setting only one of them, or a client secret without
+them, stops Pinwall at startup with a message that names what is missing.
 
 Pinwall does not manage groups. It reads them from the provider and maps them to two roles, admin
 and member. At the provider, register Pinwall with this redirect URI, which is your public origin
@@ -154,7 +155,9 @@ By default Pinwall asks for the scopes `openid email profile offline_access`. Th
 that `offline_access` brings lets it check again, every `PINWALL_ACCESS_RECHECK_INTERVAL` (12 hours
 by default, never more than 24), that someone still has access. A person removed at the provider
 loses access by the next check, with no admin action, and an admin can end a person's browser
-sessions, MCP tokens and API tokens at once with **Revoke now** under **Admin, Users**.
+sessions, MCP tokens and API tokens with **Revoke now** under **Admin, Users**. Their next request
+is refused. A live-update stream they already have open, such as a review page left open, is
+checked again within 25 seconds, and until then it can still bring them new comments.
 
 Put the client secret in a file and give its path in `PINWALL_OIDC_CLIENT_SECRET_FILE`. A person who
 signs in successfully but earns no role is refused, and a role an admin sets on the Users page wins
@@ -245,9 +248,20 @@ PINWALL_TRUST_PROXY=true
 ```
 
 `PINWALL_PUBLIC_ORIGIN` is the address people use. `PINWALL_TRUST_PROXY=true` makes Pinwall believe
-`X-Forwarded-For` from exactly one proxy in front of it, so that its rate limits see the visitor
-instead of the proxy. Without it Pinwall ignores forwarded headers, and it never takes a host name
-from them in either case.
+`X-Forwarded-For` from exactly one proxy in front of it, so that what Pinwall limits per address
+sees each visitor instead of the proxy: the rate limits, such as those on the owner's sign-in and
+on share-link passwords, and the 20 live-update streams one address may hold open. With two proxies
+in a row, such as a Cloudflare Tunnel and an ingress controller, list their addresses or ranges
+instead, as in `PINWALL_TRUST_PROXY=10.0.0.0/8`. Without it Pinwall ignores forwarded headers, so
+everyone behind the proxy has the proxy's address: the rate limits count all visitors together, and
+20 open review tabs across the whole team fill the stream limit. Pinwall never takes a host name
+from forwarded headers in either case.
+
+Let the proxy pass the `Authorization` header through as the client sent it, and add none of its
+own. Pinwall reads that header as a bearer token whenever it is there, so a login that the proxy
+asks for with HTTP Basic authentication makes every API and MCP request fail with 401, the web
+app's own included, since the browser then sends the Basic credentials with each request. Put such
+a login on another layer, such as Cloudflare Access or a VPN.
 
 What to know about Cloudflare:
 

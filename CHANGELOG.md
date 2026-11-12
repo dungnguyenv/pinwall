@@ -62,3 +62,19 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
 
 - On identity providers that ignore `prompt=select_account`, such as Keycloak, "Not you?" on the
   agent consent page signs the same account back in. Sign out at the provider first.
+- The version pickers of the compare screen list the newest 50 versions. To compare an older one,
+  put its number in the address (`?from=<n>&to=<n>`).
+- The rendered Markdown diff does not show the artifact's own images, since it runs in a sandbox
+  with no address to load them from. The side-by-side view shows them.
+- The compare screen does not follow live updates: reload it to see a version published since it
+  opened.
+- The review page shows the first 1000 comment threads of an artifact, the oldest first. The API
+  and the MCP tools list them all.
+- Search finds the words in the first 5 MB of each HTML page and the first 200 KB of each Markdown
+  file, at most 20 MB per version, and up to 200,000 characters of text per version. Words past
+  that are in the page but not in search.
+- A page in a nested frame whose own Content-Security-Policy blocks the annotator cannot be
+  commented on. The page the viewer opens still takes point comments when its policy blocks the
+  annotator.
+- After **Revoke now**, a live-update stream the person already has open is checked again within
+  25 seconds, and can bring them new comments until then.

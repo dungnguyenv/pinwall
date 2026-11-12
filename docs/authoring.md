@@ -106,7 +106,10 @@ but only when the page is shown for review, and never to a raw link, which serve
 as published. The script tag is placed right after the page's last policy tag, so your policy
 decides whether it may run. When the policy blocks it, as `script-src 'none'` does, the page still
 takes point comments: a person clicks a spot on the page and the viewer pins the comment on its own
-overlay. Only the comments on a selected text or a chosen element need the annotator.
+overlay. Only the comments on a selected text or a chosen element need the annotator. That fallback
+is for the page the viewer opens only. A page in a nested frame whose own policy blocks the
+annotator cannot be commented on at all, so leave scripts allowed in pages you embed when people
+should comment on them.
 
 ## Text encoding
 
@@ -134,6 +137,12 @@ Pinwall for the values in force with `whoami`, and the upload dialog of the web 
 | `PINWALL_MAX_VERSION_BYTES` | 500 MB | A version, unpacked |
 | `PINWALL_MAX_FILES` | 10000 | Files in one version |
 | `PINWALL_MAX_EXPANSION_RATIO` | 100 | How many times larger than the upload a version may unpack to |
+
+Search reads each version once, when it is published: the entry page first, then the other HTML
+and Markdown files in path order. It reads the first 5 MB of each HTML file and the first 200 KB of
+each Markdown file, at most 20 MB per version (500 KB of it Markdown), and keeps up to 200,000
+characters of text. Words past those limits are on the page but cannot be found, so put what
+people will search for near the top of a very large page.
 
 ## Markdown
 

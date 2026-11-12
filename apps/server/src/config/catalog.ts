@@ -43,7 +43,7 @@ const SECTION_INTROS: Record<ConfigSection, string> = {
   storage:
     'Artifact files live on the local disk (the default) or in an S3-compatible bucket. The `PINWALL_S3_*` variables apply only with `PINWALL_STORAGE=s3`.',
   sign_in:
-    'Single sign-on through an OpenID Connect identity provider. It is off unless the issuer and the client id are both set.',
+    'Single sign-on through an OpenID Connect identity provider. It is on when the issuer and the client id are set, and off when neither is. Setting only one of them, or a client secret without them, stops Pinwall at startup.',
   access:
     'Who the identity provider admits, and as what: admin or member. People who sign in with the owner account are not affected by these.',
   limits:
@@ -104,7 +104,7 @@ export const CONFIG_VARS: readonly ConfigVar[] = [
     secret: false,
     default: 'false',
     description:
-      'Which reverse proxies to believe about the visitor address. `false` trusts none and ignores `X-Forwarded-For`. `true` trusts exactly one proxy in front of Pinwall. A comma-separated list of IP addresses or CIDR ranges trusts those proxies.',
+      "Which reverse proxies to believe about the visitor address. `false` trusts none and ignores `X-Forwarded-For`. `true` trusts exactly one proxy. A comma-separated list of IP addresses or CIDR ranges trusts those proxies, for two or more in a row. Without a match, every visitor has the proxy's address and shares its limits per address: rate limits, and 20 open live-update streams.",
   },
   {
     name: 'PINWALL_METRICS_PORT',
