@@ -123,6 +123,8 @@ export function Composer({
           aria-label={t('web.comments.composerLabel')}
           placeholder={t('web.comments.composerPlaceholder')}
           value={text}
+          // The box has focus after a pick: it says why the comment cannot be sent yet.
+          aria-describedby={versionWait && !versionWait.error ? waitId : undefined}
           readOnly={create.isPending}
           onChange={(event) => c.setText('new', event.target.value)}
           className="max-h-48 min-h-16 text-base"
@@ -153,7 +155,6 @@ export function Composer({
             size="sm"
             loading={create.isPending}
             disabled={empty || versionWait !== null}
-            aria-describedby={versionWait && !versionWait.error ? waitId : undefined}
             aria-keyshortcuts={ariaKeyShortcuts(SEND_KEYS)}
           >
             {t('web.comments.post')}

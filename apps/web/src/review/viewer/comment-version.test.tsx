@@ -82,7 +82,9 @@ test('a comment cannot be sent while the id of its version is being read', async
   await user.keyboard('c');
   const box = await writeOn(user, top, 'About v1');
   expect(send()).toBeDisabled();
-  expect(screen.getByText(t('web.comments.versionLoading'))).toBeInTheDocument();
+  // The box, which has focus, says why.
+  expect(box).toHaveFocus();
+  expect(box).toHaveAccessibleDescription(t('web.comments.versionLoading'));
   await user.click(box);
   await user.keyboard('{Control>}{Enter}{/Control}');
   await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
@@ -92,6 +94,7 @@ test('a comment cannot be sent while the id of its version is being read', async
   v1.release();
   await waitFor(() => expect(send()).toBeEnabled());
   expect(screen.queryByText(t('web.comments.versionLoading'))).not.toBeInTheDocument();
+  expect(box).not.toHaveAttribute('aria-describedby');
   await user.click(send());
   await waitFor(() =>
     expect(s.created).toEqual([expect.objectContaining({ body: 'About v1', version_id: 'ver_1' })]),
