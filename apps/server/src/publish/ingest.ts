@@ -8,6 +8,7 @@ import { checkTarget, commitVersion, type PublishTarget } from '../domain/versio
 import { publicUrl } from '../http/public-url.ts';
 import { AppError, badRequest, unsupportedMediaType } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
+import { rejectionReason } from '../ops/metrics.ts';
 import type { BlobStore } from '../storage/blob-store.ts';
 import { type ArchiveEntry, corruptArchive, readArchive, sniffArchive } from './archive.ts';
 import { IngestBudget, limitExceeded } from './limits.ts';
@@ -56,11 +57,27 @@ const SNIFF_BYTES = 512;
  * streams. On failure the body is destroyed and the blobs this upload added that nothing else
  * uses are removed, so no version, file row or orphan blob is left.
  */
-export async function ingestUpload(
+export function ingestUpload(
   deps: AppDeps,
   target: PublishTarget,
   input: UploadInput,
   opts: PublishOptions,
+): Promise<PublishOutcome> {
+  const budget = new IngestBudget(deps.config.limits);
+  return metered(
+    deps,
+    opts.source,
+    () => budget.requestBytesRead,
+    () => publishUpload(deps, target, input, opts, budget),
+  );
+}
+
+async function publishUpload(
+  deps: AppDeps,
+  target: PublishTarget,
+  input: UploadInput,
+  opts: PublishOptions,
+  budget: IngestBudget,
 ): Promise<PublishOutcome> {
   const { body } = input;
   const maxUpload = deps.config.limits.maxUploadBytes;
@@ -74,7 +91,6 @@ export async function ingestUpload(
     throw error;
   }
 
-  const budget = new IngestBudget(deps.config.limits);
   const counted = countRequestBytes(body, budget);
   const destroyBody = () => {
     body.destroy();
@@ -99,7 +115,22 @@ export async function ingestUpload(
  * Publishes a set of files given by path, such as a dropped folder: paths are normalized, macOS
  * junk is skipped and one folder wrapping every file is removed, as for an archive.
  */
-export async function ingestFiles(
+export function ingestFiles(
+  deps: AppDeps,
+  target: PublishTarget,
+  files: readonly { path: string; data: Buffer }[],
+  opts: PublishOptions,
+): Promise<PublishOutcome> {
+  const bytes = files.reduce((sum, file) => sum + file.data.length, 0);
+  return metered(
+    deps,
+    opts.source,
+    () => bytes,
+    () => publishFileSet(deps, target, files, opts),
+  );
+}
+
+async function publishFileSet(
   deps: AppDeps,
   target: PublishTarget,
   files: readonly { path: string; data: Buffer }[],
@@ -138,7 +169,23 @@ export interface FileSink {
  * is checked before the first file is read. On failure `destroyInput` runs and the blobs this
  * publish added that nothing else uses are removed. One folder wrapping every file is removed.
  */
-export async function ingestStreamed(
+export function ingestStreamed(
+  deps: AppDeps,
+  target: PublishTarget,
+  opts: PublishOptions,
+  budget: IngestBudget,
+  destroyInput: () => void,
+  readFiles: (sink: FileSink) => Promise<void>,
+): Promise<PublishOutcome> {
+  return metered(
+    deps,
+    opts.source,
+    () => budget.requestBytesRead,
+    () => publishStreamed(deps, target, opts, budget, destroyInput, readFiles),
+  );
+}
+
+async function publishStreamed(
   deps: AppDeps,
   target: PublishTarget,
   opts: PublishOptions,
@@ -179,7 +226,22 @@ export async function ingestStreamed(
  * Publishes text files given as strings (HTML, Markdown, CSS, JavaScript, SVG, JSON and other
  * text types), up to `maxInlineBytes` of UTF-8 in all, then as `ingestFiles` does.
  */
-export async function ingestInline(
+export function ingestInline(
+  deps: AppDeps,
+  target: PublishTarget,
+  files: readonly InlineFile[],
+  opts: PublishOptions,
+): Promise<PublishOutcome> {
+  const bytes = files.reduce((sum, file) => sum + Buffer.byteLength(file.content, 'utf8'), 0);
+  return metered(
+    deps,
+    opts.source,
+    () => bytes,
+    () => publishInline(deps, target, files, opts),
+  );
+}
+
+async function publishInline(
   deps: AppDeps,
   target: PublishTarget,
   files: readonly InlineFile[],
@@ -199,7 +261,7 @@ export async function ingestInline(
   if (total > max) throw limitExceeded('max_inline_bytes', max);
 
   const set = files.map(({ path, content }) => ({ path, data: Buffer.from(content, 'utf8') }));
-  return ingestFiles(deps, target, set, opts);
+  return publishFileSet(deps, target, set, opts);
 }
 
 /** The links a publish returns: the artifact's review page and the raw files of version `n`. */
@@ -212,6 +274,29 @@ export function publishLinks(
     review_url: publicUrl(config, `/a/${artifactId}`),
     raw_url: publicUrl(config, `/a/${artifactId}/v/${n}/raw`),
   };
+}
+
+/**
+ * Runs one publish and keeps its two counters: `bytesRead()` (request bytes read, whatever the
+ * outcome) is added to `uploadBytes` once it ends, and a refusal that is the client's fault
+ * (`rejectionReason`) counts in `uploadsRejected` before it is rethrown.
+ */
+async function metered<T>(
+  deps: AppDeps,
+  source: VersionSource,
+  bytesRead: () => number,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    const reason = rejectionReason(error);
+    if (reason !== null) deps.metrics.uploadsRejected.inc({ reason });
+    throw error;
+  } finally {
+    const bytes = bytesRead();
+    if (bytes > 0) deps.metrics.uploadBytes.inc({ source }, bytes);
+  }
 }
 
 /**

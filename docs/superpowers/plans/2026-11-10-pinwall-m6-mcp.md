@@ -62,7 +62,7 @@ The roadmap's Global Constraints apply, plus these for M6:
 - **Protocol:** public clients only (`token_endpoint_auth_method: none`); PKCE `S256` only; the only scope is `pinwall`; response type `code`, response mode `query`.
 - **Errors:**
   - `/oauth/register`, `/oauth/token` and `/oauth/revoke` answer RFC 6749 JSON, `{ "error", "error_description" }`, with `Cache-Control: no-store`.
-  - `/oauth/authorize` answers an HTML page (M1 `renderErrorPage`), whatever `Accept` says, until both `client_id` and `redirect_uri` are validated. Pinwall never redirects to an unvalidated URI.
+  - `/oauth/authorize` answers every refusal with an HTML page (M1 `renderErrorPage`), whatever `Accept` says. Only the person's decision on the consent page (approve or deny) goes back to the redirect URI. *(M6 review fix I1: this departs from RFC 6749 §4.1.2.1, which sends protocol errors to a validated redirect URI. Anyone can register a client, so before the signed-in person has seen the URI on the consent page, a redirect there would make Pinwall an open redirector. RFC 9700 §4.11.2 requires authenticating the person first and redirecting only to trusted URIs.)*
 - **`/mcp`:** bearer only, never cookies. A present `Origin` other than the public origin is refused. Stateless (`sessionIdGenerator: undefined`), with `enableJsonResponse: true`, so no SSE stream crosses proxies. No CORS headers anywhere in M6.
 - **Audience:** OAuth access tokens are accepted on `/mcp` only. The OAuth resolver is not appended to `bearerResolvers`, so `/api/v1/*` and `/a/*` never resolve `pwa_` tokens.
 - **Tool copy:** tool descriptions are agent-facing protocol text and live as constants in `mcp/descriptions.ts`. Tool result text and every error message go through `t()`, with the exact copy given here.
@@ -77,8 +77,8 @@ The roadmap's Global Constraints apply, plus these for M6:
    → Task 1 `checkRedirectUri accepts and refuses`; Task 2 `a loopback redirect may use another port`, `an unregistered redirect uri gets an HTML page, never a redirect`.
 3. **A stale client registration.** The client was deleted after 30 idle days, or the data dir was reset. Expected: `/oauth/authorize` explains how to re-add the server, and `/oauth/token` answers `invalid_client` (401), which makes the SDK re-register.
    → Task 2 `an unknown client gets an HTML page, never a redirect`; Task 3 `an unknown client is invalid_client`.
-4. **Access cannot be confirmed at refresh time** (an IdP outage past 24 h). Expected: the refresh is refused without using up the refresh token, so it works again once the IdP is back, and no reuse detection fires.
-   → Task 4 `an IdP outage refuses the refresh without using up the token`.
+4. **Access cannot be confirmed at refresh time** (an IdP outage past 24 h). Expected: the refresh is refused without using up the refresh token, so it works again once the IdP is back, and no reuse detection fires. *(M6 review fix I2: the refusal is 503 `temporarily_unavailable` with `Retry-After: 60`, never `invalid_grant`, because SDK clients drop their tokens and ask for a browser sign-in on `invalid_grant`.)*
+   → Task 4 `an IdP outage answers try-later without using up the token`; Task 10 `keeps its tokens through an IdP outage and works again without a browser once the IdP is back` (real SDK client).
 5. **Inline payloads inflated by JSON escaping.** Go escapes `<` as `\u003c` (6 bytes for 1); Python's `ensure_ascii` escapes Vietnamese. Expected: files within `PINWALL_MAX_INLINE_BYTES` publish whatever the client's escaping. Above the limit, the result is a tool error naming the limit and pointing to `create_publish_session`, never a transport-level 413.
    → Task 7 `an inline payload at the limit passes even when every '<' is escaped`.
 
@@ -342,7 +342,7 @@ test('an unregistered redirect uri gets an HTML page, never a redirect', ...);
 test.each([
   [{ responseType: 'token' }, 'unsupported_response_type'], [{ challenge: '' }, 'invalid_request'], [{ method: 'plain' }, 'invalid_request'],
   [{ resource: 'https://other.example/mcp' }, 'invalid_target'], [{ state: 's'.repeat(1025) }, 'invalid_request'],
-])('protocol errors go back to the client: %o', ...);   // 302 to redirectUri with error, error_description, iss (and state when short)
+])('protocol errors before consent are a page, never a redirect: %s', ...);   // M6 review fix I1: 400 text/html without location (was a 302 to redirectUri)
 test('resource defaults to the MCP endpoint and tolerates its spellings', ...);
   // absent, 'http://localhost:8080/mcp/' and 'http://LOCALHOST:8080/mcp' → consent; the grant's resource 'http://localhost:8080/mcp'
 test('unknown scopes are ignored and pinwall is granted', ...);   // scope 'openid offline_access' → consent scopes ['pinwall']
@@ -357,7 +357,7 @@ test('authorize is rate limited per IP', ...);   // 60 → 302; the 61st → 429
   1. `enforceRateLimit(OAUTH_RATES.authorize)` runs in the route; a refusal becomes `AuthorizePageError(429, err.message)`.
   2. No client for `client_id` → `AuthorizePageError(400, t('oauth.authorize.unknownClient'))`.
   3. A missing `redirect_uri`, or one that fails `matchRedirectUri` → `AuthorizePageError(400, t('oauth.authorize.badRedirect', { uri }))`.
-  4. From here on, errors are a 302 to `authorizationRedirect(config, redirectUri, { error, error_description, state })`:
+  4. From here on, errors are also `AuthorizePageError(400, message)`, never a redirect (M6 review fix I1; see Global Constraints). The messages, in this order:
      - `response_type !== 'code'` → `unsupported_response_type` `t('oauth.authorize.responseType')`;
      - `code_challenge_method !== 'S256'` or `!isValidPkceString(code_challenge)` → `invalid_request` `t('oauth.authorize.pkce')`;
      - `state` longer than `MAX_STATE_LENGTH` → `invalid_request` `t('oauth.authorize.state')`, sent without the state;
@@ -517,8 +517,9 @@ test('refresh re-checks an OIDC member with the IdP and refuses a removed one', 
   // startTestIdp + idp.env({ PINWALL_OIDC_MEMBER_GROUPS: 'pinwall-users' }); signInOidcUser groups ['pinwall-users']; issueTestTokens;
   // idp.setGroups(sub, ['other']); clock.advance(12 * 3_600_000) → refresh invalid_grant; user disabled_reason 'idp_removed';
   // idp.tokenRequests('refresh_token') rose by 1
-test('an IdP outage refuses the refresh without using up the token', ...);   // Review Focus 4
-  // as above, still a member; idp.setReachable(false); clock.advance(24 * 3_600_000) → refresh invalid_grant; refresh row used_at null;
+test('an IdP outage answers try-later without using up the token', ...);   // Review Focus 4
+  // as above, still a member; idp.setReachable(false); clock.advance(24 * 3_600_000) → refresh 503 temporarily_unavailable,
+  //   Retry-After 60 (M6 review fix I2; was invalid_grant); refresh row used_at null;
   // idp.setReachable(true); clock.advance(60_001) → refresh(same token) 200; grant not revoked
 test('Revoke now ends OAuth tokens', ...);   // revokeAllCredentials(ada) → refresh invalid_grant; the access token resolves to null
 // revoke.test.ts
@@ -534,7 +535,7 @@ test('revocation needs token and client_id', ...);   // → 400 invalid_request
   2. Look up the row by `hashSecret(refresh_token)` with `kind = 'refresh'`, joined to its grant. Any of these → `invalid_grant` `t('oauth.token.badRefresh')`: missing, `expires_at <= now`, grant revoked, or `grant.client_id !== client_id`.
   3. `used_at` is set: if `now - used_at <= 120_000` (the reuse grace window — several agent sessions sharing one stored credential refresh at once), continue to step 4 and issue a fresh pair for the same grant without consuming anything further (log info `'oauth refresh token reused within grace'`); otherwise `revokeGrant`, log warn `{ grant_id, client_id, user_id }` `'oauth refresh token reused; grant revoked'`, then `invalid_grant` `t('oauth.token.reused')`.
   4. A `resource` that is present and normalizes to something other than `grant.resource` → `invalid_target`.
-  5. Load the user. `gateUser(deps, user, { inline: true })`: `{ ok: false }`, or a result whose user fails `hasAccess` → `invalid_grant` `t('oauth.token.accessEnded')`.
+  5. Load the user. `gateUser(deps, user, { inline: true })`: `{ ok: false, idpUnavailable: true }` for a user who passes `hasAccess` → 503 `temporarily_unavailable` `t('oauth.token.idpUnavailable')` with `Retry-After: 60` (M6 review fix I2); any other `{ ok: false }`, or a result whose user fails `hasAccess` → `invalid_grant` `t('oauth.token.accessEnded')`.
   6. One transaction:
      - `update oauth_tokens set used_at = now where token_hash = ? and used_at is null`;
      - 0 rows (a concurrent refresh just used it, so it is within the grace window) → `issueTokens` anyway, grant `last_used_at`;

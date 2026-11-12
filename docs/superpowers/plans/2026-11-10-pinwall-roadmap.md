@@ -97,7 +97,7 @@ pinwall/
 
 - `AppDeps` (`apps/server/src/deps.ts`): `{ config: Config; db: DbHandle; blobs: BlobStore; events: EventBus; oneTime: OneTimeStore; rateLimiter: RateLimiter; leases: LeaseManager; scheduler: Scheduler; logger: Logger; clock: Clock; metrics: Metrics }` (`metrics` is added by M9, `apps/server/src/ops/metrics.ts`). Services are plain modules or factories taking `AppDeps`; no DI container.
 - `AppEnv` (`apps/server/src/app.ts`): `{ Variables: { requestId: string; deps: AppDeps; auth: AuthContext | null } }`. `AuthContext = { user: UserRow; via: 'session' | 'api_token' | 'oauth'; sessionId?: string }`.
-- Errors: `AppError(code: ErrorCode, status: number, message: string, details?: Record<string, unknown>)` in `apps/server/src/lib/errors.ts`. `ErrorCode` is one of `bad_request, unauthorized, forbidden, not_found, conflict, version_conflict, gone, payload_too_large, unsupported_media_type, rate_limited, upload_session_used, upload_session_expired, setup_required, setup_done, invalid_credentials, access_denied, internal`. JSON error body: `{ "error": { "code", "message", "details"? } }`.
+- Errors: `AppError(code: ErrorCode, status: number, message: string, details?: Record<string, unknown>)` in `apps/server/src/lib/errors.ts`. `ErrorCode` is one of `bad_request, unauthorized, forbidden, not_found, method_not_allowed, conflict, version_conflict, gone, payload_too_large, unsupported_media_type, rate_limited, upload_session_used, upload_session_expired, setup_required, setup_done, invalid_credentials, access_denied, internal`. JSON error body: `{ "error": { "code", "message", "details"? } }`.
 - IDs: `newId(prefix)` → `<prefix>_<20 lowercase Crockford base32 chars>`; prefixes `usr prj art ver cmt shr tok cli pky gnt`. Content tokens: `newContentToken()` → 32 lowercase base32 chars (160 bits; valid DNS label). Bearer secrets: `newSecret()` → 43 base64url chars; API tokens are `pw_` + secret; OAuth access tokens `pwa_` + secret and refresh tokens `pwr_` + secret (M6). Only SHA-256 hashes of secrets are stored (`hashSecret`).
 - Time: all timestamps are integer epoch milliseconds in the DB and in the API (`*_at` fields). Code reads time only through `deps.clock.now()`.
 - API conventions: JSON, `snake_case` fields, list endpoints return `{ items, next_cursor }`, cursor-based (opaque base64url). DTO schemas live in `@pinwall/shared` and are used by the server routes and the SPA alike.
@@ -257,8 +257,8 @@ Contract (M5 builds the annotator, M8 the viewer): the annotator defines one glo
 | M3 | OIDC, roles, access re-check | `…-m3-oidc.md` | M2 | done |
 | M4 | Publishing and content serving | `…-m4a-publishing-core.md` (Tasks 1–6), `…-m4b-publishing-http.md` (Tasks 7–13) | M2 | done |
 | M5 | Comments, sharing, live updates, annotator | `…-m5-review-server.md` | M4 | done |
-| M6 | MCP, OAuth authorization server, agent skill | `…-m6-mcp.md` | M3, M5 | |
-| M7 | Web app: shell, library, accounts, admin | `…-m7a-web-shell.md` (Tasks 1–7), `…-m7b-web-accounts-admin.md` (Tasks 8–12) | M3, M4 | done (m7-web, merge pending) |
+| M6 | MCP, OAuth authorization server, agent skill | `…-m6-mcp.md` | M3, M5 | done |
+| M7 | Web app: shell, library, accounts, admin | `…-m7a-web-shell.md` (Tasks 1–7), `…-m7b-web-accounts-admin.md` (Tasks 8–12) | M3, M4 | done |
 | M8 | Web app: review, compare, comments, sharing | `…-m8a-web-review.md` (Tasks 1–7), `…-m8b-web-share-compare.md` (Tasks 8–11) | M5, M7 | |
 | M9 | Operations and release | `…-m9a-ops.md` (Tasks 1–6), `…-m9b-release.md` (Tasks 7–13) | M6, M8 | |
 

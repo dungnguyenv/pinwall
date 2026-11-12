@@ -14,6 +14,7 @@ import {
   PutObjectCommand,
   S3Client,
   type S3ClientConfig,
+  S3ServiceException,
 } from '@aws-sdk/client-s3';
 import type { Config } from '../config/types.ts';
 import { badRequest, notFound } from '../lib/errors.ts';
@@ -32,6 +33,25 @@ export type S3StorageConfig = Extract<Config['storage'], { kind: 's3' }>;
 
 function errorName(error: unknown): string | undefined {
   return (error as { name?: string } | undefined)?.name;
+}
+
+/**
+ * What an S3 error keeps when it leaves the client: its name (the S3 error code), message, stack,
+ * fault side and request metadata (status, request ids, attempts). The SDK copies every element
+ * of an S3 error document onto the error, and AWS's documents name the access key id and the
+ * request signature (`AWSAccessKeyId`, `SignatureProvided`, `StringToSign`, `CanonicalRequest`),
+ * which a logged error would carry into the log.
+ */
+const KEPT_ERROR_FIELDS = new Set(['name', 'message', 'stack', '$fault', '$metadata']);
+
+/** `error` without the fields its S3 error document added; any other error as it is. */
+function withoutErrorDocument(error: unknown): unknown {
+  if (error instanceof S3ServiceException) {
+    for (const field of Object.keys(error)) {
+      if (!KEPT_ERROR_FIELDS.has(field)) Reflect.deleteProperty(error, field);
+    }
+  }
+  return error;
 }
 
 /** Blobs as objects at `<prefix>blobs/<sha256>` in one bucket. */
@@ -60,6 +80,17 @@ export class S3BlobStore implements BlobStore {
       };
     }
     this.client = new S3Client(clientConfig);
+    // Outermost, so it sees each failure once the SDK is done with it (retries included).
+    this.client.middlewareStack.add(
+      (next) => async (args) => {
+        try {
+          return await next(args);
+        } catch (error) {
+          throw withoutErrorDocument(error);
+        }
+      },
+      { step: 'initialize', name: 'pinwallWithoutErrorDocument' },
+    );
     this.bucket = cfg.bucket;
     this.keyPrefix = `${cfg.prefix}blobs/`;
   }

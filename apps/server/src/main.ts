@@ -2,21 +2,30 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { parseArgs } from 'node:util';
 import { serve } from '@hono/node-server';
+import { pino } from 'pino';
 import { buildApp } from './app.ts';
 import { startAuth } from './auth/startup.ts';
 import { type Config, ConfigError, loadConfig } from './config/load.ts';
 import { connectDb } from './db/connect.ts';
 import { migrateToLatest } from './db/migrate.ts';
 import { closeDeps, createDeps } from './deps.ts';
+import { t } from './lib/i18n.ts';
 import { createLogger, type Logger } from './lib/logger.ts';
+import { runBackupCommand, runRestoreCommand } from './ops/backup/cli.ts';
+import { enableProcessMetrics } from './ops/metrics.ts';
+import { startMetricsServer } from './ops/metrics-server.ts';
 import { startPublishing } from './publish/startup.ts';
 import { configureServerForUploads } from './publish/upload-route.ts';
+import { PINWALL_VERSION } from './version.ts';
 
 const USAGE = `Usage: pinwall [command]
 
 Commands:
-  serve     Run the server (the default). Applies pending migrations first.
-  migrate   Apply pending database migrations, then exit.
+  serve                   Run the server (the default). Applies pending migrations first.
+  migrate                 Apply pending database migrations, then exit.
+  backup --out <file|->   Write a backup archive to a file, or to stdout with -
+  restore --in <file|->   Restore an archive into an empty installation (- reads stdin)
+  version                 Print the Pinwall version
 
 Configuration comes from PINWALL_* environment variables.`;
 
@@ -27,7 +36,10 @@ const DRAIN_MS = 5_000;
 /** After a stop signal, the process exits by this time even if closing hangs. */
 const SHUTDOWN_DEADLINE_MS = 10_000;
 
-type Command = 'serve' | 'migrate' | 'help';
+type Command =
+  | { name: 'serve' | 'migrate' | 'help' | 'version' }
+  | { name: 'backup'; out: string }
+  | { name: 'restore'; input: string };
 
 /** The command, or an error message for a command line that is not understood. */
 function parseCommand(argv: string[]): Command | { error: string } {
@@ -35,13 +47,37 @@ function parseCommand(argv: string[]): Command | { error: string } {
     const { values, positionals } = parseArgs({
       args: argv,
       allowPositionals: true,
-      options: { help: { type: 'boolean', short: 'h' } },
+      options: {
+        help: { type: 'boolean', short: 'h' },
+        version: { type: 'boolean', short: 'v' },
+        out: { type: 'string' },
+        in: { type: 'string' },
+      },
     });
-    if (values.help) return 'help';
-    const [command = 'serve', ...rest] = positionals;
+    if (values.help) return { name: 'help' };
+    if (values.version) return { name: 'version' };
+    const [name = 'serve', ...rest] = positionals;
     if (rest.length > 0) return { error: `Unexpected argument: ${rest.join(' ')}` };
-    if (command === 'serve' || command === 'migrate' || command === 'help') return command;
-    return { error: `Unknown command: ${command}` };
+
+    // Each file option belongs to one command, which cannot do without it.
+    if (values.out !== undefined && name !== 'backup') {
+      return { error: '--out belongs to the backup command' };
+    }
+    if (values.in !== undefined && name !== 'restore') {
+      return { error: '--in belongs to the restore command' };
+    }
+    if (name === 'backup' || name === 'restore') {
+      const option = name === 'backup' ? '--out' : '--in';
+      const path = name === 'backup' ? values.out : values.in;
+      if (path === undefined || path === '') {
+        return { error: `${name} needs ${option} <file|->` };
+      }
+      return name === 'backup' ? { name, out: path } : { name, input: path };
+    }
+    if (name === 'serve' || name === 'migrate' || name === 'help' || name === 'version') {
+      return { name };
+    }
+    return { error: `Unknown command: ${name}` };
   } catch (error) {
     return { error: (error as Error).message };
   }
@@ -65,6 +101,13 @@ async function runServer(config: Config, logger: Logger): Promise<void> {
   for (const warning of config.warnings) logger.warn(warning);
 
   const deps = await createDeps(config, { logger });
+  enableProcessMetrics(deps.metrics);
+  // Before the app listens: a metrics port that is taken is a startup failure, not a silent gap.
+  const metricsServer = await startMetricsServer(deps).catch(async (err: unknown) => {
+    await closeDeps(deps);
+    throw err;
+  });
+  if (metricsServer !== null) logger.info({ port: metricsServer.port }, 'metrics listening');
   // Plain HTTP/1.1 (the adapter's default): TLS ends at the proxy in front of Pinwall.
   const server = serve({
     fetch: buildApp(deps).fetch,
@@ -129,16 +172,19 @@ async function runServer(config: Config, logger: Logger): Promise<void> {
     // `close` stops accepting connections; its callback runs once the open ones are done.
     server.close(() => {
       clearTimeout(drain);
-      closeDeps(deps).then(
-        () => {
-          logger.info('stopped');
-          process.exit(0);
-        },
-        (err: unknown) => {
-          logger.error({ err }, 'Closing the database or the scheduler failed');
-          process.exit(1);
-        },
-      );
+      // The metrics listener stays up until the app has drained, and goes before the database.
+      (metricsServer?.close() ?? Promise.resolve())
+        .then(() => closeDeps(deps))
+        .then(
+          () => {
+            logger.info('stopped');
+            process.exit(0);
+          },
+          (err: unknown) => {
+            logger.error({ err }, 'Closing the database or the scheduler failed');
+            process.exit(1);
+          },
+        );
     });
   };
   process.on('SIGTERM', () => stop('SIGTERM'));
@@ -151,14 +197,43 @@ function exitWithConfigError(error: ConfigError): never {
   process.exit(EXIT_USAGE);
 }
 
+/** The text of whatever a failed command threw. */
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Runs `backup` or `restore`. A failure is one plain line on stderr and exit code 1 (a
+ * configuration problem is exit code 2, as everywhere); success leaves the process to end on
+ * its own once the database is closed.
+ */
+async function runOperation(
+  name: 'backup' | 'restore',
+  logger: Logger,
+  run: () => Promise<void>,
+): Promise<void> {
+  try {
+    await run();
+  } catch (error) {
+    if (error instanceof ConfigError) exitWithConfigError(error);
+    logger.debug({ err: error }, `${name} failed`);
+    console.error(t(`${name}.failed`, { message: messageOf(error) }));
+    process.exit(1);
+  }
+}
+
 async function main(argv: string[]): Promise<void> {
   const command = parseCommand(argv);
-  if (typeof command === 'object') {
+  if ('error' in command) {
     console.error(`${command.error}\n\n${USAGE}`);
     process.exit(EXIT_USAGE);
   }
-  if (command === 'help') {
+  if (command.name === 'help') {
     console.log(USAGE);
+    return;
+  }
+  if (command.name === 'version') {
+    console.log(PINWALL_VERSION);
     return;
   }
 
@@ -170,7 +245,12 @@ async function main(argv: string[]): Promise<void> {
     throw error;
   }
 
-  const logger = createLogger(config.logLevel);
+  // stdout is the archive of `backup --out -`: these two commands log to stderr only.
+  const logsToStderr = command.name === 'backup' || command.name === 'restore';
+  const logger = createLogger(
+    config.logLevel,
+    logsToStderr ? pino.destination({ dest: 2, sync: true }) : undefined,
+  );
   process.on('uncaughtException', (err) => {
     logger.fatal({ err }, 'Uncaught exception');
     process.exit(1);
@@ -180,15 +260,26 @@ async function main(argv: string[]): Promise<void> {
     process.exit(1);
   });
 
+  if (command.name === 'backup') {
+    const { out } = command;
+    await runOperation('backup', logger, () => runBackupCommand(config, logger, out));
+    return;
+  }
+  if (command.name === 'restore') {
+    const { input } = command;
+    await runOperation('restore', logger, () => runRestoreCommand(config, logger, input));
+    return;
+  }
+
   try {
-    if (command === 'migrate') await migrate(config, logger);
+    if (command.name === 'migrate') await migrate(config, logger);
     else await runServer(config, logger);
   } catch (error) {
     // `ensureSecretKey` reports an unusable key file as a ConfigError too.
     if (error instanceof ConfigError) exitWithConfigError(error);
     logger.fatal(
       { err: error },
-      command === 'migrate' ? 'Migration failed' : 'Pinwall cannot start',
+      command.name === 'migrate' ? 'Migration failed' : 'Pinwall cannot start',
     );
     process.exit(1);
   }

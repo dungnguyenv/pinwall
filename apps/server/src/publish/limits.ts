@@ -49,6 +49,11 @@ export class IngestBudget {
 
   constructor(private readonly limits: Config['limits']) {}
 
+  /** Request bytes counted so far, including the chunk that crossed the limit, if one did. */
+  get requestBytesRead(): number {
+    return this.requestBytes;
+  }
+
   onRequestBytes(n: number): void {
     this.requestBytes += n;
     const max = this.limits.maxUploadBytes;

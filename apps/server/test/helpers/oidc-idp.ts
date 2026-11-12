@@ -21,6 +21,8 @@ export interface TestIdpOptions {
   groupsClaim?: string | null;
   /** Default true; false registers the client without the refresh_token grant. */
   refreshTokens?: boolean;
+  /** The `pinwall` client's secret, default `pinwall-test-secret`. */
+  clientSecret?: string;
 }
 
 export interface TokenFailure {
@@ -162,6 +164,7 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 export async function startTestIdp(opts: TestIdpOptions = {}): Promise<TestIdp> {
   const groupsClaim = opts.groupsClaim === undefined ? 'groups' : opts.groupsClaim;
   const refreshTokens = opts.refreshTokens ?? true;
+  const clientSecret = opts.clientSecret ?? TEST_IDP_CLIENT_SECRET;
 
   const accounts = new Map<string, TestIdpAccount>();
   const disabled = new Set<string>();
@@ -195,7 +198,7 @@ export async function startTestIdp(opts: TestIdpOptions = {}): Promise<TestIdp> 
     clients: [
       {
         client_id: TEST_IDP_CLIENT_ID,
-        client_secret: TEST_IDP_CLIENT_SECRET,
+        client_secret: clientSecret,
         token_endpoint_auth_method: 'client_secret_basic',
         redirect_uris: opts.redirectUris ?? DEFAULT_REDIRECT_URIS,
         response_types: ['code'],
@@ -342,7 +345,7 @@ export async function startTestIdp(opts: TestIdpOptions = {}): Promise<TestIdp> 
     env: (extra = {}) => ({
       PINWALL_OIDC_ISSUER: issuer,
       PINWALL_OIDC_CLIENT_ID: TEST_IDP_CLIENT_ID,
-      PINWALL_OIDC_CLIENT_SECRET: TEST_IDP_CLIENT_SECRET,
+      PINWALL_OIDC_CLIENT_SECRET: clientSecret,
       PINWALL_OIDC_DISPLAY_NAME: 'Test IdP',
       // The test IdP listens on http: only.
       PINWALL_OIDC_ALLOW_HTTP_ISSUER: 'true',

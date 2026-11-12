@@ -40,7 +40,12 @@ export function idpAccessCurrent(user: UserRow, now: number, config: Config): bo
   return deadline === null || now < deadline;
 }
 
-export type GateResult = { ok: true; user: UserRow } | { ok: false };
+/**
+ * A refusal says whether the IdP could answer: `idpUnavailable` is true when the inline re-check
+ * failed transiently, timed out or is backing off from such a failure, so asking again later may
+ * let the user in; false when no check ran or the IdP's answer ended access.
+ */
+export type GateResult = { ok: true; user: UserRow } | { ok: false; idpUnavailable: boolean };
 
 /**
  * The IdP access gate every credential passes. With `inline`, a due IdP user who has a refresh
@@ -54,18 +59,24 @@ export async function gateUser(
   opts: { inline: boolean },
 ): Promise<GateResult> {
   if (user.kind !== 'oidc') return { ok: true, user };
-  let row = user;
+  let checked: InlineCheck = { user, idpUnavailable: false };
   if (
     opts.inline &&
     deps.config.oidc !== null &&
     user.idp_refresh_token !== null &&
     isRecheckDue(user, deps.clock.now(), deps.config)
   ) {
-    row = await inlineRecheck(deps, user);
+    checked = await inlineRecheck(deps, user);
   }
-  return idpAccessCurrent(row, deps.clock.now(), deps.config)
-    ? { ok: true, user: row }
-    : { ok: false };
+  return idpAccessCurrent(checked.user, deps.clock.now(), deps.config)
+    ? { ok: true, user: checked.user }
+    : { ok: false, idpUnavailable: checked.idpUnavailable };
+}
+
+/** The row an inline re-check left, and whether the IdP failed to answer it. */
+interface InlineCheck {
+  user: UserRow;
+  idpUnavailable: boolean;
 }
 
 const TIMED_OUT = Symbol('timed out');
@@ -73,13 +84,15 @@ const TIMED_OUT = Symbol('timed out');
 /**
  * Re-checks `user` for a waiting request, unless an earlier inline check failed less than
  * `INLINE_RETRY_BACKOFF_MS` ago. Returns the row to judge the request by: the checked one, or
- * `user` unchanged when the check failed transiently or ran past the timeout. A check that runs
- * past it is never aborted (it may already hold a rotated refresh token): it finishes in the
- * background and saves its result.
+ * `user` unchanged, with `idpUnavailable`, when the check failed transiently, ran past the
+ * timeout or was skipped for the backoff. A check that runs past the timeout is never aborted
+ * (it may already hold a rotated refresh token): it finishes in the background and saves its
+ * result.
  */
-async function inlineRecheck(deps: AppDeps, user: UserRow): Promise<UserRow> {
+async function inlineRecheck(deps: AppDeps, user: UserRow): Promise<InlineCheck> {
   const runtime = oidcRuntime(deps);
-  if ((runtime.inlineBackoffUntil.get(user.id) ?? 0) > deps.clock.now()) return user;
+  const unavailable: InlineCheck = { user, idpUnavailable: true };
+  if ((runtime.inlineBackoffUntil.get(user.id) ?? 0) > deps.clock.now()) return unavailable;
   const pause = () =>
     runtime.inlineBackoffUntil.set(user.id, deps.clock.now() + INLINE_RETRY_BACKOFF_MS);
 
@@ -95,7 +108,7 @@ async function inlineRecheck(deps: AppDeps, user: UserRow): Promise<UserRow> {
     // A database failure or a bug: the request goes on, still bound by the last good check.
     deps.logger.error({ user_id: user.id, err }, 'inline idp re-check failed');
     pause();
-    return user;
+    return unavailable;
   } finally {
     clearTimeout(timer);
   }
@@ -105,9 +118,12 @@ async function inlineRecheck(deps: AppDeps, user: UserRow): Promise<UserRow> {
       deps.logger.error({ user_id: user.id, err }, 'inline idp re-check failed');
     });
     pause();
-    return user;
+    return unavailable;
   }
-  if (result.outcome === 'transient') pause();
-  else runtime.inlineBackoffUntil.delete(user.id);
-  return result.user ?? user;
+  if (result.outcome === 'transient') {
+    pause();
+    return { user: result.user ?? user, idpUnavailable: true };
+  }
+  runtime.inlineBackoffUntil.delete(user.id);
+  return { user: result.user ?? user, idpUnavailable: false };
 }
