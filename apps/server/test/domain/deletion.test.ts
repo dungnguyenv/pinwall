@@ -1,3 +1,5 @@
+import { mkdir, readdir, utimes, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { ArtifactList, ArtifactSummary } from '@pinwall/shared';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { AuthContext } from '../../src/app.ts';
@@ -469,11 +471,25 @@ describe.each(dialects)('deletion on %s', (dialect) => {
       await ctx.deps.db.db.selectFrom('projects').select('id').execute(),
       'no project before',
     ).toEqual([]);
+    // In the blob store's temp folder: what a put cut short by a crash left over an hour ago, and
+    // a put in progress.
+    const { storage } = ctx.deps.config;
+    if (storage.kind !== 'local') throw new Error('expected local storage');
+    const tmp = join(storage.dir, 'tmp');
+    await mkdir(tmp, { recursive: true });
+    const lastWritten = async (name: string, at: number) => {
+      await writeFile(join(tmp, name), 'partial');
+      await utimes(join(tmp, name), new Date(at), new Date(at));
+    };
+    await lastWritten('left-by-a-crash', clock.now() - 3_600_001);
+    await lastWritten('being-written', clock.now() - 60_000);
 
     await startPublishing(deps);
     expect(await ctx.deps.db.db.selectFrom('projects').select('id').execute()).toEqual([
       { id: DEFAULT_PROJECT_ID },
     ]);
+    // Swept at once, not only when the first scheduled sweep comes round.
+    expect(await readdir(tmp)).toEqual(['being-written']);
     expect([...jobs.keys()]).toEqual(['content-cleanup', 'blob-sweep']);
     expect(jobs.get('content-cleanup')?.intervalMs).toBe(3_600_000);
     expect(jobs.get('blob-sweep')?.intervalMs).toBe(600_000);
@@ -507,10 +523,12 @@ describe.each(dialects)('deletion on %s', (dialect) => {
     const left = await ctx.deps.db.db.selectFrom('tombstones').select('key').execute();
     expect(left).toEqual([{ key: 'art_kept' }]);
 
-    // blob-sweep removes blobs no version references.
+    // blob-sweep removes blobs no version references, and temp files unwritten for an hour.
     const orphan = await storeBlob(ctx.deps, 'orphan bytes');
+    clock.advance(3_600_000);
     await jobs.get('blob-sweep')?.fn();
     expect(await blobState(ctx.deps, orphan)).toEqual({ row: false, object: false });
+    expect(await readdir(tmp)).toEqual([]);
 
     // Running it again changes nothing.
     await startPublishing({ ...ctx.deps, scheduler: { ...scheduler, every: () => {} } });

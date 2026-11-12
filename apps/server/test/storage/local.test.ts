@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -117,4 +117,23 @@ test('check fails when the directory cannot be used', async () => {
   await writeFile(file, 'x');
 
   await expect(createBlobStore({ kind: 'local', dir: file }).check()).rejects.toThrow();
+});
+
+test('removeStaleTemp removes what an unfinished put left, once unwritten since the cutoff', async () => {
+  const dir = await tempDir();
+  const store = createBlobStore({ kind: 'local', dir });
+  expect(await store.removeStaleTemp(Date.now()), 'before any put').toBe(0);
+  const bytes = Buffer.from('stored');
+  await store.put(sha256(bytes), bytes, bytes.length);
+  const tmp = join(dir, 'tmp');
+  const cutoff = Date.now() - 3_600_000;
+  // A put the process stopped in the middle of, last written before the cutoff.
+  await writeFile(join(tmp, 'left-by-a-crash'), 'partial');
+  await utimes(join(tmp, 'left-by-a-crash'), new Date(cutoff - 1000), new Date(cutoff - 1000));
+  // A put in progress keeps writing to its file.
+  await writeFile(join(tmp, 'being-written'), 'partial');
+
+  expect(await store.removeStaleTemp(cutoff)).toBe(1);
+  expect(await readdir(tmp)).toEqual(['being-written']);
+  expect(await store.has(sha256(bytes))).toBe(true);
 });

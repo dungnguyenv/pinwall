@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { constants, createWriteStream } from 'node:fs';
-import { access, mkdir, open, readdir, rename, rm, stat, unlink } from 'node:fs/promises';
+import { access, lstat, mkdir, open, readdir, rename, rm, stat, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -119,6 +119,23 @@ export class LocalBlobStore implements BlobStore {
   async check(): Promise<void> {
     await mkdir(this.tmpDir, { recursive: true });
     await access(this.tmpDir, constants.R_OK | constants.W_OK);
+  }
+
+  async removeStaleTemp(before: number): Promise<number> {
+    let removed = 0;
+    for (const name of await this.names(this.tmpDir, () => true)) {
+      const path = join(this.tmpDir, name);
+      try {
+        if ((await lstat(path)).mtimeMs >= before) continue;
+      } catch (error) {
+        // Renamed into place, or removed, since the listing.
+        if (isMissing(error)) continue;
+        throw error;
+      }
+      await rm(path, { recursive: true, force: true });
+      removed += 1;
+    }
+    return removed;
   }
 
   /** Entries of `dir` that pass `keep`; none when the directory does not exist (yet). */

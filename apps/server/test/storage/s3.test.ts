@@ -1,4 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 import { expect, onTestFinished, test } from 'vitest';
 import type { Config } from '../../src/config/types.ts';
@@ -71,3 +74,30 @@ if (endpoint) {
   );
   test.skip('S3 blob store contract needs PINWALL_TEST_S3_ENDPOINT', () => {});
 }
+
+test('removeStaleTemp removes only the spool folders an unfinished put left', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pinwall-s3-spool-'));
+  onTestFinished(() => rm(tmp, { recursive: true, force: true }));
+  // Never reaches the bucket: the spool is on local disk.
+  const store = createBlobStore(
+    { kind: 's3', bucket, region: 'us-east-1', forcePathStyle: true, prefix: '' },
+    tmp,
+  );
+  const cutoff = Date.now() - 3_600_000;
+  const old = new Date(cutoff - 1000);
+  const folder = async (name: string, file: Date) => {
+    await mkdir(join(tmp, name));
+    await writeFile(join(tmp, name, 'body'), 'partial');
+    await utimes(join(tmp, name, 'body'), file, file);
+    await utimes(join(tmp, name), old, old);
+  };
+  // A spool the process stopped in the middle of, last written before the cutoff.
+  await folder('pinwall-blob-left', old);
+  // One still being written.
+  await folder('pinwall-blob-busy', new Date());
+  // Not the store's: a backup's spool shares the folder.
+  await folder('backup-running', old);
+
+  expect(await store.removeStaleTemp(cutoff)).toBe(1);
+  expect((await readdir(tmp)).sort()).toEqual(['backup-running', 'pinwall-blob-busy']);
+});

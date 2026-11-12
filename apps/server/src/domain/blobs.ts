@@ -139,6 +139,18 @@ async function isReferenced(deps: AppDeps, sha256: string): Promise<boolean> {
   return row !== undefined;
 }
 
+/** How long nothing may have written to a temp file of the blob store before it counts as left. */
+export const BLOB_TEMP_IDLE_MS = 3_600_000;
+
+/**
+ * Removes what puts that never finished (a crash in the middle of writing a file) left in the blob
+ * store's temporary space, once nothing has written to it for `BLOB_TEMP_IDLE_MS`. Returns how
+ * many leftovers it removed.
+ */
+export function sweepBlobTemp(deps: AppDeps): Promise<number> {
+  return deps.blobs.removeStaleTemp(deps.clock.now() - BLOB_TEMP_IDLE_MS);
+}
+
 /**
  * Collects up to `batch` blobs whose rows no version references, oldest first: what an aborted
  * upload deferred during a backup, or what a crash left behind. Returns how many it deleted; 0

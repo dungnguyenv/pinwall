@@ -26,6 +26,13 @@ export interface BlobStore {
   list(): AsyncIterable<string>;
   /** Readiness probe: resolves when the store is usable and throws when it is not. */
   check(): Promise<void>;
+  /**
+   * Removes what a `put` that never finished (its process stopped in the middle) left in the
+   * store's temporary space: whatever nothing has written to since `before`, in ms since the
+   * epoch. A put in progress keeps writing to its file, so it is left alone. Returns how many
+   * leftovers it removed.
+   */
+  removeStaleTemp(before: number): Promise<number>;
 }
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;

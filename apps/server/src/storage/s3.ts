@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -53,6 +53,9 @@ function withoutErrorDocument(error: unknown): unknown {
   }
   return error;
 }
+
+/** A streamed put spools its body in a folder of `tmpDir` whose name starts with this. */
+const SPOOL_PREFIX = 'pinwall-blob-';
 
 /** Blobs as objects at `<prefix>blobs/<sha256>` in one bucket. */
 export class S3BlobStore implements BlobStore {
@@ -116,7 +119,7 @@ export class S3BlobStore implements BlobStore {
     // A stream is spooled to disk and verified first, so a wrong hash never reaches the bucket
     // and the upload can state its exact length.
     await mkdir(this.tmpDir, { recursive: true });
-    const dir = await mkdtemp(join(this.tmpDir, 'pinwall-blob-'));
+    const dir = await mkdtemp(join(this.tmpDir, SPOOL_PREFIX));
     try {
       const file = join(dir, randomBytes(8).toString('hex'));
       const digest = new BlobDigest(size);
@@ -211,5 +214,40 @@ export class S3BlobStore implements BlobStore {
 
   async check(): Promise<void> {
     await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }));
+  }
+
+  /** The spool folders of streamed puts; the rest of `tmpDir` is not the store's. */
+  async removeStaleTemp(before: number): Promise<number> {
+    let names: string[];
+    try {
+      names = await readdir(this.tmpDir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+      throw error;
+    }
+    let removed = 0;
+    for (const name of names.filter((n) => n.startsWith(SPOOL_PREFIX))) {
+      const dir = join(this.tmpDir, name);
+      const lastWritten = await newestMtime(dir);
+      if (lastWritten === null || lastWritten >= before) continue;
+      await rm(dir, { recursive: true, force: true });
+      removed += 1;
+    }
+    return removed;
+  }
+}
+
+/** When a spool folder or the file in it was last written; null once it is gone. */
+async function newestMtime(dir: string): Promise<number | null> {
+  try {
+    let newest = (await lstat(dir)).mtimeMs;
+    for (const name of await readdir(dir)) {
+      newest = Math.max(newest, (await lstat(join(dir, name))).mtimeMs);
+    }
+    return newest;
+  } catch (error) {
+    // The put finished and removed it meanwhile.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
   }
 }
