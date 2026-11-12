@@ -45,7 +45,7 @@ Pinwall keeps its data in SQLite (the default) or PostgreSQL.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PINWALL_DATABASE_URL`<br>secret · also `PINWALL_DATABASE_URL_FILE` | SQLite at `<data dir>/pinwall.db` | Where Pinwall keeps its data: `sqlite:<path>` (a relative path is inside the data dir) or a `postgres://` or `postgresql://` URL, which may carry a password. PostgreSQL needs `PINWALL_SECRET_KEY` as well. |
-| `PINWALL_DATABASE_POOL_SIZE` | `10` | The most PostgreSQL connections one Pinwall process opens, from 1 to 1000. Opening a connection, or waiting for a free one when all are busy, fails after 10 seconds. SQLite ignores it. |
+| `PINWALL_DATABASE_POOL_SIZE` | `10` | The most PostgreSQL connections one Pinwall process opens, from 1 to 1000. `pinwall backup` and `pinwall restore` open one more, for their lease. Opening a connection, or waiting for a free one when all are busy, fails after 10 seconds. SQLite ignores it. |
 
 ## Storage
 

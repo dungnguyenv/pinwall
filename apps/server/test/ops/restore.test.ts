@@ -32,6 +32,8 @@ import { apiInit, createSignedInUser, createUserToken } from '../helpers/auth.ts
 import {
   backupToBuffer,
   dumpLogical,
+  maintenanceLeaseExpiry,
+  outlastMaintenanceLease,
   readAll,
   readArchive,
   referencedShas,
@@ -576,6 +578,27 @@ describe('restore', () => {
       expect(stored).toBe(1);
       await expectUntouched();
     });
+
+    test(
+      'an insert that runs past the lease term keeps the lease, with one database connection',
+      async () => {
+        // On SQLite, and on Postgres with a pool of one, the insert holds the only connection.
+        const clock = new FixedClock(Date.now());
+        const one = await storageContext(combo, { PINWALL_DATABASE_POOL_SIZE: '1' }, { clock });
+        onTestFinished(() => one.close());
+        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+        onTestFinished(() => {
+          vi.useRealTimers();
+        });
+
+        await restoreBackup(one.deps, Readable.from(good), {
+          duringInsert: (trx) => outlastMaintenanceLease(clock, () => maintenanceLeaseExpiry(trx)),
+        });
+        expect(await dumpLogical(one.deps)).toEqual(await dumpLogical(src.deps));
+        expect(await one.deps.leases.isHeld(BACKUP_LEASE)).toBe(false);
+      },
+      RESTORE_TIMEOUT_MS,
+    );
 
     test('a reply listed before its thread root is restored after it', async () => {
       const origin = await storageContext('sqlite+local');

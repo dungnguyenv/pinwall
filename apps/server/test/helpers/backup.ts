@@ -1,15 +1,19 @@
 import { randomBytes } from 'node:crypto';
 import { PassThrough, type Readable } from 'node:stream';
 import { buffer } from 'node:stream/consumers';
-import { sql } from 'kysely';
+import { type Kysely, sql } from 'kysely';
 import { extract, pack } from 'tar-stream';
+import { expect, vi } from 'vitest';
 import { createGrant } from '../../src/content/grants.ts';
+import type { Database } from '../../src/db/schema.ts';
 import type { AppDeps } from '../../src/deps.ts';
 import { recordView } from '../../src/domain/artifacts.ts';
+import { BACKUP_LEASE } from '../../src/domain/blobs.ts';
 import { addReply, type CommentActor, createThread } from '../../src/domain/comments.ts';
 import { deleteArtifact } from '../../src/domain/deletion.ts';
 import { createProject } from '../../src/domain/projects.ts';
 import { createShareLink } from '../../src/domain/shares.ts';
+import type { FixedClock } from '../../src/lib/clock.ts';
 import { type BackupHooks, createBackup } from '../../src/ops/backup/backup.ts';
 import {
   BACKUP_TABLES,
@@ -17,6 +21,10 @@ import {
   type Manifest,
   TABLE_KEYS,
 } from '../../src/ops/backup/format.ts';
+import {
+  MAINTENANCE_LEASE_RENEW_MS,
+  MAINTENANCE_LEASE_TTL_MS,
+} from '../../src/ops/backup/lease.ts';
 import { createUserToken, setupOwner } from './auth.ts';
 import { sha, storeBlob } from './blobs.ts';
 import { createTestContext, type TestContext } from './context.ts';
@@ -232,9 +240,11 @@ if (storageCombos.length === 1) {
 export async function storageContext(
   combo: StorageCombo,
   env: Record<string, string> = {},
+  opts: { clock?: FixedClock } = {},
 ): Promise<TestContext> {
-  if (combo === 'sqlite+local') return createTestContext({ env });
+  if (combo === 'sqlite+local') return createTestContext({ env, ...opts });
   const ctx = await createTestContext({
+    ...opts,
     dialect: 'postgres',
     env: {
       PINWALL_STORAGE: 's3',
@@ -279,4 +289,34 @@ export async function rowCounts(deps: AppDeps): Promise<Record<BackupTable, numb
 /** Every byte of `s`, such as a blob from `BlobStore.get`. */
 export async function readAll(s: Readable | Promise<Readable>): Promise<Buffer> {
   return buffer(await s);
+}
+
+/**
+ * Plays out a maintenance job that runs past the lease's term, from inside the job: the clock and
+ * the lease's renewal timer (faked with `vi.useFakeTimers`) move on one renewal at a time, eleven
+ * minutes in all, and after each step the lease's expiry, as `readExpiry` sees it, must have moved
+ * to a full term from now. A renewal that waits for the job's database connection never lands.
+ */
+export async function outlastMaintenanceLease(
+  clock: FixedClock,
+  readExpiry: () => Promise<number | undefined>,
+): Promise<void> {
+  for (let elapsed = 0; elapsed <= MAINTENANCE_LEASE_TTL_MS; ) {
+    clock.advance(MAINTENANCE_LEASE_RENEW_MS);
+    vi.advanceTimersByTime(MAINTENANCE_LEASE_RENEW_MS);
+    elapsed += MAINTENANCE_LEASE_RENEW_MS;
+    await vi.waitFor(async () =>
+      expect(await readExpiry()).toBe(clock.now() + MAINTENANCE_LEASE_TTL_MS),
+    );
+  }
+}
+
+/** The maintenance lease's expiry, read through `db`. */
+export async function maintenanceLeaseExpiry(db: Kysely<Database>): Promise<number | undefined> {
+  const row = await db
+    .selectFrom('leases')
+    .select('expires_at')
+    .where('name', '=', BACKUP_LEASE)
+    .executeTakeFirst();
+  return row?.expires_at;
 }

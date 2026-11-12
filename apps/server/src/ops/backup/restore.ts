@@ -47,6 +47,8 @@ export class RestoreError extends Error {
 export interface RestoreHooks {
   /** Runs once the archive is verified and its files stored, before any row goes in (tests only). */
   beforeInsert?(): Promise<void>;
+  /** Runs inside the insert transaction, before the first row goes in (tests only). */
+  duringInsert?(trx: Transaction<Database>): Promise<void>;
 }
 
 export interface RestoreSummary {
@@ -146,7 +148,11 @@ export async function restoreBackup(
     lease.assertHeld();
     await hooks.beforeInsert?.();
     const keyChanged = manifest.key_fingerprint !== keyFingerprint(secretKey);
-    const cleared = await insertEverything(deps, { lease, spool, columns, written, keyChanged });
+    const cleared = await insertEverything(
+      deps,
+      { lease, spool, columns, written, keyChanged },
+      hooks,
+    );
     const warnings = cleared > 0 ? [t('restore.keyChanged', { count: cleared })] : [];
     return { manifest, warnings };
   } catch (error) {
@@ -580,15 +586,20 @@ interface InsertSource {
  * In one transaction: makes sure the target is still empty, inserts every spooled row, and
  * rebuilds the search index. Returns how many users lost their IdP refresh token.
  */
-async function insertEverything(deps: AppDeps, source: InsertSource): Promise<number> {
+async function insertEverything(
+  deps: AppDeps,
+  source: InsertSource,
+  hooks: RestoreHooks,
+): Promise<number> {
   const { db, dialect } = deps.db;
-  return db.transaction().execute(async (trx) => {
+  return source.lease.writeTransaction(db, async (trx) => {
     await takeTarget(trx, dialect);
     const found = await targetContents(trx, deps.blobs, {
       defaultProject: false,
       blobs: source.written,
     });
     if (found.length > 0) throw new RestoreError(t('restore.changed'));
+    await hooks.duringInsert?.(trx);
 
     let cleared = 0;
     const sealed = (row: Row): Row => {

@@ -31,6 +31,8 @@ import { holdMaintenanceLease, type MaintenanceLease } from './lease.ts';
 const PAGE_ROWS = 1000;
 
 export interface BackupHooks {
+  /** Runs inside the snapshot transaction, once it has read the database (tests only). */
+  duringSnapshot?(): Promise<void>;
   /** Runs once the snapshot has ended, before the archive is written (tests only). */
   afterSnapshot?(): Promise<void>;
 }
@@ -82,7 +84,7 @@ export async function createBackup(
     const tmp = join(deps.config.dataDir, 'tmp');
     await mkdir(tmp, { recursive: true });
     spool = await mkdtemp(join(tmp, 'backup-'));
-    const snapshot = await takeSnapshot(deps, spool);
+    const snapshot = await takeSnapshot(deps, spool, hooks);
     await hooks.afterSnapshot?.();
 
     const manifest: Manifest = {
@@ -137,13 +139,14 @@ async function assertSchemaMatches(deps: AppDeps): Promise<void> {
  * first read, and other processes keep writing meanwhile. `read only` keeps it a deferred
  * transaction there: SQLite write transactions take the write lock when they begin.
  */
-async function takeSnapshot(deps: AppDeps, spool: string): Promise<Snapshot> {
+async function takeSnapshot(deps: AppDeps, spool: string, hooks: BackupHooks): Promise<Snapshot> {
   const { db, dialect } = deps.db;
   const read = async (trx: Transaction<Database>): Promise<Snapshot> => {
     const createdAt = deps.clock.now();
     const applied = await sql<{ name: string }>`
       select name from ${sql.table(DEFAULT_MIGRATION_TABLE)} order by name
     `.execute(trx);
+    await hooks.duringSnapshot?.();
     const tables = {} as Record<BackupTable, TableStats>;
     const blobs: StoredBlob[] = [];
     for (const table of BACKUP_TABLES) {
