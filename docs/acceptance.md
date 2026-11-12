@@ -6,33 +6,25 @@ holds the record, the steps of each manual check, and how the automated part run
 
 ## Before tagging 1.0.0
 
-As of the 1.0.0 release candidate, this definition is not met yet. Nothing below counts until it is
-run against the commit that will be tagged, and recorded on this page.
+Nothing below counts until it is run against the commit that will be tagged, and recorded on this
+page. Where the 1.0.0 candidate stands:
 
-1. **Every automated suite, at the tag candidate.** The last full run was at `b40e80d`, and later
-   fixes changed the PostgreSQL connection handling, backup and restore. Run, from a clean checkout
-   of the candidate commit, `pnpm lint`, `pnpm typecheck`, `pnpm test:integration`, `pnpm test:e2e`,
-   `pnpm test:e2e:keycloak` and `pnpm test:acceptance`, and add a row to
-   [Automated runs](#automated-runs). `e2e/acceptance-report.md` is not kept in the repository, and
-   a copy of it from an earlier commit proves nothing about this one.
-2. **The manual checks, on the image built from that commit** (`pnpm test:acceptance` leaves it as
-   `pinwall:acceptance`). [claude-code](#claude-code) (item 2), [review-loop](#review-loop)
-   (item 4) and [cloudflare-tunnel](#cloudflare-tunnel) (item 8) have been run on an image built
-   from the candidate (see [Results](#results)); the others are still to do:
+1. **Every automated suite, at the tag candidate.** Done locally at `3df932a` and on GitHub at
+   `a132d03` (see [Automated runs](#automated-runs)). Repeat on the commit that is tagged if it
+   changes code. `e2e/acceptance-report.md` is not kept in the repository, and a copy of it from
+   an earlier commit proves nothing about another one.
+2. **The manual checks.** [fresh-install](#fresh-install) (item 1), [claude-code](#claude-code)
+   (item 2), [review-loop](#review-loop) (item 4) and [cloudflare-tunnel](#cloudflare-tunnel)
+   (item 8) have been run (see [Results](#results)). Still to do:
    - [claude-desktop](#claude-desktop) (item 3a), over a quick tunnel. It needs `cloudflared`,
      Claude Desktop and an internet connection.
-   - [fresh-install](#fresh-install) (item 1). Its timing includes the image pull, so it needs a
-     published image: run it on a pre-release such as `v1.0.0-rc.1` once one is pushed, or on
-     1.0.0 itself right after the release, and record which.
    - [zitadel](#zitadel) and [google](#google) (items 3 and 3b), each with an account at that
      provider. The automated suites cover these items with simulated providers and a real
      Keycloak, so these two checks are strongly advised rather than required.
    - [two-machines](#two-machines) (item 6) stays optional.
-3. **The release workflow has never run on GitHub.** The first run of `release.yml` (the signing,
-   the attestations, the chart push, the image tags and the GitHub release) would be the 1.0.0 tag
-   itself, unless it is rehearsed first with a pre-release tag on a fork. Whether to rehearse is
-   the owner's decision; record a rehearsal under [Automated runs](#automated-runs) when there is
-   one.
+3. **The release workflow.** Rehearsed with `v1.0.0-rc.1` on the `release/1.0` branch: every job
+   passed, and the image signature, the provenance and SBOM attestations and the chart were
+   checked afterwards (see [Automated runs](#automated-runs)).
 
 ## Automated runs
 
@@ -42,6 +34,8 @@ the date, the commit, what ran, who ran it and the outcome. Keep older rows.
 | Date | Commit | What ran | Who | Result |
 | --- | --- | --- | --- | --- |
 | 2026-11-12 | `3df932a` | `pnpm lint`, `pnpm typecheck`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm test:e2e:keycloak`, `pnpm test:acceptance` | controller | pass |
+| 2026-11-12 | `a132d03` | GitHub Actions CI on `main` (all seven jobs) | GitHub Actions | pass |
+| 2026-11-12 | `610f611` (`v1.0.0-rc.1`) | `release.yml` rehearsal: tag check, CI, image for amd64 and arm64, cosign signature, provenance and SBOM attestations, chart push, GitHub pre-release. Afterwards: `cosign verify` with the documented identity, `gh attestation verify` for the provenance and the SBOMs, the chart pulled with the image digest in its values | controller | pass |
 
 ## Results
 
@@ -58,7 +52,7 @@ outcome. Keep older rows; add new ones below them.
 | [google](#google) | 3 | | | | not run yet |
 | [review-loop](#review-loop) | 4 | 2026-11-12 | 1.0.0 image built locally from `8061ff3`, behind a Cloudflare quick tunnel (https origin), Claude Code 2.1.263 | controller | pass |
 | [cloudflare-tunnel](#cloudflare-tunnel) | 8 | 2026-11-12 | same run as review-loop, cloudflared 2026.10.7 | controller | pass |
-| [fresh-install](#fresh-install) | 1 | | | | not run yet |
+| [fresh-install](#fresh-install) | 1 | 2026-11-12 | `ghcr.io/dungnguyenv/pinwall:1.0.0-rc.1` (`sha256:40eca17a…`), pulled from GHCR on a home connection | controller | pass, 49 s |
 | [two-machines](#two-machines) (optional) | 6 | | | | not run yet |
 
 The `claude-code` run above was the M6 live check: `claude mcp add --transport http pinwall
