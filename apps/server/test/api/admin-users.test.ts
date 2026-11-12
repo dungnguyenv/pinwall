@@ -173,19 +173,22 @@ describe.each(dialects)('admin users on %s', (dialect) => {
     expect(stored.role_override).toBeNull();
   });
 
-  test('an override gives a user with no IdP role access', async () => {
+  test('an override does not let in someone the identity provider does not admit', async () => {
     await start();
     const { cookie } = await admin();
     const { user, cookie: noRole } = await member({ idpRole: null });
 
-    const r = await setRole(user.id, 'member', { cookie });
-    expect(r.status).toBe(200);
-    expect(AdminUser.parse(await r.json())).toMatchObject({
-      idp_role: null,
-      role_override: 'member',
-      effective_role: 'member',
-    });
-    expect((await me({ cookie: noRole })).status).toBe(200);
+    for (const role of ['member', 'admin'] as const) {
+      const r = await setRole(user.id, role, { cookie });
+      expect(r.status).toBe(200);
+      // Stored, so it applies once the identity provider admits the person again.
+      expect(AdminUser.parse(await r.json())).toMatchObject({
+        idp_role: null,
+        role_override: role,
+        effective_role: null,
+      });
+      expect((await me({ cookie: noRole })).status, role).toBe(401);
+    }
   });
 
   test('blocking takes effect at once', async () => {

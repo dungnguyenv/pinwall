@@ -325,7 +325,7 @@
   "web.admin.nav": "Admin sections",
   "web.admin.users": "Users",
   "web.admin.configuration": "Configuration",
-  "web.admin.users.hint": "A role you set here wins over the one your identity provider gives. A blocked person is locked out at once.",
+  "web.admin.users.hint": "A role you set here replaces the one your identity provider gives, but only while the provider still lets the person in. Blocking someone locks them out at once and revokes their share links.",
   "web.admin.users.loading": "Loading users",
   "web.admin.users.emptyTitle": "No users yet",
   "web.admin.users.emptyBody": "People appear here the first time they sign in.",

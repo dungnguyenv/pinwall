@@ -6,6 +6,7 @@ import {
   recheckUser,
 } from '../../../src/auth/oidc/recheck.ts';
 import { openRefreshToken } from '../../../src/auth/oidc/users.ts';
+import { effectiveRole } from '../../../src/auth/roles.ts';
 import type { RoleOverride, UserRow } from '../../../src/db/schema.ts';
 import { createShareLink } from '../../../src/domain/shares.ts';
 import { FixedClock } from '../../../src/lib/clock.ts';
@@ -400,19 +401,57 @@ describe.each(dialects)('access re-check on %s', (dialect) => {
     expect(await outcome(user.id)).toBe('ok');
   });
 
-  test('role_override keeps a user after group removal, not past a refused refresh token', async () => {
+  test('an admin override holds while the IdP still admits the person', async () => {
+    await start();
+    const { user } = await signIn();
+    await setColumns(user.id, { role_override: 'admin' satisfies RoleOverride });
+    clock.advance(12 * H);
+    const r = await recheckUser(ctx.deps, user.id);
+    expect(r.outcome).toBe('ok');
+    expect(r.user).toMatchObject({ idp_role: 'member', role_override: 'admin', disabled_at: null });
+    expect(effectiveRole(r.user ?? user)).toBe('admin');
+  });
+
+  test('a role override does not keep someone the IdP dropped from the groups', async () => {
     await start();
     const { sub, user } = await signIn();
+    await addCredentials(user.id);
     await setColumns(user.id, { role_override: 'member' satisfies RoleOverride });
     idp.setGroups(sub, ['other']);
     clock.advance(12 * H);
-    expect(await outcome(user.id)).toBe('ok');
+    expect(await outcome(user.id)).toBe('removed');
+    // Removed as anyone else would be; the override stays stored, but no longer lets them in.
     expect(await row(user.id)).toMatchObject({
       idp_role: null,
       role_override: 'member',
+      disabled_at: clock.now(),
+      disabled_reason: 'idp_removed',
+      idp_refresh_token: null,
+    });
+    const tokens = await ctx.deps.db.db.selectFrom('api_tokens').select('revoked_at').execute();
+    expect(tokens).toEqual([{ revoked_at: clock.now() }]);
+
+    // Put back in a group by the IdP, they get in again, and the admin's override applies again.
+    idp.setGroups(sub, ['pinwall-admins']);
+    const back = await signInOidcUser(ctx, idp, {
+      sub,
+      name: 'Ada Example',
+      email: 'ada@example.com',
+      email_verified: true,
+      groups: ['pinwall-admins'],
+    });
+    expect(back.user).toMatchObject({
+      idp_role: 'admin',
+      role_override: 'member',
       disabled_at: null,
     });
+    expect(effectiveRole(back.user)).toBe('member');
+  });
 
+  test('a role override does not outlast a refused refresh token either', async () => {
+    await start();
+    const { sub, user } = await signIn();
+    await setColumns(user.id, { role_override: 'member' satisfies RoleOverride });
     idp.disable(sub);
     const checkedAt = clock.now();
     clock.advance(12 * H);

@@ -57,7 +57,7 @@ const putRole = createRoute({
   tags: ['admin'],
   summary: 'Set or clear a role override',
   description:
-    "An override wins over the identity provider role; `null` clears it. `blocked` locks the user out at once and revokes every share link they made. You cannot change your own role, and nobody can change the owner's: the owner is always an admin.",
+    "`admin` or `member` replaces the identity provider role, but only while the identity provider still admits the user: once it drops them, they lose access as if no override were set, and the override applies again if it admits them later. `blocked` always applies: it locks the user out at once and revokes every share link they made. `null` clears the override. You cannot change your own role, and nobody can change the owner's: the owner is always an admin.",
   middleware: [requireAdmin, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
   security,
   request: {

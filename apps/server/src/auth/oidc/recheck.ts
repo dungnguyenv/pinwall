@@ -12,7 +12,7 @@ import { applyIdentity, openRefreshToken, sealRefreshToken } from './users.ts';
 export const RECHECK_LEASE_TTL_MS = 60_000;
 
 /**
- * - `ok`: the IdP still admits the user (or an admin's role override keeps them in);
+ * - `ok`: the IdP still admits the user (an admin's role override applies only while it does);
  * - `removed`: the IdP's fresh claims no longer earn a role, so they were disabled and every
  *   credential was revoked;
  * - `sign_in_required`: the IdP refused the refresh token, or its answer would remove the person
@@ -82,8 +82,8 @@ function transient(deps: AppDeps, user: UserRow, error: unknown): RecheckResult 
 
 /**
  * Asks the IdP whether the user still gets in: a refresh-token grant, then the claims of the new
- * ID token overlaid with userinfo. Only claims that no longer earn a role (with no admin
- * override) disable the user; a refused refresh token (`invalid_grant`), or an answer that
+ * ID token overlaid with userinfo. Only claims that no longer earn a role disable the user,
+ * whatever role an admin set; a refused refresh token (`invalid_grant`), or an answer that
  * would remove them but lacks a claim the role rules read, asks them to sign in again; every
  * other failure is transient. Concurrent calls for one user share one check, and a
  * DB lease keeps other processes from checking the same user at the same time, so a rotated

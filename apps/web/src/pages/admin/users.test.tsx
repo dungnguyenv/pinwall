@@ -104,6 +104,27 @@ test('users show effective role, kind, last seen and removal status', async () =
   expect(within(katherine).getByRole('combobox')).toHaveTextContent('Blocked');
 });
 
+test('an override the identity provider no longer backs shows as no role, and the hint says why', async () => {
+  serveAdminUsers({
+    users: [
+      fxOwnerRow(),
+      fxAdminUser({ id: 'usr_5', name: 'Dorothy Vaughan', idp_role: null, role_override: 'admin' }),
+    ],
+  });
+  renderRoute('/admin/users');
+
+  const dorothy = await rowOf('Dorothy Vaughan');
+  expect(roleCell(dorothy).getByText('No role')).toBeInTheDocument();
+  expect(roleCell(dorothy).getByText('Identity provider: None')).toBeInTheDocument();
+  // The override is kept, and applies again once the identity provider lets them back in.
+  expect(within(dorothy).getByRole('combobox')).toHaveTextContent('Admin');
+  expect(
+    screen.getByText(
+      'A role you set here replaces the one your identity provider gives, but only while the provider still lets the person in. Blocking someone locks them out at once and revokes their share links.',
+    ),
+  ).toBeInTheDocument();
+});
+
 test('the page opens the user list and names itself', async () => {
   serveAdminUsers({ users: people() });
   const { router } = renderRoute('/admin');

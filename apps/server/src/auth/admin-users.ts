@@ -42,8 +42,9 @@ export async function listUsers(
 }
 
 /**
- * Sets, or with `null` clears, what an admin decided for a user's role. It wins over the
- * identity provider's role and takes effect on the user's next request. Blocking also revokes
+ * Sets, or with `null` clears, what an admin decided for a user's role, from the user's next
+ * request on. `admin` and `member` replace the identity provider's role only while the IdP
+ * admits the user (see `effectiveRole`); `blocked` always applies. Blocking also revokes
  * every share link the user made, in the same transaction (`revokeShareLinksOf`), and ends their
  * live streams once it commits: unblocking later does not bring them back. An admin cannot
  * change their own, and nobody can change the owner's: the owner is always an admin, so Pinwall
