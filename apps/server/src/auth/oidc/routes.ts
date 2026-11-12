@@ -12,6 +12,7 @@ import { renderErrorPage } from '../../pages/error-page.tsx';
 import { renderNoAccessPage } from '../../pages/no-access.tsx';
 import { enforceRateLimit, type RateRule } from '../rate-limits.ts';
 import { startSession } from '../session-cookie.ts';
+import { beginAccountSwitch, finishAccountSwitch } from './account-switch.ts';
 import { safeReturnTo } from './return-to.ts';
 import {
   beginOidcSignIn,
@@ -42,10 +43,44 @@ export function startPath(returnTo: string, selectAccount: boolean): string {
   return `/auth/oidc/start?${query}`;
 }
 
+/**
+ * The path of "Use a different account" on the no-access page: through the IdP's sign-out when
+ * the refused sign-in kept a `ticket` for it, else straight to the IdP's account chooser.
+ * `return_to` serves only when the ticket can no longer be used.
+ */
+export function switchPath(returnTo: string, ticket: string | null): string {
+  if (ticket === null) return startPath(returnTo, true);
+  return `/auth/oidc/switch?${new URLSearchParams({ return_to: returnTo, ticket })}`;
+}
+
 /** The browser's binding secret, when it holds one Pinwall could have minted. */
 function heldBindingSecret(c: Context<AppEnv>): string | undefined {
   const value = getCookie(c, oidcBindingCookieName(c.var.deps.config));
   return value !== undefined && BINDING_SECRET.test(value) ? value : undefined;
+}
+
+/** Sets the binding cookie, or renews it, for the next ten minutes. */
+function setBindingCookie(c: Context<AppEnv>, browserSecret: string): void {
+  const { config } = c.var.deps;
+  setCookie(c, oidcBindingCookieName(config), browserSecret, {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'Lax',
+    secure: config.publicHttps,
+    maxAge: PENDING_LOGIN_TTL_MS / 1000,
+  });
+}
+
+/** Redirects to the IdP to sign in, leading back to `returnTo`, which must already be safe. */
+async function redirectToSignIn(
+  c: Context<AppEnv>,
+  p: { returnTo: string; selectAccount: boolean },
+): Promise<Response> {
+  // One secret per browser, so sign-ins started in several tabs all finish.
+  const browserSecret = heldBindingSecret(c) ?? newSecret();
+  const location = await beginOidcSignIn(c.var.deps, { ...p, browserSecret });
+  setBindingCookie(c, browserSecret);
+  return c.redirect(location, 302);
 }
 
 const FAILURE_PAGES: Record<OidcFailure, { status: ContentfulStatusCode; keys: string }> = {
@@ -114,30 +149,69 @@ function signInRoute(handler: (c: Context<AppEnv>) => Promise<Response>) {
   };
 }
 
-/** `GET /auth/oidc/start` and `GET /auth/oidc/callback`, the browser half of OIDC sign-in. */
+/**
+ * The browser half of OIDC sign-in: `GET /auth/oidc/start` and `GET /auth/oidc/callback`, and
+ * for "Use a different account" `GET /auth/oidc/switch` and `GET /auth/oidc/signed-out`.
+ */
 export function buildOidcRouter(): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
   router.get(
     '/start',
     signInRoute(async (c) => {
+      const { config } = c.var.deps;
+      if (config.oidc === null) throw new OidcFlowError('not_configured', '/');
+      await enforceRateLimit(c, OIDC_START_RATE);
+      return redirectToSignIn(c, {
+        returnTo: safeReturnTo(c.req.query('return_to'), config.publicOrigin),
+        selectAccount: c.req.query('prompt') === 'select_account',
+      });
+    }),
+  );
+
+  // The no-access page's "Use a different account": signs out at the IdP first when it can,
+  // else asks the IdP for its account chooser, as `/start?prompt=select_account` does.
+  router.get(
+    '/switch',
+    signInRoute(async (c) => {
       const { deps } = c.var;
       const { config } = deps;
       if (config.oidc === null) throw new OidcFlowError('not_configured', '/');
       await enforceRateLimit(c, OIDC_START_RATE);
-      const returnTo = safeReturnTo(c.req.query('return_to'), config.publicOrigin);
-      const selectAccount = c.req.query('prompt') === 'select_account';
-      // One secret per browser, so sign-ins started in several tabs all finish.
-      const browserSecret = heldBindingSecret(c) ?? newSecret();
-      const location = await beginOidcSignIn(deps, { returnTo, selectAccount, browserSecret });
-      setCookie(c, oidcBindingCookieName(config), browserSecret, {
-        path: '/',
-        httpOnly: true,
-        sameSite: 'Lax',
-        secure: config.publicHttps,
-        maxAge: PENDING_LOGIN_TTL_MS / 1000,
+      const browserSecret = heldBindingSecret(c);
+      const location = await beginAccountSwitch(deps, {
+        ticket: c.req.query('ticket'),
+        browserSecret,
       });
-      return c.redirect(location, 302);
+      if (location !== null && browserSecret !== undefined) {
+        // The browser must still hold it when the IdP sends it back.
+        setBindingCookie(c, browserSecret);
+        return c.redirect(location, 302);
+      }
+      return redirectToSignIn(c, {
+        returnTo: safeReturnTo(c.req.query('return_to'), config.publicOrigin),
+        selectAccount: true,
+      });
+    }),
+  );
+
+  // The IdP's post-logout redirect: a fresh sign-in, leading where the refused one was going
+  // when the return is the one this browser started, else home.
+  router.get(
+    '/signed-out',
+    signInRoute(async (c) => {
+      const { deps } = c.var;
+      const { config } = deps;
+      if (config.oidc === null) throw new OidcFlowError('not_configured', '/');
+      await enforceRateLimit(c, OIDC_START_RATE);
+      const returnTo = await finishAccountSwitch(deps, {
+        state: c.req.query('state'),
+        browserSecret: heldBindingSecret(c),
+      });
+      return redirectToSignIn(c, {
+        returnTo: safeReturnTo(returnTo ?? '/', config.publicOrigin),
+        selectAccount: true,
+      });
     }),
   );
 
@@ -148,9 +222,10 @@ export function buildOidcRouter(): Hono<AppEnv> {
       const { config } = deps;
       if (config.oidc === null) throw new OidcFlowError('not_configured', '/');
       await enforceRateLimit(c, OIDC_CALLBACK_RATE);
+      const browserSecret = heldBindingSecret(c);
       const outcome = await finishOidcSignIn(deps, {
         query: new URL(c.req.url).search,
-        browserSecret: heldBindingSecret(c),
+        browserSecret,
       });
       if (outcome.kind === 'admitted') {
         await startSession(c, outcome.user, 'oidc');
@@ -165,10 +240,14 @@ export function buildOidcRouter(): Hono<AppEnv> {
         name: outcome.identity.name,
         email: outcome.identity.email,
         emailVerified: outcome.identity.emailVerified,
-        switchHref: startPath(outcome.returnTo, true),
+        switchHref: switchPath(outcome.returnTo, outcome.switchTicket),
         retried: outcome.selectAccount,
         requestId: c.var.requestId,
       });
+      // The switch link needs the binding cookie for as long as its ticket lasts.
+      if (outcome.switchTicket !== null && browserSecret !== undefined) {
+        setBindingCookie(c, browserSecret);
+      }
       return c.html(page, 403);
     }),
   );

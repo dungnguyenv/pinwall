@@ -7,7 +7,7 @@ export interface NoAccessPageProps {
   name: string;
   email: string | null;
   emailVerified: boolean;
-  /** Restarts the sign-in with the IdP's account chooser. */
+  /** Restarts the sign-in, through the IdP's sign-out when it has one, else its account chooser. */
   switchHref: string;
   /** This sign-in already asked the IdP to choose an account. */
   retried: boolean;

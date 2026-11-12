@@ -247,7 +247,7 @@ export const CONFIG_VARS: readonly ConfigVar[] = [
     default: null,
     defaultNote: 'none; single sign-on is off',
     description:
-      'The issuer URL of your OpenID Connect identity provider. It must use `https` unless `PINWALL_OIDC_ALLOW_HTTP_ISSUER` is `true`. Register `<public origin>/auth/oidc/callback` as the redirect URI at the provider.',
+      'The issuer URL of your OpenID Connect identity provider. It must use `https` unless `PINWALL_OIDC_ALLOW_HTTP_ISSUER` is `true`. Register `<public origin>/auth/oidc/callback` as the redirect URI at the provider, and `<public origin>/auth/oidc/signed-out` as a post-logout redirect URI: "Use a different account" signs a refused person out at the provider first, when it supports that.',
   },
   {
     name: 'PINWALL_OIDC_CLIENT_ID',

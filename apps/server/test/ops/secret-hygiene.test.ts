@@ -44,8 +44,8 @@ import {
   registerTestClient,
   tokenRequest,
 } from '../helpers/oauth.ts';
-import { authorizeAtIdp } from '../helpers/oidc-browser.ts';
-import { startTestIdp, type TestIdp } from '../helpers/oidc-idp.ts';
+import { authorizeAtIdp, bindingCookieFrom, switchLinkOf } from '../helpers/oidc-browser.ts';
+import { idpBrowserEndSession, startTestIdp, type TestIdp } from '../helpers/oidc-idp.ts';
 import { publishFiles } from '../helpers/publish.ts';
 import { sampleAnchor } from '../helpers/review.ts';
 
@@ -470,6 +470,41 @@ describe.each(dialects)('secret hygiene on %s', (dialect) => {
       const stored = openRefreshToken(ctx.deps, sealed.idp_refresh_token ?? '');
       expect(secrets.get(stored ?? '')).toBe('IdP refresh token');
 
+      // 8b. A blocked IdP user is refused and takes "Use a different account": Pinwall keeps the
+      // refused ID token and hands it to the IdP's sign-out, then signs in again.
+      const blockedSub = random('sub');
+      idp.addAccount({
+        sub: blockedSub,
+        name: 'Chi',
+        email: 'chi@example.com',
+        email_verified: true,
+      });
+      const admitted = await authorizeAtIdp(ctx, idp, { as: blockedSub });
+      expect((await ctx.request(admitted.url, admitted.init)).status).toBe(302);
+      await ctx.deps.db.db
+        .updateTable('users')
+        .set({ role_override: 'blocked' })
+        .where('oidc_subject', '=', blockedSub)
+        .execute();
+      const blocked = await authorizeAtIdp(ctx, idp, { as: blockedSub });
+      const deniedPage = await ctx.request(blocked.url, blocked.init);
+      expect(deniedPage.status).toBe(403);
+      const binding = bindingCookieFrom(deniedPage) ?? '';
+      keep('OIDC binding cookie', cookieValue(binding));
+      const switchLink = switchLinkOf(ctx, await deniedPage.text());
+      keep('account switch ticket', switchLink.searchParams.get('ticket'));
+      const switched = await ctx.request(switchLink.href, { headers: { cookie: binding } });
+      const signOut = new URL(switched.headers.get('location') ?? '');
+      keep('IdP sign-out state', signOut.searchParams.get('state'));
+      expect(secrets.get(signOut.searchParams.get('id_token_hint') ?? '')).toBe('IdP ID token');
+      const signedOut = await idpBrowserEndSession(idp, signOut.href);
+      const signInAgain = await ctx.request(signedOut.href, { headers: { cookie: binding } });
+      expect(signInAgain.status).toBe(302);
+      keep(
+        'OIDC state',
+        new URL(signInAgain.headers.get('location') ?? '').searchParams.get('state'),
+      );
+
       // 9. An upload URL used after it expired.
       const owner = await ctx.deps.db.db
         .selectFrom('users')
@@ -543,6 +578,8 @@ describe.each(dialects)('secret hygiene on %s', (dialect) => {
         'oauth code replayed; grant revoked',
         'oidc sign-in',
         'oidc sign-in failed',
+        'oidc sign-in denied',
+        'oidc account switch: signing out at the IdP',
         'idp re-check: sign-in required',
         'access re-check',
         'backup complete',
@@ -557,6 +594,8 @@ describe.each(dialects)('secret hygiene on %s', (dialect) => {
         '/api/v1/share/:token/unlock',
         '/api/v1/oauth/requests/:token/decision',
         '/auth/oidc/callback',
+        '/auth/oidc/switch',
+        '/auth/oidc/signed-out',
       ]) {
         expect(log, path).toContain(`"path":"${path}`);
       }
@@ -609,6 +648,8 @@ describe.each(dialects)('secret hygiene on %s', (dialect) => {
         'IdP access token',
         'IdP ID token',
         'IdP refresh token',
+        'account switch ticket',
+        'IdP sign-out state',
       ];
       expect([...new Set(secrets.values())].sort()).toEqual(kinds.sort());
     },

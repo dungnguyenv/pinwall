@@ -23,6 +23,13 @@ export interface TestIdpOptions {
   refreshTokens?: boolean;
   /** The `pinwall` client's secret, default `pinwall-test-secret`. */
   clientSecret?: string;
+  /**
+   * Default true: RP-Initiated Logout is on, so discovery lists an `end_session_endpoint`; false
+   * leaves it out, like Google.
+   */
+  endSession?: boolean;
+  /** Default: Pinwall's signed-out route on http://localhost:8080 and on https://pinwall.test. */
+  postLogoutRedirectUris?: string[];
 }
 
 export interface TokenFailure {
@@ -57,6 +64,8 @@ export interface TestIdp {
   failTokenRequests(failure: TokenFailure | null): void;
   /** The query of every request to the authorization endpoint, in order. */
   readonly authorizationRequests: URLSearchParams[];
+  /** The query of every request to the end-session endpoint, in order. */
+  readonly endSessionRequests: URLSearchParams[];
   /** Token requests of this grant type, counted on arrival, also when dropped or failed. */
   tokenRequests(grantType: 'authorization_code' | 'refresh_token'): number;
   close(): Promise<void>;
@@ -68,6 +77,11 @@ const DEFAULT_REDIRECT_URIS = [
   'http://localhost:8080/auth/oidc/callback',
   'https://pinwall.test/auth/oidc/callback',
 ];
+const DEFAULT_POST_LOGOUT_REDIRECT_URIS = [
+  'http://localhost:8080/auth/oidc/signed-out',
+  'https://pinwall.test/auth/oidc/signed-out',
+];
+const END_SESSION_PATH = '/session/end';
 const HOUR_SECONDS = 3_600;
 const DAY_SECONDS = 86_400;
 
@@ -165,11 +179,13 @@ export async function startTestIdp(opts: TestIdpOptions = {}): Promise<TestIdp> 
   const groupsClaim = opts.groupsClaim === undefined ? 'groups' : opts.groupsClaim;
   const refreshTokens = opts.refreshTokens ?? true;
   const clientSecret = opts.clientSecret ?? TEST_IDP_CLIENT_SECRET;
+  const endSession = opts.endSession ?? true;
 
   const accounts = new Map<string, TestIdpAccount>();
   const disabled = new Set<string>();
   const grantIds = new Map<string, string[]>();
   const authorizationRequests: URLSearchParams[] = [];
+  const endSessionRequests: URLSearchParams[] = [];
   const tokenCounts = { authorization_code: 0, refresh_token: 0 };
   let signedInAs: string | undefined;
   let cancelNext = false;
@@ -205,6 +221,12 @@ export async function startTestIdp(opts: TestIdpOptions = {}): Promise<TestIdp> 
         grant_types: refreshTokens
           ? ['authorization_code', 'refresh_token']
           : ['authorization_code'],
+        ...(endSession
+          ? {
+              post_logout_redirect_uris:
+                opts.postLogoutRedirectUris ?? DEFAULT_POST_LOGOUT_REDIRECT_URIS,
+            }
+          : {}),
       },
     ],
     scopes: ['openid', 'offline_access', 'email', 'profile', ...(groupsClaim ? ['groups'] : [])],
@@ -233,7 +255,23 @@ export async function startTestIdp(opts: TestIdpOptions = {}): Promise<TestIdp> 
     expiresWithSession: async () => false,
     rotateRefreshToken: true,
     pkce: { required: () => true },
-    features: { devInteractions: { enabled: false } },
+    features: {
+      devInteractions: { enabled: false },
+      // Plain pages instead of the defaults, which print a notice to change them. The logout
+      // page holds the confirmation form; a browser without an IdP session gets an
+      // auto-submitted form instead, which signs out at once.
+      rpInitiatedLogout: endSession
+        ? {
+            enabled: true,
+            logoutSource: async (ctx: { body: unknown }, form: string) => {
+              ctx.body = `<!DOCTYPE html><html><body>${form}</body></html>`;
+            },
+            postLogoutSuccessSource: async (ctx: { body: unknown }) => {
+              ctx.body = '<!DOCTYPE html><html><body>Signed out</body></html>';
+            },
+          }
+        : { enabled: false },
+    },
     interactions: {
       policy,
       url: (_ctx: unknown, interaction: { uid: string }) => `/interaction/${interaction.uid}`,
@@ -301,6 +339,7 @@ export async function startTestIdp(opts: TestIdpOptions = {}): Promise<TestIdp> 
     const { pathname, searchParams } = new URL(req.url ?? '/', issuer);
     const body = req.method === 'POST' ? await readBody(req) : undefined;
     if (pathname === '/auth') authorizationRequests.push(searchParams);
+    if (pathname === END_SESSION_PATH) endSessionRequests.push(searchParams);
     const tokenForm =
       pathname === '/token' && body !== undefined
         ? new URLSearchParams(body.toString())
@@ -388,6 +427,7 @@ export async function startTestIdp(opts: TestIdpOptions = {}): Promise<TestIdp> 
       tokenFailure = failure;
     },
     authorizationRequests,
+    endSessionRequests,
     tokenRequests: (grantType) => tokenCounts[grantType],
     close: async () => {
       server.closeAllConnections();
@@ -417,27 +457,79 @@ function storeCookies(jar: Map<string, string>, setCookies: string[]): void {
   }
 }
 
-const MAX_REDIRECTS = 10;
+const MAX_HOPS = 10;
 
 /**
- * Plays the browser at the IdP: follows its redirects from `authorizeUrl`, with a cookie jar of
- * its own, until one leads off the issuer. Returns that URL: the client callback.
+ * The POST form of an IdP page that submits itself (oidc-provider's form_post pages), with its
+ * hidden inputs; null for any other page. Values are read as written: oidc-provider escapes them
+ * for HTML, and the ones it writes here (its own URLs, random tokens, `yes`) have nothing to
+ * escape.
  */
-export async function idpBrowserAuthorize(idp: TestIdp, authorizeUrl: string): Promise<URL> {
+function selfSubmittingForm(
+  html: string,
+  base: URL,
+): { action: URL; body: URLSearchParams } | null {
+  const form = /<form[^>]*method="post"[^>]*action="([^"]*)"/.exec(html);
+  if (form?.[1] === undefined) return null;
+  const body = new URLSearchParams();
+  for (const [, name, value] of html.matchAll(
+    /<input type="hidden" name="([^"]*)" value="([^"]*)"\/>/g,
+  )) {
+    if (name !== undefined && value !== undefined) body.set(name, value);
+  }
+  return { action: new URL(form[1], base), body };
+}
+
+/**
+ * Plays the browser at the IdP: from `startUrl`, with a cookie jar of its own, follows redirects
+ * and submits the forms that submit themselves, until a redirect leads off the issuer. Returns
+ * that URL.
+ */
+async function browseIdp(idp: TestIdp, startUrl: string): Promise<URL> {
   const issuerOrigin = new URL(idp.issuer).origin;
   const jar = new Map<string, string>();
-  let url = new URL(authorizeUrl);
-  for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
+  let url = new URL(startUrl);
+  let form: URLSearchParams | undefined;
+  for (let hop = 0; hop < MAX_HOPS; hop++) {
+    const headers: Record<string, string> = {};
     const cookie = [...jar].map(([name, value]) => `${name}=${value}`).join('; ');
-    const res = await fetch(url, { redirect: 'manual', headers: cookie ? { cookie } : {} });
+    if (cookie) headers.cookie = cookie;
+    if (form) headers['content-type'] = 'application/x-www-form-urlencoded';
+    const res = await fetch(url, {
+      method: form ? 'POST' : 'GET',
+      redirect: 'manual',
+      headers,
+      ...(form ? { body: form.toString() } : {}),
+    });
     storeCookies(jar, res.headers.getSetCookie());
     const location = res.headers.get('location');
-    if (res.status < 300 || res.status >= 400 || location === null) {
-      throw new Error(`test IdP answered ${res.status} at ${url.pathname}: ${await res.text()}`);
+    if (res.status >= 300 && res.status < 400 && location !== null) {
+      await res.body?.cancel();
+      url = new URL(location, url);
+      form = undefined;
+      if (url.origin !== issuerOrigin) return url;
+      continue;
     }
-    await res.body?.cancel();
-    url = new URL(location, url);
-    if (url.origin !== issuerOrigin) return url;
+    const text = await res.text();
+    const next = res.status === 200 ? selfSubmittingForm(text, url) : null;
+    if (next === null || next.action.origin !== issuerOrigin) {
+      throw new Error(`test IdP answered ${res.status} at ${url.pathname}: ${text}`);
+    }
+    url = next.action;
+    form = next.body;
   }
-  throw new Error(`test IdP: more than ${MAX_REDIRECTS} redirects`);
+  throw new Error(`test IdP: more than ${MAX_HOPS} steps`);
+}
+
+/** Signs in at the IdP from `authorizeUrl`. Returns the URL it sends the browser to: the callback. */
+export function idpBrowserAuthorize(idp: TestIdp, authorizeUrl: string): Promise<URL> {
+  return browseIdp(idp, authorizeUrl);
+}
+
+/**
+ * Signs out at the IdP from `endSessionUrl`, in a browser without an IdP session. Returns the URL
+ * the IdP sends the browser to: the post-logout redirect URI.
+ */
+export function idpBrowserEndSession(idp: TestIdp, endSessionUrl: string): Promise<URL> {
+  return browseIdp(idp, endSessionUrl);
 }

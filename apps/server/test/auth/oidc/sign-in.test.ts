@@ -188,8 +188,9 @@ describe.each(dialects)('OIDC sign-in on %s', (dialect) => {
       t('oidc.noAccess.signedInAs', IDP),
       t('oidc.noAccess.message'),
     );
-    expect(body).toContain(
-      'href="/auth/oidc/start?return_to=%2Fprojects%2Fp1&amp;prompt=select_account"',
+    // The test IdP signs people out (RP-Initiated Logout), so the link goes through that first.
+    expect(body).toMatch(
+      /href="\/auth\/oidc\/switch\?return_to=%2Fprojects%2Fp1&amp;ticket=[A-Za-z0-9_-]{43}"/,
     );
     expect(body).not.toContain(html(t('oidc.noAccess.retryHint', IDP)));
     expect(body).not.toContain(html(t('oidc.noAccess.unverified')));
@@ -363,7 +364,12 @@ describe.each(dialects)('OIDC sign-in on %s', (dialect) => {
 
   test('OIDC routes are 404 pages when OIDC is off', async () => {
     await start({}, false);
-    for (const path of ['/auth/oidc/start', '/auth/oidc/callback?state=x&code=y']) {
+    for (const path of [
+      '/auth/oidc/start',
+      '/auth/oidc/callback?state=x&code=y',
+      '/auth/oidc/switch?ticket=x',
+      '/auth/oidc/signed-out?state=x',
+    ]) {
       const r = await ctx.request(path, { headers: { accept: 'application/json' } });
       await expectPage(r, 404, t('oidc.notConfigured.title'), t('oidc.notConfigured.message'));
     }
@@ -411,6 +417,10 @@ describe.each(dialects)('OIDC sign-in on %s', (dialect) => {
     const r = await ctx.request('/auth/oidc/start');
     await expectPage(r, 429, t('oidc.rateLimited.title'));
     expect(r.headers.get('retry-after')).toMatch(/^\d+$/);
+    // The account switch's routes start sign-ins too, and count with /start.
+    for (const path of ['/auth/oidc/switch', '/auth/oidc/signed-out']) {
+      await expectPage(await ctx.request(path), 429, t('oidc.rateLimited.title'));
+    }
 
     for (let i = 0; i < 30; i++) {
       expect((await ctx.request('/auth/oidc/callback?state=x&code=y')).status).toBe(400);

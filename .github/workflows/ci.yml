@@ -241,3 +241,49 @@ jobs:
           docker run --rm -v "$PWD:/repo" -w /repo
           rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
           -color
+
+  e2e:
+    name: End-to-end
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The pnpm version comes from "packageManager" in package.json.
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          cache: true
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+
+      # Each suite below runs even when an earlier one failed, so one run reports them all.
+      - name: Web shell and review suites
+        run: pnpm test:e2e
+
+      - name: Annotator suite
+        if: ${{ !cancelled() }}
+        run: pnpm --filter @pinwall/server test:e2e:annotator
+
+      # Keycloak runs in Docker; its image is pinned by digest in e2e/keycloak/global-setup.ts.
+      - name: Keycloak sign-in suite
+        if: ${{ !cancelled() }}
+        run: pnpm test:e2e:keycloak
+
+      - name: Upload Playwright reports after a failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-reports
+          path: |
+            e2e/report/
+            e2e/test-results/
+            apps/server/e2e/annotator/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

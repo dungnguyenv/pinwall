@@ -7,7 +7,13 @@ import { t } from '../../../src/lib/i18n.ts';
 import { apiInit, createUserToken, sessionCookieFrom } from '../../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../../helpers/context.ts';
 import { dialects } from '../../helpers/db.ts';
-import { signInOidcUser, signInWithIdp } from '../../helpers/oidc-browser.ts';
+import {
+  bindingCookieFrom,
+  signInOidcUser,
+  signInWithIdp,
+  switchAccount,
+  switchLinkOf,
+} from '../../helpers/oidc-browser.ts';
 import {
   startTestIdp,
   type TestIdp,
@@ -75,20 +81,23 @@ async function roleOf(s: Stack, cookie: string): Promise<string> {
   return Me.parse(await r.json()).role;
 }
 
-/** Signs in as `account` and expects the no-access page; returns its HTML. */
+/**
+ * Signs in as `account` and expects the no-access page; returns its HTML and the binding cookie
+ * the browser then holds.
+ */
 async function signInDenied(
   s: Stack,
   account: TestIdpAccount,
   o: { returnTo?: string } = {},
-): Promise<string> {
+): Promise<{ page: string; cookie: string }> {
   s.idp.addAccount(account);
   const r = await signInWithIdp(s.ctx, s.idp, { as: account.sub, ...o });
   expect(r.status).toBe(403);
   expect(r.headers.get('content-type')).toMatch(/^text\/html/);
   expect(sessionCookieFrom(r)).toBeNull();
-  const body = await r.text();
-  expect(body).toContain(html(t('oidc.noAccess.title')));
-  return body;
+  const page = await r.text();
+  expect(page).toContain(html(t('oidc.noAccess.title')));
+  return { page, cookie: bindingCookieFrom(r) ?? '' };
 }
 
 const userRow = (s: Stack, userId: string) =>
@@ -137,27 +146,23 @@ describe.each(dialects)('OIDC acceptance 3 and 3b on %s', (dialect) => {
       bobId = bobIn.user.id;
       expect(await roleOf(s, bobCookie)).toBe('member');
 
-      const page = await signInDenied(s, eve, { returnTo: '/projects/p1' });
+      const { page, cookie } = await signInDenied(s, eve, { returnTo: '/projects/p1' });
       expect(page).toContain(html('Eve Outsider'));
       expect(page).toContain(html('eve@example.org'));
       expect(page).toContain(html(t('oidc.noAccess.switch')));
-      const href = /href="([^"]*\/auth\/oidc\/start[^"]*)"/.exec(page)?.[1];
-      expect(href).toBeDefined();
-      const link = new URL((href ?? '').replaceAll('&amp;', '&'), s.ctx.deps.config.publicOrigin);
-      expect(link.pathname).toBe('/auth/oidc/start');
-      expect(link.searchParams.get('prompt')).toBe('select_account');
+      // The IdP supports RP-Initiated Logout, so the link ends Eve's IdP session first.
+      const link = switchLinkOf(s.ctx, page);
+      expect(link.pathname).toBe('/auth/oidc/switch');
 
       // Following the link, in the same browser, as somebody else.
       s.idp.addAccount(bob2);
-      const r = await signInWithIdp(s.ctx, s.idp, {
-        as: bob2.sub,
-        returnTo: link.searchParams.get('return_to') ?? undefined,
-        selectAccount: link.searchParams.get('prompt') === 'select_account',
-      });
+      const signOuts = s.idp.endSessionRequests.length;
+      const r = await switchAccount(s.ctx, s.idp, { link, cookie, as: bob2.sub });
       expect(r.status).toBe(302);
       expect(r.headers.get('location')).toBe(
         new URL('/projects/p1', s.ctx.deps.config.publicOrigin).href,
       );
+      expect(s.idp.endSessionRequests).toHaveLength(signOuts + 1);
       expect(s.idp.authorizationRequests.at(-1)?.get('prompt')?.split(' ')).toContain(
         'select_account',
       );
@@ -322,7 +327,7 @@ describe.each(dialects)('OIDC acceptance 3 and 3b on %s', (dialect) => {
       });
       expect(await roleOf(s, admin.cookie)).toBe('admin');
 
-      const page = await signInDenied(s, {
+      const { page } = await signInDenied(s, {
         sub: 'kc-nobody',
         name: 'Nina Nobody',
         email: 'nina@example.org',
@@ -338,7 +343,7 @@ describe.each(dialects)('OIDC acceptance 3 and 3b on %s', (dialect) => {
     beforeAll(async () => {
       s = await startStack(
         dialect,
-        { groupsClaim: null },
+        { groupsClaim: null, endSession: false },
         {
           PINWALL_ADMIN_EMAILS: 'boss@example.com',
           PINWALL_MEMBER_DOMAINS: 'example.com',
@@ -367,13 +372,13 @@ describe.each(dialects)('OIDC acceptance 3 and 3b on %s', (dialect) => {
     });
 
     test('anybody else gets the no-access page', async () => {
-      const stranger = await signInDenied(s, google('stranger@gmail.com'));
+      const { page: stranger } = await signInDenied(s, google('stranger@gmail.com'));
       expect(stranger).toContain(html('stranger@gmail.com'));
       expect(stranger).not.toContain(html(t('oidc.noAccess.unverified')));
     });
 
     test('an unverified email does not count', async () => {
-      const page = await signInDenied(s, google('ann2@example.com', false));
+      const { page } = await signInDenied(s, google('ann2@example.com', false));
       expect(page).toContain(html('ann2@example.com'));
       expect(page).toContain(html(t('oidc.noAccess.unverified')));
     });
