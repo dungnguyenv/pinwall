@@ -11,6 +11,7 @@
   "scripts": {
     "build": "pnpm --filter @pinwall/web build && pnpm --filter @pinwall/server build",
     "docs:config": "pnpm --filter @pinwall/server docs:config",
+    "image:size": "pnpm --filter @pinwall/tools exec tsx src/image-size.ts",
     "licenses:check": "pnpm --filter @pinwall/tools exec tsx src/licenses.ts check",
     "licenses:notices": "pnpm --filter @pinwall/tools exec tsx src/licenses.ts notices",
     "test": "pnpm -r test",

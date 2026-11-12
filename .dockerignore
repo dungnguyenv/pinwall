@@ -1,4 +1,5 @@
-# Keep the build context to what the image build reads.
+# Keep the build context to what the image build reads. That includes tools/ (the build
+# generates THIRD_PARTY_NOTICES with it) and the root LICENSE and NOTICE (they ship in the image).
 .git
 .github
 .superpowers
