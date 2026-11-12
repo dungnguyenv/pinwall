@@ -2,7 +2,18 @@ import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import Sqlite from 'better-sqlite3';
-import { Kysely, PostgresDialect, SqliteDialect, sql } from 'kysely';
+import {
+  CompiledQuery,
+  type DatabaseConnection,
+  type Driver,
+  Kysely,
+  PostgresDialect,
+  SqliteDialect,
+  type SqliteDialectConfig,
+  SqliteDriver,
+  sql,
+  type TransactionSettings,
+} from 'kysely';
 import pg from 'pg';
 import type { Config } from '../config/types.ts';
 import type { Database } from './schema.ts';
@@ -46,8 +57,42 @@ async function enableWal(database: Sqlite.Database): Promise<void> {
 }
 
 /**
+ * Kysely's SQLite driver begins every transaction with a plain, deferred `BEGIN`, which takes the
+ * write lock only at the first write. In WAL mode a transaction that has read and then writes
+ * fails at once with SQLITE_BUSY ("database is locked") if another process (`pinwall backup`
+ * taking its lease, say) committed in between: its snapshot is out of date, so no busy timeout
+ * can help. This driver begins with `BEGIN IMMEDIATE`, which takes the write lock up front and
+ * waits for it under `busy_timeout`. A transaction started with `setAccessMode('read only')`
+ * (the backup's snapshot) stays deferred, so it never holds up writers in other processes.
+ */
+class ImmediateSqliteDriver extends SqliteDriver {
+  override async beginTransaction(
+    connection: DatabaseConnection,
+    settings?: TransactionSettings,
+  ): Promise<void> {
+    const begin = settings?.accessMode === 'read only' ? 'begin' : 'begin immediate';
+    await connection.executeQuery(CompiledQuery.raw(begin));
+  }
+}
+
+class ImmediateSqliteDialect extends SqliteDialect {
+  readonly #config: SqliteDialectConfig;
+
+  constructor(config: SqliteDialectConfig) {
+    super(config);
+    this.#config = config;
+  }
+
+  override createDriver(): Driver {
+    return new ImmediateSqliteDriver(this.#config);
+  }
+}
+
+/**
  * Opens the configured database. `logger` receives errors that happen outside any query, such as
- * an idle Postgres connection dropped by the server.
+ * an idle Postgres connection dropped by the server. On SQLite, write transactions take the
+ * write lock when they begin (see `ImmediateSqliteDriver`); a transaction that only reads should
+ * say so with `setAccessMode('read only')`.
  */
 export async function connectDb(
   cfg: Config['database'],
@@ -66,7 +111,10 @@ export async function connectDb(
       database.close();
       throw error;
     }
-    return handle(new Kysely<Database>({ dialect: new SqliteDialect({ database }) }), 'sqlite');
+    return handle(
+      new Kysely<Database>({ dialect: new ImmediateSqliteDialect({ database }) }),
+      'sqlite',
+    );
   }
 
   const pool = new pg.Pool({ connectionString: cfg.url, max: cfg.poolSize });

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Sqlite from 'better-sqlite3';
 import { type Kysely, sql } from 'kysely';
 import pg from 'pg';
 import { connectDb, type DbDialect, type DbHandle } from '../../src/db/connect.ts';
@@ -57,6 +58,30 @@ export async function createPostgresDatabase(): Promise<{ url: string; drop(): P
     url: url.href,
     drop: () => runAsAdmin(`drop database if exists ${name} with (force)`),
   };
+}
+
+/**
+ * Runs one write on the SQLite file `path` through a connection of its own, which SQLite's
+ * locks treat as another process (the server next to `pinwall backup`, say). It does not wait
+ * for a lock: `busy` means a transaction holds the write lock, where a real process would wait
+ * for it.
+ */
+export function writeElsewhere(
+  path: string,
+  statement: string,
+  ...params: unknown[]
+): 'committed' | 'busy' {
+  const other = new Sqlite(path);
+  try {
+    other.pragma('busy_timeout = 0');
+    other.prepare(statement).run(...params);
+    return 'committed';
+  } catch (error) {
+    if ((error as { code?: unknown }).code === 'SQLITE_BUSY') return 'busy';
+    throw error;
+  } finally {
+    other.close();
+  }
 }
 
 /** Runs one statement on the test server's maintenance database. */

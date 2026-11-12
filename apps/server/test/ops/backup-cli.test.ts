@@ -27,22 +27,6 @@ import {
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { publishFiles } from '../helpers/publish.ts';
 
-/**
- * Runs `step` again when SQLite refuses it with "database is locked". A transaction that has read
- * and then writes fails at once, whatever the busy timeout, if the other process (the backup,
- * taking and releasing its lease) committed in between; a server would answer that one request
- * with an error. The test is about the archive, not about those retries.
- */
-async function whenUnlocked<T>(step: () => Promise<T>): Promise<T> {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return await step();
-    } catch (error) {
-      if (attempt >= 5 || !/database is locked/.test(String(error))) throw error;
-    }
-  }
-}
-
 /** The blob key of the seeded 5 MB image: its SHA-256. */
 function photoKey(seed: Seeded): string {
   const photo = seed.files['img/photo.bin'];
@@ -411,18 +395,19 @@ test(
     let deleted = 0;
     for (let i = 0; i < 20; i++) {
       const expectedVersionId = current ?? '';
-      const published = await whenUnlocked(() =>
-        publishFiles(
-          ctx,
-          owner,
-          { 'index.html': `<p>Bản ${i} ${randomBytes(8).toString('hex')}</p>` },
-          { kind: 'new_version', artifactId: seed.artifactId, expectedVersionId },
-        ),
+      const published = await publishFiles(
+        ctx,
+        owner,
+        { 'index.html': `<p>Bản ${i} ${randomBytes(8).toString('hex')}</p>` },
+        { kind: 'new_version', artifactId: seed.artifactId, expectedVersionId },
       );
       current = published.version.id;
       if (i % 4 === 3) {
-        const after = await whenUnlocked(() =>
-          deleteVersion(ctx.deps, auth, seed.artifactId, published.version.number),
+        const after = await deleteVersion(
+          ctx.deps,
+          auth,
+          seed.artifactId,
+          published.version.number,
         );
         current = after.currentVersionId;
         deleted++;

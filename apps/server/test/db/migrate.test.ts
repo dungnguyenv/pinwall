@@ -10,7 +10,7 @@ import { connectDb, type DbHandle } from '../../src/db/connect.ts';
 import { migrateToLatest, runMigrations } from '../../src/db/migrate.ts';
 import type { MigrationDb } from '../../src/db/migrations/index.ts';
 import type { Database } from '../../src/db/schema.ts';
-import { createPostgresDatabase, dialects, withDb } from '../helpers/db.ts';
+import { createPostgresDatabase, dialects, withDb, writeElsewhere } from '../helpers/db.ts';
 
 const T = 1_762_000_000_000;
 const SHA_A = 'a'.repeat(64);
@@ -534,14 +534,29 @@ describe('sqlite connection', () => {
     expect(await pragma('synchronous')).toBe(1); // NORMAL
   });
 
-  test('two handles on one file can both write', async () => {
+  const insertMain = (db: Kysely<Database>) =>
+    db.insertInto('leases').values({ name: 'main', holder: 'main', expires_at: T }).execute();
+
+  test.each([
+    ['an insert', insertMain],
+    [
+      // Deferred, it would read first and then fail at once on its write: SQLite runs no busy
+      // handler for a transaction that already reads.
+      'a transaction that reads, then writes',
+      (db: Kysely<Database>) =>
+        db.transaction().execute(async (trx) => {
+          await trx.selectFrom('leases').selectAll().execute();
+          await insertMain(trx);
+        }),
+    ],
+  ])('two handles on one file can both write: %s waits for the lock', async (_what, write) => {
     const path = await tempPath();
     const main = await connectDb({ kind: 'sqlite', path });
     onTestFinished(() => main.close());
     await migrateToLatest(main);
 
     // The second handle lives in a worker thread, as it would in a second process: it holds a
-    // write transaction open while this thread inserts, so the insert has to wait for the lock.
+    // write transaction open while this thread writes, so the write has to wait for the lock.
     const worker = new Worker(new URL('./sqlite-writer.worker.ts', import.meta.url), {
       workerData: { path, holdMs: 300 },
     });
@@ -563,12 +578,61 @@ describe('sqlite connection', () => {
     const done = message('done');
 
     await Promise.race([locked, failed]);
-    await main.db
-      .insertInto('leases')
-      .values({ name: 'main', holder: 'main', expires_at: T })
-      .execute();
+    await write(main.db);
     await Promise.race([done, failed]);
     expect(await ids(main, 'leases', 'name')).toEqual(['main', 'worker']);
+  });
+
+  /** Takes the lease `name` from another process (`pinwall backup`, say); see `writeElsewhere`. */
+  const leaseElsewhere = (path: string, name: string) =>
+    writeElsewhere(
+      path,
+      'insert into leases (name, holder, expires_at) values (?, ?, ?)',
+      name,
+      name,
+      T,
+    );
+
+  test("another process cannot commit between a transaction's read and its write", async () => {
+    const path = await tempPath();
+    const h = await connectDb({ kind: 'sqlite', path });
+    onTestFinished(() => h.close());
+    await migrateToLatest(h);
+
+    const elsewhere: string[] = [];
+    await h.db.transaction().execute(async (trx) => {
+      await trx.selectFrom('leases').selectAll().execute();
+      // Had the other process committed here, the write below would fail at once with "database
+      // is locked" (its snapshot is out of date, so no busy timeout can help). The transaction
+      // holds the write lock from its start instead, so the other process has to wait.
+      elsewhere.push(leaseElsewhere(path, 'other'));
+      await trx
+        .insertInto('leases')
+        .values({ name: 'main', holder: 'main', expires_at: T })
+        .execute();
+    });
+
+    expect(elsewhere).toEqual(['busy']);
+    expect(leaseElsewhere(path, 'other')).toBe('committed');
+    expect(await ids(h, 'leases', 'name')).toEqual(['main', 'other']);
+  });
+
+  test('a read-only transaction leaves other processes free to write', async () => {
+    const path = await tempPath();
+    const h = await connectDb({ kind: 'sqlite', path });
+    onTestFinished(() => h.close());
+    await migrateToLatest(h);
+
+    await h.db
+      .transaction()
+      .setAccessMode('read only')
+      .execute(async (trx) => {
+        expect(await trx.selectFrom('leases').selectAll().execute()).toEqual([]);
+        expect(leaseElsewhere(path, 'other')).toBe('committed');
+        // It still reads the database as it was when it started.
+        expect(await trx.selectFrom('leases').selectAll().execute()).toEqual([]);
+      });
+    expect(await ids(h, 'leases', 'name')).toEqual(['other']);
   });
 
   test('two processes migrating one fresh file at once apply the schema once', async () => {
