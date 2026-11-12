@@ -316,7 +316,7 @@ export const CONFIG_VARS: readonly ConfigVar[] = [
     default: null,
     defaultNote: 'none',
     description:
-      'Groups whose members become admins, separated by commas. Names must match exactly, including case. Needs `PINWALL_OIDC_ROLES_CLAIM`.',
+      'Groups whose members become admins, separated by commas. Names must match exactly, including case. Requires `PINWALL_OIDC_ROLES_CLAIM`: without it Pinwall does not start.',
   },
   {
     name: 'PINWALL_OIDC_MEMBER_GROUPS',
@@ -325,7 +325,7 @@ export const CONFIG_VARS: readonly ConfigVar[] = [
     default: null,
     defaultNote: 'none',
     description:
-      'Groups whose members become members, separated by commas. Names must match exactly, including case. Needs `PINWALL_OIDC_ROLES_CLAIM`.',
+      'Groups whose members become members, separated by commas. Names must match exactly, including case. Requires `PINWALL_OIDC_ROLES_CLAIM`: without it Pinwall does not start.',
   },
   {
     name: 'PINWALL_ADMIN_EMAILS',

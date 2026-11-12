@@ -39,6 +39,7 @@ describe.each(dialects)('OIDC users on %s', (dialect) => {
       env: {
         PINWALL_OIDC_ISSUER: ISSUER,
         PINWALL_OIDC_CLIENT_ID: 'pinwall',
+        PINWALL_OIDC_ROLES_CLAIM: 'groups',
         PINWALL_OIDC_ADMIN_GROUPS: 'pinwall-admins',
         PINWALL_OIDC_MEMBER_GROUPS: 'pinwall-users',
       },

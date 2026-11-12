@@ -231,6 +231,27 @@ describe.each(dialects)('OIDC sign-in on %s', (dialect) => {
     expect(rows).toEqual([{ revoked_at: clock.now() }]);
   });
 
+  test('a sign-in token without the roles claim is logged once, by the claim name only', async () => {
+    await start();
+    const warn = vi.spyOn(ctx.deps.logger, 'warn');
+    const aboutTheClaim = () =>
+      warn.mock.calls.filter(([, msg]) => typeof msg === 'string' && msg.includes('roles claim'));
+    await signInOidcUser(ctx, idp, account());
+    expect(aboutTheClaim()).toEqual([]);
+
+    for (const groupless of [account({ groups: undefined }), account({ groups: undefined })]) {
+      expect((await signInWithIdp(ctx, idp, { as: groupless.sub })).status).toBe(403);
+    }
+    expect(aboutTheClaim()).toEqual([
+      [
+        { claim: 'groups' },
+        'An OIDC sign-in token had no roles claim, so no group rule can match that person. ' +
+          'If nobody gets in by group, make the identity provider send the claim that ' +
+          'PINWALL_OIDC_ROLES_CLAIM names. Logged once.',
+      ],
+    ]);
+  });
+
   test('use a different account restarts with prompt=select_account and keeps return_to', async () => {
     await start();
     const eve = account({ name: 'Eve', groups: ['other'] });

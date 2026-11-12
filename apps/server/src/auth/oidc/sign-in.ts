@@ -24,7 +24,7 @@ import {
   oidcRuntime,
 } from './client.ts';
 import { identityFromClaims, type OidcIdentity } from './identity.ts';
-import { lacksRoleClaims } from './policy.ts';
+import { lacksGroupsClaim, lacksRoleClaims } from './policy.ts';
 import { upsertOidcUser } from './users.ts';
 
 /** How long a browser has to come back from the IdP. */
@@ -188,6 +188,7 @@ export async function finishOidcSignIn(
     const failure = classifyOidcError(error) === 'unavailable' ? 'unavailable' : 'failed';
     throw flowError(deps, failure, returnTo, error);
   }
+  logMissingRolesClaim(deps, claims);
 
   const result = await upsertOidcUser(deps, {
     issuer: configuration.serverMetadata().issuer,
@@ -218,6 +219,23 @@ export async function finishOidcSignIn(
     selectAccount: pending.selectAccount,
     switchTicket,
   };
+}
+
+/**
+ * Warns, once per process, when group rules are set but a sign-in token carries no roles claim:
+ * no group rule can match that person, which is easy to miss when the IdP never sends the claim
+ * (a mapper or scope left out). Only the claim's name is logged, never a value.
+ */
+function logMissingRolesClaim(deps: AppDeps, claims: Record<string, unknown>): void {
+  const runtime = oidcRuntime(deps);
+  if (runtime.missingRolesClaimLogged || !lacksGroupsClaim(deps.config, claims)) return;
+  runtime.missingRolesClaimLogged = true;
+  deps.logger.warn(
+    { claim: deps.config.oidc?.rolesClaim },
+    'An OIDC sign-in token had no roles claim, so no group rule can match that person. ' +
+      'If nobody gets in by group, make the identity provider send the claim that ' +
+      'PINWALL_OIDC_ROLES_CLAIM names. Logged once.',
+  );
 }
 
 /** Revokes the share links of a person a sign-in found out, and ends their live streams. */
