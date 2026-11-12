@@ -17,6 +17,7 @@ import { appSecurityHeaders } from './http/security-headers.ts';
 import { defaultWebDir, mountSpa } from './http/spa.ts';
 import { mountMcp } from './mcp/route.ts';
 import { mountOAuth } from './oauth/routes.ts';
+import { httpMetrics } from './ops/metrics.ts';
 import { PAGES_CSS, PAGES_CSS_PATH } from './pages/pages.css.ts';
 import { mountUploadRoute } from './publish/upload-route.ts';
 
@@ -74,12 +75,12 @@ function mountHealth(app: Hono<AppEnv>, deps: AppDeps): void {
 }
 
 /**
- * The app origin. Middleware runs in this order: request id, request log, deps injection, the
- * content router (which answers content requests itself, so they never get app headers or have
- * their cookies read), security headers; then health checks, the pages stylesheet, the API
- * router behind the CSRF origin check and auth resolution, later milestones' routers, and the
- * SPA last, since it answers every remaining browser GET. `opts.contentHooks` replaces the
- * shipped content hooks (tests).
+ * The app origin. Middleware runs in this order: request id, request log, deps injection, HTTP
+ * metrics, the content router (which answers content requests itself, so they never get app
+ * headers or have their cookies read), security headers; then health checks, the pages
+ * stylesheet, the API router behind the CSRF origin check and auth resolution, later
+ * milestones' routers, and the SPA last, since it answers every remaining browser GET.
+ * `opts.contentHooks` replaces the shipped content hooks (tests).
  */
 export function buildApp(deps: AppDeps, opts: { contentHooks?: ContentHooks } = {}): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -91,6 +92,8 @@ export function buildApp(deps: AppDeps, opts: { contentHooks?: ContentHooks } = 
     c.set('auth', null);
     await next();
   });
+  // After deps injection and before the content router, so content requests are counted too.
+  app.use(httpMetrics(deps.metrics, deps.config));
   mountContent(app, opts.contentHooks ?? contentHooks);
   app.use(appSecurityHeaders(deps.config));
 

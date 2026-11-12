@@ -139,6 +139,7 @@ export async function commitVersion(
     return makeCurrent(trx, dialect, artifact, version, input.kind, tags, input.meta.text, now);
   });
 
+  deps.metrics.publishes.inc({ source: input.source });
   announce(deps, result);
   return result;
 }
@@ -206,6 +207,7 @@ export async function restoreVersion(
     return makeCurrent(trx, dialect, artifact, version, kind, tags, text, now);
   });
 
+  deps.metrics.publishes.inc({ source: 'restore' });
   announce(deps, result);
   return result;
 }

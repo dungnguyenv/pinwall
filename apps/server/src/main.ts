@@ -12,6 +12,8 @@ import { closeDeps, createDeps } from './deps.ts';
 import { t } from './lib/i18n.ts';
 import { createLogger, type Logger } from './lib/logger.ts';
 import { runBackupCommand, runRestoreCommand } from './ops/backup/cli.ts';
+import { enableProcessMetrics } from './ops/metrics.ts';
+import { startMetricsServer } from './ops/metrics-server.ts';
 import { startPublishing } from './publish/startup.ts';
 import { configureServerForUploads } from './publish/upload-route.ts';
 import { PINWALL_VERSION } from './version.ts';
@@ -99,6 +101,13 @@ async function runServer(config: Config, logger: Logger): Promise<void> {
   for (const warning of config.warnings) logger.warn(warning);
 
   const deps = await createDeps(config, { logger });
+  enableProcessMetrics(deps.metrics);
+  // Before the app listens: a metrics port that is taken is a startup failure, not a silent gap.
+  const metricsServer = await startMetricsServer(deps).catch(async (err: unknown) => {
+    await closeDeps(deps);
+    throw err;
+  });
+  if (metricsServer !== null) logger.info({ port: metricsServer.port }, 'metrics listening');
   // Plain HTTP/1.1 (the adapter's default): TLS ends at the proxy in front of Pinwall.
   const server = serve({
     fetch: buildApp(deps).fetch,
@@ -163,16 +172,19 @@ async function runServer(config: Config, logger: Logger): Promise<void> {
     // `close` stops accepting connections; its callback runs once the open ones are done.
     server.close(() => {
       clearTimeout(drain);
-      closeDeps(deps).then(
-        () => {
-          logger.info('stopped');
-          process.exit(0);
-        },
-        (err: unknown) => {
-          logger.error({ err }, 'Closing the database or the scheduler failed');
-          process.exit(1);
-        },
-      );
+      // The metrics listener stays up until the app has drained, and goes before the database.
+      (metricsServer?.close() ?? Promise.resolve())
+        .then(() => closeDeps(deps))
+        .then(
+          () => {
+            logger.info('stopped');
+            process.exit(0);
+          },
+          (err: unknown) => {
+            logger.error({ err }, 'Closing the database or the scheduler failed');
+            process.exit(1);
+          },
+        );
     });
   };
   process.on('SIGTERM', () => stop('SIGTERM'));

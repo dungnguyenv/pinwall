@@ -20,6 +20,7 @@ import {
 } from './infra/index.ts';
 import { type Clock, systemClock } from './lib/clock.ts';
 import { createLogger, type Logger } from './lib/logger.ts';
+import { createMetrics, instrumentScheduler, type Metrics } from './ops/metrics.ts';
 import { type BlobStore, createBlobStore } from './storage/index.ts';
 
 /** Everything a request handler or service needs. Built once per process by `createDeps`. */
@@ -36,6 +37,7 @@ export interface AppDeps {
   liveStreams: LiveStreams;
   logger: Logger;
   clock: Clock;
+  metrics: Metrics;
 }
 
 /**
@@ -57,6 +59,7 @@ export async function createDeps(
   try {
     await migrateToLatest(db);
     const leases = overrides.leases ?? new DbLeaseManager(db, clock);
+    const metrics = overrides.metrics ?? createMetrics(db, clock);
     // Unique per process, so a restarted server never takes the old one's leases for its own.
     const holder = `${hostname()}:${process.pid}:${randomBytes(4).toString('hex')}`;
     return {
@@ -72,10 +75,14 @@ export async function createDeps(
       oneTime: overrides.oneTime ?? new InMemoryOneTimeStore(clock),
       rateLimiter: overrides.rateLimiter ?? new InMemoryRateLimiter(clock),
       leases,
-      scheduler: overrides.scheduler ?? new InProcessScheduler(leases, logger, holder),
+      scheduler: instrumentScheduler(
+        overrides.scheduler ?? new InProcessScheduler(leases, logger, holder),
+        metrics,
+      ),
       liveStreams: overrides.liveStreams ?? new LiveStreams(),
       logger,
       clock,
+      metrics,
     };
   } catch (error) {
     if (!overrides.db) await db.close();
