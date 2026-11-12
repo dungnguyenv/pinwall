@@ -92,7 +92,8 @@ export const DESCRIPTIONS = {
       'Adds a reply, as the account this connection acts as, to a comment thread. comment_id may ' +
       'be the first comment of the thread or any reply in it. Use it to tell the reviewer what ' +
       'you changed or to answer a question, in a few lines. Everyone who can see the thread sees ' +
-      'the reply at once.',
+      'the reply at once. The text is shown as plain text, so write characters such as < and & ' +
+      'as they are, never as HTML entities.',
   },
   resolve_comment: {
     title: 'Resolve a comment',
