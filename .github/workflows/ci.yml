@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 20
     env:
       # The same names and values as `pnpm test:integration`; the compose file below publishes
-      # Postgres and MinIO on these ports.
+      # Postgres and its S3 service (Silo, a MinIO fork) on these ports.
       PINWALL_TEST_POSTGRES_URL: postgres://pinwall:pinwall@localhost:55432/pinwall
       PINWALL_TEST_S3_ENDPOINT: http://localhost:59000
       PINWALL_TEST_S3_BUCKET: pinwall-test
@@ -44,9 +44,9 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
 
-      # Postgres 17 and MinIO (with the test bucket) from the file developers use locally. A
-      # GitHub service container cannot give MinIO its `server /data` command, so both start here.
-      - name: Start Postgres and MinIO
+      # Postgres 17 and Silo (with the test bucket) from the file developers use locally. A
+      # GitHub service container cannot give Silo its `server /data` command, so both start here.
+      - name: Start Postgres and Silo
         run: docker compose -f docker-compose.test.yml up -d --wait
 
       - run: pnpm test
