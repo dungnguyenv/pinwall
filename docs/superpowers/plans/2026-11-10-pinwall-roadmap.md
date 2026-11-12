@@ -262,7 +262,7 @@ Contract (M5 builds the annotator, M8 the viewer): the annotator defines one glo
 | M6 | MCP, OAuth authorization server, agent skill | `…-m6-mcp.md` | M3, M5 | done |
 | M7 | Web app: shell, library, accounts, admin | `…-m7a-web-shell.md` (Tasks 1–7), `…-m7b-web-accounts-admin.md` (Tasks 8–12) | M3, M4 | done |
 | M8 | Web app: review, compare, comments, sharing | `…-m8a-web-review.md` (Tasks 1–7), `…-m8b-web-share-compare.md` (Tasks 8–11) | M5, M7 | done |
-| M9 | Operations and release | `…-m9a-ops.md` (Tasks 1–6), `…-m9b-release.md` (Tasks 7–13) | M6, M8 | |
+| M9 | Operations and release | `…-m9a-ops.md` (Tasks 1–6), `…-m9b-release.md` (Tasks 7–13) | M6, M8 | done |
 
 M3 and M4 can run in parallel, as can M5 with M7, and M6 with M8 — each pair on its own git worktree and branch, merged into `main` when done.
 
