@@ -1,7 +1,12 @@
 import { ArtifactSummary, Project, ProjectList } from '@pinwall/shared';
 import { afterEach, describe, expect, test } from 'vitest';
-import { createProject, DEFAULT_PROJECT_ID } from '../../src/domain/projects.ts';
-import { defaultProjectFor, scopeForUser } from '../../src/domain/spaces.ts';
+import {
+  createProject,
+  DEFAULT_PROJECT_ID,
+  listProjects,
+  updateProject,
+} from '../../src/domain/projects.ts';
+import { defaultProjectFor, SYSTEM_SCOPE, scopeForUser } from '../../src/domain/spaces.ts';
 import type { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { createSignedInUser } from '../helpers/auth.ts';
@@ -234,6 +239,46 @@ describe.each(dialects)('projects and artifacts in spaces on %s', (dialect) => {
     expect(r.status).toBe(409);
     expect(r.body.error).toMatchObject({ code: 'conflict', message: t('project.defaultArchive') });
     expect((await projectRow(sDefault.id)).archived_at).toBeNull();
+  });
+
+  test('team mode and the system list archived projects before any default project exists', async () => {
+    ctx = await spacesContext(dialect, 'team');
+    const { user, cookie } = await createSignedInUser(ctx, { kind: 'oidc', name: 'S' });
+    const S: Person = { user, cookie, token: '' };
+    const archived: string[] = [];
+    for (const name of ['One', 'Two', 'Three']) {
+      const project = await createProject(ctx.deps, S.user, { name });
+      await updateProject(ctx.deps, SYSTEM_SCOPE, project.id, { archived: true });
+      archived.push(project.id);
+    }
+    const noDefault = () =>
+      ctx.deps.db.db.selectFrom('projects').select('id').where('is_default', '=', 1).execute();
+    expect(await noDefault()).toEqual([]);
+
+    // Made in the same millisecond, so listed by id.
+    const byId = [...archived].sort();
+    const system = await listProjects(ctx.deps, SYSTEM_SCOPE, {
+      archived: true,
+      limit: 50,
+      cursor: null,
+    });
+    expect(system.items.map((p) => [p.id, p.is_default])).toEqual(byId.map((id) => [id, 0]));
+    // A page at a time too: the cursor carries the list key.
+    for (const limit of [50, 1]) {
+      const pages: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const query: string = `?archived=true&limit=${limit}${cursor === null ? '' : `&cursor=${cursor}`}`;
+        const r = await api(S).get(`/projects${query}`);
+        expect(r.status, JSON.stringify(r.body)).toBe(200);
+        const page = ProjectList.parse(r.body);
+        pages.push(...page.items.map((p) => p.id));
+        cursor = page.next_cursor;
+      } while (cursor !== null);
+      expect(pages).toEqual(byId);
+    }
+    // Listing archived projects makes no default.
+    expect(await noDefault()).toEqual([]);
   });
 
   test.each(MODES)('an artifact moves only between projects of one owner (%s)', async (mode) => {

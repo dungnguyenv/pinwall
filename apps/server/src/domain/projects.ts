@@ -137,7 +137,8 @@ async function listKey(db: Db, scope: Scope): Promise<RawBuilder<DbBool>> {
     return sql<DbBool>`case when projects.owner_id = ${viewer} and projects.is_default = 1 then 1 else 0 end`;
   }
   const shared = await teamDefaultProject(db);
-  if (shared === undefined) return sql<DbBool>`0`;
+  // 0 for every row, as an expression: both databases read a bare 0 in ORDER BY as a position.
+  if (shared === undefined) return sql<DbBool>`case when 1 = 0 then 1 else 0 end`;
   return sql<DbBool>`case when projects.id = ${shared.id} then 1 else 0 end`;
 }
 
