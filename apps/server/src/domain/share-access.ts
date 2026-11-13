@@ -26,6 +26,7 @@ import { AppError, conflict, forbidden, gone, notFound, unauthorized } from '../
 import { t } from '../lib/i18n.ts';
 import { hashSecret } from '../lib/ids.ts';
 import { entryKind } from '../publish/paths.ts';
+import { mayExpose } from './exposure.ts';
 import { shareOriginalUrl } from './shares.ts';
 import { scopeForUser, seesAll, whereVisible } from './spaces.ts';
 import { isTombstoned } from './tombstones.ts';
@@ -103,10 +104,11 @@ function assertOpen(link: ShareLinkRow, now: number): void {
  * tokens and OAuth grants pass (`gateUser` without waiting on the IdP, then `hasAccess`). That
  * fails when their account is disabled, blocked or gone, and, for an IdP user, once their last
  * IdP check is no longer current (a refused refresh token, or no successful check within the
- * bound). In `personal` mode the maker must also still see the link's artifact (they left its
- * project, say). The link then answers 410 exactly as a revoked one does, saying nothing about
- * the maker; it is suspended, not revoked, and opens again once the maker signs in and is
- * admitted, or sees the artifact again.
+ * bound). With `PINWALL_SHARE_LINKS=approved` the maker must also be allowed to expose content
+ * (`mayExpose`), and in `personal` mode still see the link's artifact (they left its project,
+ * say). The link then answers 410 exactly as a revoked one does, saying nothing about the maker;
+ * it is suspended, not revoked, and opens again once the maker signs in and is admitted, is
+ * approved, or sees the artifact again.
  */
 async function assertMakerCurrent(deps: AppDeps, db: Db, link: ShareLinkRow): Promise<UserRow> {
   const maker =
@@ -119,7 +121,12 @@ async function assertMakerCurrent(deps: AppDeps, db: Db, link: ShareLinkRow): Pr
           .executeTakeFirst();
   if (maker !== undefined) {
     const gate = await gateUser(deps, maker, { inline: false });
-    if (gate.ok && hasAccess(gate.user) && (await makerSees(deps, db, gate.user, link))) {
+    if (
+      gate.ok &&
+      hasAccess(gate.user) &&
+      mayExpose(deps.config, gate.user) &&
+      (await makerSees(deps, db, gate.user, link))
+    ) {
       return gate.user;
     }
   }

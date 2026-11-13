@@ -468,6 +468,11 @@ export function loadConfig(
       'PINWALL_VISIBILITY',
       z.enum(['team', 'personal'], { error: 'must be "team" or "personal"' }),
     ) ?? 'team';
+  const shareLinks: Config['shareLinks'] =
+    r.read(
+      'PINWALL_SHARE_LINKS',
+      z.enum(['members', 'approved'], { error: 'must be "members" or "approved"' }),
+    ) ?? 'members';
 
   // Limits and lifetimes
   const limits = {
@@ -509,6 +514,7 @@ export function loadConfig(
     oidc,
     access,
     visibility,
+    shareLinks,
     limits,
     ttl,
     metrics: { port: metricsPort },

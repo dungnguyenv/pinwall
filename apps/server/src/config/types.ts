@@ -53,6 +53,11 @@ export interface Config {
   };
   /** `PINWALL_VISIBILITY`. Changing it takes a restart. */
   visibility: Visibility;
+  /**
+   * `PINWALL_SHARE_LINKS`: who may expose content outside Pinwall (share links, raw links, pages
+   * opened top-level). `members`: everyone, as in 1.0; `approved`: admins and approved members.
+   */
+  shareLinks: 'members' | 'approved';
   limits: {
     maxUploadBytes: number;
     maxInlineBytes: number;

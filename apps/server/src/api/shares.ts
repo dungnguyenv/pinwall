@@ -81,7 +81,7 @@ const createLinkRoute = createRoute({
     ),
     401: error('Not signed in'),
     403: error(
-      'In personal mode, a viewer of the project (`forbidden`, `details.reason` `role`), or a cross-site request with the session cookie (`forbidden`)',
+      'With `PINWALL_SHARE_LINKS=approved`, someone neither an admin nor approved (`forbidden`, `details.reason` `share_links_not_approved`); in personal mode, a viewer of the project (`forbidden`, `details.reason` `role`); or a cross-site request with the session cookie (`forbidden`)',
     ),
     ...missingArtifact,
   },

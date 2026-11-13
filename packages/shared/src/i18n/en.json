@@ -419,6 +419,7 @@
   "web.config.help.PINWALL_MEMBER_DOMAINS": "People whose verified email is in one of these domains become members; when no member group, email or domain is set, everyone the identity provider admits is a member.",
   "web.config.help.PINWALL_ACCESS_RECHECK_INTERVAL": "How often Pinwall asks your identity provider whether a person still has access.",
   "web.config.help.PINWALL_VISIBILITY": "team: every member sees every project, as in Pinwall 1.0. personal: each person sees only the projects they own or were added to. Takes a restart.",
+  "web.config.help.PINWALL_SHARE_LINKS": "members: anyone may share, as in Pinwall 1.0. approved: only admins and the people you approve in Users may make share links and raw links.",
   "web.config.help.PINWALL_MAX_UPLOAD_BYTES": "The largest single upload request Pinwall accepts.",
   "web.config.help.PINWALL_MAX_INLINE_BYTES": "The most content an agent can send inline in one publish over MCP.",
   "web.config.help.PINWALL_MAX_FILE_BYTES": "The largest single file inside an artifact version.",
@@ -943,5 +944,9 @@
   "spaces.role.revokeShareLink": "Only the project's owner, or the editor who made this link, can revoke it.",
   "spaces.role.manageProject": "Only the project's owner can rename or archive it, or change its instructions.",
   "spaces.role.manageMembers": "Only the project's owner can add, remove or change members.",
-  "spaces.move.otherSpace": "An artifact can only move between projects that have the same owner."
+  "spaces.move.otherSpace": "An artifact can only move between projects that have the same owner.",
+  "spaces.exposure.shareLink": "You cannot create share links yet: an admin of this Pinwall has to allow it for your account first. Links you already made still list and can be revoked.",
+  "spaces.exposure.rawLink": "Raw links are not available to your account yet: an admin of this Pinwall has to allow you to share pages outside Pinwall first. You can still review the artifact in Pinwall.",
+  "content.framedOnly.title": "Open this page in Pinwall",
+  "content.framedOnly.message": "This page can only be viewed inside Pinwall's viewer."
 }

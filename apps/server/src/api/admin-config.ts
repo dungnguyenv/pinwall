@@ -154,6 +154,7 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
   ),
 
   setting('spaces', 'PINWALL_VISIBILITY', (c) => c.visibility),
+  setting('spaces', 'PINWALL_SHARE_LINKS', (c) => c.shareLinks),
 
   setting('limits', 'PINWALL_MAX_UPLOAD_BYTES', (c) => String(c.limits.maxUploadBytes)),
   setting('limits', 'PINWALL_MAX_INLINE_BYTES', (c) => String(c.limits.maxInlineBytes)),

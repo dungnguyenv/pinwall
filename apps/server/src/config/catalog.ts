@@ -375,6 +375,14 @@ export const CONFIG_VARS: readonly ConfigVar[] = [
     description:
       'team: every member sees every project, as in Pinwall 1.0. personal: each person sees only the projects they own or were added to. Going from personal back to team needs pinwall visibility team --confirm once.',
   },
+  {
+    name: 'PINWALL_SHARE_LINKS',
+    section: 'spaces',
+    secret: false,
+    default: 'members',
+    description:
+      "members: any member may make share links and open raw links, as in Pinwall 1.0. approved: only admins and the members an admin approved in Admin → Users may; everyone else's pages open only inside Pinwall's viewer. Approve people before switching: links made by others stop opening.",
+  },
 
   // Upload limits
   {

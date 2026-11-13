@@ -4,6 +4,7 @@ import { hasAccess } from '../auth/roles.ts';
 import type { Config } from '../config/types.ts';
 import type { ContentGrantMode, ContentGrantRow, UserRow, VersionRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
+import { mayExpose } from '../domain/exposure.ts';
 import { scopeForUser, type ViewerScope, whereVisible } from '../domain/spaces.ts';
 import { addTombstones, isTombstoned } from '../domain/tombstones.ts';
 import { gone, notFound } from '../lib/errors.ts';
@@ -76,6 +77,12 @@ export function contentUrl(config: Config, token: string, path = ''): string {
 export interface ResolvedGrant {
   grant: ContentGrantRow;
   version: VersionRow;
+  /**
+   * Present, and true, when the grant's holder may not expose content (`mayExpose`): it serves
+   * only inside a frame of Pinwall. Absent otherwise, a share link's grant included, so the 1.0
+   * shape stays as it was.
+   */
+  framedOnly?: true;
 }
 
 /**
@@ -103,7 +110,8 @@ function grantVersion(
  * version was deleted or revoked (tombstoned) 410; an expired one 410 with `details.expired`; one
  * made for a person who has no access now (blocked, disabled), or who no longer sees the
  * version's artifact, 410 as well. Sight is checked at each request, so a grant refused that way
- * serves again once its holder sees the artifact again.
+ * serves again once its holder sees the artifact again. So is approval: a grant whose holder may
+ * not expose content now comes back `framedOnly`.
  */
 export async function resolveGrant(deps: AppDeps, token: string): Promise<ResolvedGrant> {
   const { db } = deps.db;
@@ -121,6 +129,7 @@ export async function resolveGrant(deps: AppDeps, token: string): Promise<Resolv
   }
   if (grant.expires_at <= now) throw gone(t('content.expired.message'), { expired: true });
   let holder: ViewerScope | null = null;
+  let framedOnly = false;
   if (grant.user_id !== null) {
     const user = await db
       .selectFrom('users')
@@ -130,12 +139,13 @@ export async function resolveGrant(deps: AppDeps, token: string): Promise<Resolv
     // A deleted user takes their grants along; this is a read that raced the delete.
     if (user === undefined || !hasAccess(user)) throw gone(t('content.gone.message'));
     holder = scopeForUser(deps, user);
+    framedOnly = !mayExpose(deps.config, user);
   }
   const version = await grantVersion(db, grant.version_id, holder);
   // Deleting a version deletes its grants with it, so a miss is a read that raced the delete, or
   // a holder who lost sight of the artifact: either way, gone like a deleted version.
   if (version === undefined) throw gone(t('content.gone.message'));
-  return { grant, version };
+  return framedOnly ? { grant, version, framedOnly } : { grant, version };
 }
 
 /**

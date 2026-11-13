@@ -32,6 +32,7 @@ const ERROR_STATUS: Record<ContentErrorKind, number> = {
   gone: 410,
   expired: 410,
   error: 500,
+  framed_only: 403,
 };
 
 /** Directory requests try these, in order. */
@@ -45,9 +46,12 @@ const HEADER_NAMES = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:[ \t]*,[ \t]*[!#$%&'*+.^_`|
 
 /**
  * The headers of every content response, errors and redirects included: nothing of the app's
- * (no `frame-ancestors`, no `X-Frame-Options`, no cookie). The sandbox policy is added in
- * single-domain mode, where content shares the app's origin. An error response (`status` 400 or
- * more) is never cached: the file, the grant or the blob it lacks may be back a moment later.
+ * (no `X-Frame-Options`, no cookie). The sandbox policy is added in single-domain mode, where
+ * content shares the app's origin. A response for a `framedOnly` grant also carries
+ * `frame-ancestors 'self' <app origin>`, so only Pinwall's own pages, and the artifact's own
+ * nested frames, can frame it; in single-domain mode it joins the sandbox policy. An error
+ * response (`status` 400 or more) is never cached: the file, the grant or the blob it lacks may
+ * be back a moment later.
  *
  * Every response allows any origin to read it (CORS). A document sandboxed without
  * `allow-same-origin` has an opaque origin, so its requests for its own files (module scripts,
@@ -55,7 +59,15 @@ const HEADER_NAMES = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:[ \t]*,[ \t]*[!#$%&'*+.^_`|
  * is the capability and content never reads cookies, so `*` lets nobody read more than what the
  * URL already gives; credentials are never allowed.
  */
-export function contentHeaders(config: Config, status = 200): Record<string, string> {
+export function contentHeaders(
+  config: Config,
+  status = 200,
+  framedOnly = false,
+): Record<string, string> {
+  const policies = [
+    ...(config.isolation.mode === 'single-domain' ? [CONTENT_SANDBOX_CSP] : []),
+    ...(framedOnly ? [`frame-ancestors 'self' ${config.publicOrigin}`] : []),
+  ];
   return {
     'Cache-Control':
       status >= 400 ? 'no-store, no-transform' : 'private, max-age=300, no-transform',
@@ -63,9 +75,7 @@ export function contentHeaders(config: Config, status = 200): Record<string, str
     'Referrer-Policy': 'no-referrer',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Range, ETag',
-    ...(config.isolation.mode === 'single-domain'
-      ? { 'Content-Security-Policy': CONTENT_SANDBOX_CSP }
-      : {}),
+    ...(policies.length === 0 ? {} : { 'Content-Security-Policy': policies.join('; ') }),
   };
 }
 
@@ -73,7 +83,8 @@ export function contentHeaders(config: Config, status = 200): Record<string, str
  * Answers a request for `rawPath` (the request path after the grant's base, still
  * percent-encoded) inside the grant `token`. Only the token authorizes it: cookies and
  * `Authorization` are never read, and nothing sets a cookie. Every error is answered here with a
- * content error page, so the app's error pages and headers never appear on content.
+ * content error page, so the app's error pages and headers never appear on content. Every answer
+ * for a framed-only grant carries its `frame-ancestors` policy.
  */
 export function serveContent(
   c: Context<AppEnv>,
@@ -84,19 +95,22 @@ export function serveContent(
   return guarded(c, async () => {
     const resolved = await grantOrErrorPage(c, token);
     if (resolved instanceof Response) return resolved;
+    const framed = resolved.framedOnly === true;
 
     const segments = decodePath(rawPath);
-    if (segments === null) return contentErrorResponse(c, 'not_found');
-    if (segments[0] === RESERVED_DIR) return reservedAsset(c, hooks, segments.slice(1).join('/'));
+    if (segments === null) return contentErrorResponse(c, 'not_found', framed);
+    if (segments[0] === RESERVED_DIR) {
+      return reservedAsset(c, hooks, segments.slice(1).join('/'), framed);
+    }
 
     const path = segments.join('/');
     const found = await findFile(c.var.deps, resolved.version, path);
-    if (found === 'missing') return contentErrorResponse(c, 'not_found');
+    if (found === 'missing') return contentErrorResponse(c, 'not_found', framed);
     if (found === 'directory') {
       // Relative, so it works under `/c/<token>/` and on a content host alike. Encoding the
       // segment again keeps a name like `x:y` from reading as a scheme.
       const location = `${encodeURIComponent(segments.at(-1) ?? '')}/${new URL(c.req.url).search}`;
-      return reply(c, 308, { Location: location }, null);
+      return reply(c, 308, { Location: location }, null, framed);
     }
     return serveFile(c, resolved, found, path, hooks);
   });
@@ -107,13 +121,22 @@ export function redirectToGrantRoot(c: Context<AppEnv>, token: string): Promise<
   return guarded(c, async () => {
     const resolved = await grantOrErrorPage(c, token);
     if (resolved instanceof Response) return resolved;
-    return reply(c, 308, { Location: `${token}/${new URL(c.req.url).search}` }, null);
+    const location = `${token}/${new URL(c.req.url).search}`;
+    return reply(c, 308, { Location: location }, null, resolved.framedOnly === true);
   });
 }
 
-/** A content error page with the content headers; HEAD gets the headers alone. */
-export function contentErrorResponse(c: Context<AppEnv>, kind: ContentErrorKind): Response {
-  return reply(c, ERROR_STATUS[kind], { 'Content-Type': HTML }, renderContentErrorPage(kind));
+/**
+ * A content error page with the content headers, and the `frame-ancestors` policy when it answers
+ * for a `framedOnly` grant; HEAD gets the headers alone.
+ */
+export function contentErrorResponse(
+  c: Context<AppEnv>,
+  kind: ContentErrorKind,
+  framedOnly = false,
+): Response {
+  const page = renderContentErrorPage(kind);
+  return reply(c, ERROR_STATUS[kind], { 'Content-Type': HTML }, page, framedOnly);
 }
 
 /** What an app page may open content as in single-domain mode: a page or a frame. */
@@ -184,13 +207,18 @@ function preflight(c: Context<AppEnv>): Response {
   return reply(c, 204, headers, null);
 }
 
-/** The grant, or the page that says why there is none (404, 410 gone, 410 expired). */
+/**
+ * The grant, or the page that says why it does not answer this request: there is none (404, 410
+ * gone, 410 expired), or it is `framedOnly` and this is a top-level load (403), refused before
+ * any file is looked up.
+ */
 async function grantOrErrorPage(
   c: Context<AppEnv>,
   token: string,
 ): Promise<ResolvedGrant | Response> {
+  let resolved: ResolvedGrant;
   try {
-    return await resolveGrant(c.var.deps, token);
+    resolved = await resolveGrant(c.var.deps, token);
   } catch (err) {
     if (!(err instanceof AppError)) throw err;
     if (err.status === 404) return contentErrorResponse(c, 'not_found');
@@ -199,6 +227,21 @@ async function grantOrErrorPage(
     }
     throw err;
   }
+  if (resolved.framedOnly === true && isTopLevel(c)) {
+    return contentErrorResponse(c, 'framed_only', true);
+  }
+  return resolved;
+}
+
+/**
+ * Whether the request loads content as a page of its own rather than inside a frame:
+ * `Sec-Fetch-Dest: document`, or no fetch metadata at all (an older browser, curl), which cannot
+ * be told apart from one. The content's own loads (images, scripts, `fetch`) and the frames that
+ * show it name their destination.
+ */
+function isTopLevel(c: Context<AppEnv>): boolean {
+  const destination = c.req.header('sec-fetch-dest');
+  return destination === undefined || destination === 'document';
 }
 
 /**
@@ -223,16 +266,22 @@ function decodePath(rawPath: string): string[] | null {
   return segments;
 }
 
-function reservedAsset(c: Context<AppEnv>, hooks: ContentHooks, name: string): Response {
+function reservedAsset(
+  c: Context<AppEnv>,
+  hooks: ContentHooks,
+  name: string,
+  framedOnly: boolean,
+): Response {
   const assets = hooks.reservedAssets ?? {};
   const asset = Object.hasOwn(assets, name) ? assets[name] : undefined;
-  if (asset === undefined) return contentErrorResponse(c, 'not_found');
+  if (asset === undefined) return contentErrorResponse(c, 'not_found', framedOnly);
   const body = asset.body();
   return reply(
     c,
     200,
     { 'Content-Type': asset.contentType, 'Content-Length': String(body.length) },
     body,
+    framedOnly,
   );
 }
 
@@ -274,12 +323,13 @@ async function findFile(
  */
 async function serveFile(
   c: Context<AppEnv>,
-  { grant, version }: ResolvedGrant,
+  { grant, version, framedOnly }: ResolvedGrant,
   file: VersionFileRow,
   requestPath: string,
   hooks: ContentHooks,
 ): Promise<Response> {
   const { deps } = c.var;
+  const framed = framedOnly === true;
   const transform = grant.mode === 'review' ? hooks.transformReviewHtml : undefined;
   const asPage =
     isMarkdownType(file.content_type) && !new URL(c.req.url).searchParams.has('source');
@@ -306,25 +356,27 @@ async function serveFile(
     }
     const etag = `"${createHash('sha256').update(body).digest('hex')}"`;
     if (noneMatch(c.req.header('if-none-match'), etag)) {
-      return reply(c, 304, { ETag: etag }, null);
+      return reply(c, 304, { ETag: etag }, null, framed);
     }
     const headers = {
       'Content-Type': asPage ? HTML : file.content_type,
       'Content-Length': String(body.length),
       ETag: etag,
     };
-    return reply(c, 200, headers, body);
+    return reply(c, 200, headers, body, framed);
   }
 
   const etag = `"${file.sha256}"`;
-  if (noneMatch(c.req.header('if-none-match'), etag)) return reply(c, 304, { ETag: etag }, null);
+  if (noneMatch(c.req.header('if-none-match'), etag)) {
+    return reply(c, 304, { ETag: etag }, null, framed);
+  }
   const ifRange = c.req.header('if-range');
   const range =
     ifRange === undefined || ifRange.trim() === etag
       ? parseRange(c.req.header('range'), file.size)
       : null;
   if (range === 'unsatisfiable') {
-    return reply(c, 416, { 'Content-Range': `bytes */${file.size}` }, null);
+    return reply(c, 416, { 'Content-Range': `bytes */${file.size}` }, null, framed);
   }
 
   const headers: Record<string, string> = {
@@ -340,9 +392,10 @@ async function serveFile(
   }
   const status = range === null ? 200 : 206;
   // HEAD never opens the blob: an unread stream would hold its file or connection.
-  if (c.req.method === 'HEAD') return reply(c, status, headers, null);
+  if (c.req.method === 'HEAD') return reply(c, status, headers, null, framed);
   const stream = await deps.blobs.get(file.sha256, range ?? undefined);
-  return reply(c, status, headers, Readable.toWeb(stream) as ReadableStream<Uint8Array>);
+  const body = Readable.toWeb(stream) as ReadableStream<Uint8Array>;
+  return reply(c, status, headers, body, framed);
 }
 
 /**
@@ -377,15 +430,19 @@ export function noneMatch(header: string | undefined, etag: string): boolean {
   return header.split(',').some((tag) => tag.trim().replace(/^W\//, '') === etag);
 }
 
-/** A response with the content headers, plus `headers`. A HEAD request gets no body. */
+/**
+ * A response with the content headers (`framedOnly` for an answer about a framed-only grant), plus
+ * `headers`. A HEAD request gets no body.
+ */
 function reply(
   c: Context<AppEnv>,
   status: number,
   headers: Record<string, string>,
   body: string | Uint8Array | ReadableStream<Uint8Array> | null,
+  framedOnly = false,
 ): Response {
   return new Response(c.req.method === 'HEAD' ? null : body, {
     status,
-    headers: { ...contentHeaders(c.var.deps.config, status), ...headers },
+    headers: { ...contentHeaders(c.var.deps.config, status, framedOnly), ...headers },
   });
 }

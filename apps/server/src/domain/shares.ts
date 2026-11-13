@@ -15,6 +15,7 @@ import { badRequest, forbidden, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { hashSecret, newId, newSecret } from '../lib/ids.ts';
 import { getArtifact, holdArtifact } from './artifacts.ts';
+import { mayExpose, notApproved } from './exposure.ts';
 import { endShareLinkStreams } from './live.ts';
 import {
   assertCan,
@@ -88,9 +89,10 @@ export function checkSharePassword(pw: string): string {
  * Makes a share link of the artifact: to version `versionId`, or following the current version
  * when null; open to anyone with it, or behind `password`; until `expiresAt` (which must be in
  * the future) or until revoked. Returns the row and the token, which is stored only as its hash
- * and cannot be shown again. A version of another artifact answers 400; a missing artifact, or
- * one `actor` does not see, 404, a deleted one 410. In personal mode a role that may not
- * `createShareLink` (a viewer) gets 403.
+ * and cannot be shown again. Someone `mayExpose` refuses gets 403 (`notApproved`) before
+ * anything else is checked, so the answer is the same whatever the artifact. A version of another
+ * artifact answers 400; a missing artifact, or one `actor` does not see, 404, a deleted one 410.
+ * In personal mode a role that may not `createShareLink` (a viewer) gets 403.
  */
 export async function createShareLink(
   deps: AppDeps,
@@ -103,6 +105,7 @@ export async function createShareLink(
     allowComments: boolean;
   },
 ): Promise<{ row: ShareLinkRow; token: string }> {
+  if (!mayExpose(deps.config, actor)) throw notApproved('shareLink');
   if (p.expiresAt !== null && p.expiresAt <= deps.clock.now()) {
     throw badRequest(t('share.badExpiry'), { field: 'expires_at' });
   }

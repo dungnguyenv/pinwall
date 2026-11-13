@@ -4,6 +4,7 @@ import { safeReturnTo } from '../auth/oidc/return-to.ts';
 import { resolveAuth } from '../auth/resolve.ts';
 import { bearerResolvers } from '../auth/resolvers.ts';
 import { getArtifact } from '../domain/artifacts.ts';
+import { mayExpose, notApproved } from '../domain/exposure.ts';
 import { scopeForUser } from '../domain/spaces.ts';
 import { getCurrentVersion, getVersionByNumber } from '../domain/versions.ts';
 import { wantsHtml } from '../http/errors.ts';
@@ -39,7 +40,8 @@ export function mountRawLinks(app: Hono<AppEnv>): void {
  * when `n` is null. The link's query (`?source` of a Markdown file, say) goes along. The answer
  * depends on who asks, so nothing caches it. A missing artifact or version is 404 and a deleted
  * one 410, through the app's error pages, but only once the caller is known: until then nobody
- * learns whether the artifact exists.
+ * learns whether the artifact exists. Someone `mayExpose` refuses gets 403 (`notApproved`), a
+ * page that explains it in a browser, before the artifact is looked up.
  */
 async function redirectToRaw(c: Context<AppEnv>, n: string | null): Promise<Response> {
   const { deps, auth } = c.var;
@@ -53,6 +55,7 @@ async function redirectToRaw(c: Context<AppEnv>, n: string | null): Promise<Resp
       302,
     );
   }
+  if (!mayExpose(deps.config, auth.user)) throw notApproved('rawLink');
 
   const { db } = deps.db;
   const scope = scopeForUser(deps, auth.user);

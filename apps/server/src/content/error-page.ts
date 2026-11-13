@@ -1,12 +1,14 @@
 import { t } from '../lib/i18n.ts';
 
-export type ContentErrorKind = 'not_found' | 'gone' | 'expired' | 'error';
+/** Why a content response has no file to show; `framed_only`: a top-level load of a framed-only grant. */
+export type ContentErrorKind = 'not_found' | 'gone' | 'expired' | 'error' | 'framed_only';
 
 const COPY: Record<ContentErrorKind, string> = {
   not_found: 'content.notFound',
   gone: 'content.gone',
   expired: 'content.expired',
   error: 'content.error',
+  framed_only: 'content.framedOnly',
 };
 
 const STYLE = [
