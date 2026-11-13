@@ -2,7 +2,12 @@ import { ProjectMember, ProjectMemberList } from '@pinwall/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import type { Visibility } from '../../src/config/types.ts';
 import type { MemberRole } from '../../src/db/schema.ts';
-import { listMembers, removeMember, setMemberRole } from '../../src/domain/members.ts';
+import {
+  addMember as addMemberByEmail,
+  listMembers,
+  removeMember,
+  setMemberRole,
+} from '../../src/domain/members.ts';
 import { scopeForUser } from '../../src/domain/spaces.ts';
 import type { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
@@ -118,7 +123,7 @@ describe.each(dialects)('project members on %s', (dialect) => {
   test('the domain refuses a scope that sees every project', async () => {
     const { deps } = contexts.team;
     const fx = await spacesFixture(contexts.team);
-    const { A, E } = fx.people;
+    const { A, E, S } = fx.people;
     const scope = scopeForUser(deps, A.user);
     const missing = { status: 404, message: t('project.notFound') };
 
@@ -127,6 +132,13 @@ describe.each(dialects)('project members on %s', (dialect) => {
       missing,
     );
     await expect(removeMember(deps, scope, fx.ids.P, E.user.id)).rejects.toMatchObject(missing);
+    await expect(
+      addMemberByEmail(deps, scope, fx.ids.P, {
+        email: S.user.email ?? '',
+        role: 'viewer',
+        userId: null,
+      }),
+    ).rejects.toMatchObject(missing);
     expect(await storedRoles('team', fx.ids.P)).toEqual({
       [E.user.id]: 'editor',
       [fx.people.V.user.id]: 'viewer',

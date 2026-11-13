@@ -1,10 +1,17 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi';
-import { ErrorBody, ProjectMember, ProjectMemberList, UpdateMemberRequest } from '@pinwall/shared';
+import {
+  AddMemberRequest,
+  ErrorBody,
+  ProjectMember,
+  ProjectMemberList,
+  UpdateMemberRequest,
+} from '@pinwall/shared';
 import type { MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import type { AppEnv } from '../app.ts';
-import { requireAuth } from '../auth/guards.ts';
-import { listMembers, removeMember, setMemberRole } from '../domain/members.ts';
+import { authOf, requireAuth } from '../auth/guards.ts';
+import { RATE_RULES, rateLimit } from '../auth/rate-limits.ts';
+import { addMember, listMembers, removeMember, setMemberRole } from '../domain/members.ts';
 import { scopeOf } from '../domain/spaces.ts';
 import { notFoundHandler } from '../http/errors.ts';
 import { jsonBodyLimit } from './body-limit.ts';
@@ -51,6 +58,43 @@ const listMembersRoute = createRoute({
     ...notSignedIn,
     403: error('A cross-site request with the session cookie (`forbidden`)'),
     404: unknownProject,
+  },
+});
+
+const addMemberRoute = createRoute({
+  method: 'post',
+  path: '/projects/{id}/members',
+  tags: ['members'],
+  summary: 'Add a member by email',
+  description: `Lets the person whose Pinwall account uses \`email\` (letter case aside) into the project as an \`editor\` or a \`viewer\`. Only the project's owner may. The account must be active, and an IdP account's email verified; someone who never signed in has no account yet. When several accounts use the email, the 409 lists them, and \`user_id\` picks one. Every attempt counts against the caller's limit of 30 an hour, refused ones included. ${PERSONAL_ONLY}`,
+  middleware: [
+    personalOnly,
+    requireAuth,
+    rateLimit(RATE_RULES.memberLookup, (c) => authOf(c).user.id),
+    jsonBodyLimit,
+  ] as MiddlewareHandler<AppEnv>[],
+  security,
+  request: {
+    params: IdParam,
+    body: { required: true, content: { 'application/json': { schema: AddMemberRequest } } },
+  },
+  responses: {
+    201: {
+      description: "The new member, in the owner's view",
+      content: { 'application/json': { schema: ProjectMember } },
+    },
+    400: error(
+      'Invalid fields, or the owner picked their own account (`bad_request`, `details.field` `email`)',
+    ),
+    ...notSignedIn,
+    403: ownerOnly,
+    404: error(
+      'No such project, one the caller cannot see, or team mode (`not_found`); or no active account uses the email, or `user_id` is not one of those that do (`not_found`, `details.field` `email`)',
+    ),
+    409: error(
+      'Several accounts use the email and no `user_id` picks one (`conflict`, `details.reason` `several_accounts`, `details.candidates`), or the person is already a member (`conflict`, `details.reason` `already_member`)',
+    ),
+    429: error('Over 30 attempts in an hour by the caller (`rate_limited`, with `Retry-After`)'),
   },
 });
 
@@ -105,6 +149,16 @@ export function registerMemberRoutes(api: OpenAPIHono<AppEnv>): void {
   api.openapi(listMembersRoute, async (c) => {
     const items = await listMembers(c.var.deps, scopeOf(c), c.req.valid('param').id);
     return c.json({ items }, 200, noStore);
+  });
+
+  api.openapi(addMemberRoute, async (c) => {
+    const { email, role, user_id: userId } = c.req.valid('json');
+    const member = await addMember(c.var.deps, scopeOf(c), c.req.valid('param').id, {
+      email,
+      role,
+      userId: userId ?? null,
+    });
+    return c.json(member, 201, noStore);
   });
 
   api.openapi(updateMemberRoute, async (c) => {

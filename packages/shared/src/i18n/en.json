@@ -944,5 +944,9 @@
   "spaces.role.manageProject": "Only the project's owner can rename or archive it, or change its instructions.",
   "spaces.role.manageMembers": "Only the project's owner can add, remove or change members.",
   "spaces.move.otherSpace": "An artifact can only move between projects that have the same owner.",
-  "spaces.members.notMember": "This person is not a member of this project."
+  "spaces.members.notMember": "This person is not a member of this project.",
+  "spaces.members.noAccount": "Nobody with this email has signed in to Pinwall yet. Ask them to sign in to Pinwall once first, then add them.",
+  "spaces.members.severalAccounts": "More than one Pinwall account uses this email. Choose the one to add.",
+  "spaces.members.self": "You own this project, so you cannot add yourself to it.",
+  "spaces.members.already": "This person is already a member of this project. Change their role instead."
 }

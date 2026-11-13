@@ -1,8 +1,9 @@
-import type { ProjectMember } from '@pinwall/shared';
+import type { MemberCandidate, ProjectMember } from '@pinwall/shared';
 import type { Db } from '../auth/passkeys.ts';
+import { hasAccess } from '../auth/roles.ts';
 import type { MemberRole, ProjectMemberRow, UserRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
-import { notFound } from '../lib/errors.ts';
+import { badRequest, conflict, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { assertCan, lockProject, roleIn, type Scope, seesAll, type ViewerScope } from './spaces.ts';
 
@@ -118,4 +119,102 @@ export async function removeMember(
       .executeTakeFirst();
     if (Number(result.numDeletedRows) === 0) throw notMember();
   });
+}
+
+/**
+ * Active users (hasAccess) whose email equals `email` ignoring letter case: the owner account,
+ * and OIDC accounts with a verified email. Oldest first (created_at, id). Both sides go through
+ * the database's `lower`, which on SQLite folds ASCII letters only.
+ */
+export async function findUsersByEmail(db: Db, email: string): Promise<UserRow[]> {
+  const rows = await db
+    .selectFrom('users')
+    .selectAll()
+    .where((eb) => eb(eb.fn('lower', ['email']), '=', eb.fn('lower', [eb.val(email)])))
+    .where((eb) => eb.or([eb('kind', '=', 'owner'), eb('email_verified', '=', 1)]))
+    .orderBy('created_at')
+    .orderBy('id')
+    .execute();
+  return rows.filter(hasAccess);
+}
+
+const noAccount = () => notFound(t('spaces.members.noAccount'), { field: 'email' });
+
+const candidate = (user: UserRow): MemberCandidate => ({
+  user_id: user.id,
+  name: user.name,
+  kind: user.kind,
+});
+
+/**
+ * The account to add among `matches`: the one `userId` names, else the only one. None (or a
+ * `userId` that is not among them) answers like an unknown email; several without a `userId`
+ * answer 409 with every match as a candidate.
+ */
+function pickAccount(matches: UserRow[], userId: string | null): UserRow {
+  if (userId !== null) {
+    const picked = matches.find((user) => user.id === userId);
+    if (picked === undefined) throw noAccount();
+    return picked;
+  }
+  const [only, ...others] = matches;
+  if (only === undefined) throw noAccount();
+  if (others.length > 0) {
+    throw conflict(t('spaces.members.severalAccounts'), {
+      reason: 'several_accounts',
+      candidates: matches.map(candidate),
+    });
+  }
+  return only;
+}
+
+/**
+ * The owner lets the person with `email` into the project with `role`. The accounts are looked
+ * up only once the viewer is known to be the owner: anyone else learns nothing about emails.
+ * When several accounts use the email, `userId` picks one of them. Returns the new member in the
+ * owner's view.
+ */
+export async function addMember(
+  deps: AppDeps,
+  scope: Scope,
+  projectId: string,
+  p: { email: string; role: MemberRole; userId: string | null },
+): Promise<ProjectMember> {
+  const { db, dialect } = deps.db;
+  const viewer = personalScope(scope);
+  assertCan(viewer, await roleIn(db, viewer, projectId), 'manageMembers');
+  const user = pickAccount(await findUsersByEmail(db, p.email), p.userId);
+  if (user.id === viewer.user.id) throw badRequest(t('spaces.members.self'), { field: 'email' });
+
+  const now = deps.clock.now();
+  await db.transaction().execute(async (trx) => {
+    await lockProject(trx, dialect, projectId);
+    const existing = await trx
+      .selectFrom('project_members')
+      .select('user_id')
+      .where('project_id', '=', projectId)
+      .where('user_id', '=', user.id)
+      .executeTakeFirst();
+    if (existing !== undefined) {
+      throw conflict(t('spaces.members.already'), { reason: 'already_member' });
+    }
+    await trx
+      .insertInto('project_members')
+      .values({
+        project_id: projectId,
+        user_id: user.id,
+        role: p.role,
+        added_by: viewer.user.id,
+        created_at: now,
+      })
+      .execute();
+  });
+  const row = {
+    user_id: user.id,
+    role: p.role,
+    created_at: now,
+    name: user.name,
+    email: user.email,
+  };
+  return toMember(row, true);
 }

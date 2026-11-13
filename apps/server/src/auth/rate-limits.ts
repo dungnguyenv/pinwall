@@ -15,11 +15,14 @@ export const RATE_RULES: {
   password: RateRule;
   passwordGlobal: RateRule;
   passkey: RateRule;
+  memberLookup: RateRule;
 } = {
   setup: { name: 'setup', limit: 10, windowMs: 900_000 },
   password: { name: 'password', limit: 10, windowMs: 900_000 },
   passwordGlobal: { name: 'password-global', limit: 100, windowMs: 3_600_000 },
   passkey: { name: 'passkey', limit: 30, windowMs: 900_000 },
+  /** Adding a project member by email, per person: every attempt counts, refused ones too. */
+  memberLookup: { name: 'member-lookup', limit: 30, windowMs: 3_600_000 },
 };
 
 /**
