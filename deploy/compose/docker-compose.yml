@@ -15,7 +15,7 @@ name: pinwall
 
 services:
   pinwall:
-    image: ${PINWALL_IMAGE:-ghcr.io/dungnguyenv/pinwall:1.0.0}
+    image: ${PINWALL_IMAGE:-ghcr.io/dungnguyenv/pinwall:1.1.0}
     build:
       context: ../..
     restart: unless-stopped

@@ -213,6 +213,23 @@ describe('required contents', () => {
     expect(changelog).toMatch(/^## 1\.0\.0$/m);
   });
 
+  test('the changelog has a 1.1.0 section above 1.0.0, with the upgrade note and the new commands', async () => {
+    const changelog = await readFile(join(ROOT, 'CHANGELOG.md'), 'utf8');
+    const start = changelog.search(/^## 1\.1\.0$/m);
+    const end = changelog.search(/^## 1\.0\.0$/m);
+    expect(start).toBeGreaterThan(-1);
+    expect(start).toBeLessThan(end);
+    const section = changelog.slice(start, end);
+    for (const s of [
+      'PINWALL_VISIBILITY',
+      'pinwall transfer',
+      'pinwall visibility team --confirm',
+      '### Known limitations',
+    ]) {
+      expect(section, s).toContain(s);
+    }
+  });
+
   test('the open-instance guide gives the settings, the order and the abuse workflow', async () => {
     const guide = await readFile(join(ROOT, 'docs/open-instance.md'), 'utf8');
     for (const line of [

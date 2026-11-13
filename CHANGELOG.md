@@ -2,6 +2,102 @@
 
 Every release of Pinwall, newest first. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 1.1.0
+
+### Upgrading from 1.0
+
+- **Nothing changes for your members until you set `PINWALL_VISIBILITY=personal`.** `team` stays
+  the default: every member still sees every project, as in 1.0. The other new settings default
+  to the 1.0 behavior too: `PINWALL_SHARE_LINKS=members`, no quotas, no abuse contact.
+- **A migration, `0003_spaces`, runs when the server starts.** It gives every project an owner: the
+  person who created it, or for a project whose creator is unknown the owner account, else the
+  earliest active admin, else the earliest user. Take a backup first. A 1.0 backup restores into
+  1.1, but 1.0 refuses a 1.1 backup.
+- **The per-person rate limits apply in both modes.** See Changed below for the numbers.
+- **To switch to personal spaces,** set `PINWALL_VISIBILITY=personal`, restart, and move whole
+  spaces with `pinwall transfer --from <user> --to <user>`. Ownership follows the project, so what
+  members published into someone else's project stays with that project's owner.
+- **Going back to `team` after `personal` is refused** while more than one person owns a project,
+  because every member would then see all of their projects. Run
+  `pinwall visibility team --confirm` once, then start again.
+- New settings: `PINWALL_VISIBILITY`, `PINWALL_SHARE_LINKS`, `PINWALL_QUOTA_BYTES`,
+  `PINWALL_QUOTA_ARTIFACTS`, `PINWALL_ABUSE_CONTACT`, `PINWALL_TERMS_URL` and
+  `PINWALL_PRIVACY_URL`.
+- Read [Spaces, projects and members](https://github.com/dungnguyenv/pinwall/blob/v1.1.0/docs/spaces.md)
+  for the people who use a Pinwall, and
+  [Running an open instance](https://github.com/dungnguyenv/pinwall/blob/v1.1.0/docs/open-instance.md)
+  for the order to change an instance that already holds work.
+
+### Added
+
+- **Personal spaces.** With `PINWALL_VISIBILITY=personal`, each person sees only the projects they
+  own and the ones they were added to, and gets a default project of their own. Admins manage
+  accounts but do not browse anyone's work. The operator, who can read the database, still can.
+- **Project members.** A project's owner adds people by email as editors, who also publish, or as
+  viewers, who read and comment. The owner changes a role or removes someone, and everyone but the
+  owner can leave. The project appears under **Shared with me**, and an agent connected with the
+  person's account sees it too. Removal takes effect at once: the person's open pages and live
+  updates stop, and the share links they made in the project are revoked.
+- **Approval to share outside Pinwall.** With `PINWALL_SHARE_LINKS=approved`, only admins and the
+  people an admin approved can make share links, open raw links or have their pages open as a page
+  of their own. Everyone else still reviews inside Pinwall's viewer. Taking approval away revokes
+  that person's links.
+- **Quotas.** `PINWALL_QUOTA_BYTES` and `PINWALL_QUOTA_ARTIFACTS` cap what one person stores and
+  how many artifacts they have, in both modes. A publish that does not fit is refused as
+  `quota_exceeded`, HTTP 413, and leaves nothing behind. Admins have no limit, and an admin can set
+  other limits for one person. **Settings, Usage** shows a person where they stand.
+- **Admin tools for an open instance.** **Admin, Users** shows each person's usage and has the
+  approval switch, **Set limits…** and **Delete all content** (in `personal` mode). **Share links**
+  lists every link that is neither revoked nor expired. **Look up a link** takes a reported share
+  link, `/a/…` link or content address and names the artifact, project, owner and version without
+  showing the page. From there an admin revokes the link, ends a version's open pages, or deletes
+  the version or the artifact. Each of these actions writes one `moderation` line to the log.
+- **Delete all my content.** In `personal` mode a person can delete every project they own, with
+  its artifacts, comments and share links, after typing their email. Projects others shared with
+  them, and their account, stay.
+- **Abuse contact, terms and privacy.** `PINWALL_ABUSE_CONTACT` is shown on share pages, on the
+  pages for links that are gone or not found, and on the sign-in page, where
+  `PINWALL_TERMS_URL` and `PINWALL_PRIVACY_URL` are linked too.
+- **For agents.** `whoami` reports the space's usage and quota and whether the account may create
+  share links, where those apply. In `personal` mode the project tools show the person's role in
+  each project.
+- **Two commands.** `pinwall transfer --from <user> --to <user>` moves every project one person
+  owns to another, by email or id, in one transaction. `pinwall visibility team --confirm` allows
+  `team` mode after `personal` mode.
+- **Guides.** Spaces, projects and members; running an open instance; open sign-up with Zitadel and
+  Google, or with Google directly; and restoring a 1.0 backup into 1.1.
+
+### Changed
+
+- The publish limit, 60 per 10 minutes for each person, now counts every way to publish: upload
+  URLs, inline publishes, web uploads and restoring a version. 1.0 counted only upload URLs.
+- New per-person limits: 600 content grants an hour (review, raw links and previews), 30 share
+  links an hour, 30 projects an hour and 30 member look-ups an hour. They count by account, across
+  browsers, tokens and addresses, in memory, so a restart clears them.
+- A `team` instance with an identity provider and no member rule logs a startup warning: anyone the
+  provider signs in becomes a member and sees every project.
+- The "no roles claim" warning appears only when a member group rule is set. Without one, a
+  sign-in token that carries no roles claim is normal.
+- Expired content grants are kept for 30 days, where 1.0 removed them when they expired, so that
+  **Look up a link** can still name the owner of an address that is reported late.
+- The MCP tool descriptions and the agent skill speak of your projects and your default project,
+  and say what to do when a publish is refused for quota, for a viewer's role or for missing
+  approval.
+
+### Known limitations
+
+- Until an admin approves a person (`PINWALL_SHARE_LINKS=approved`), the nested frames of their
+  pages do not display in the review viewer, in either isolation mode. The viewer's sandbox never
+  matches the frame policy those pages are served with. Approved people are not affected.
+- A share link without comments redirects to the raw page, so that page shows no abuse contact.
+  With `PINWALL_SHARE_LINKS=approved`, only approved people can make such links.
+- Other JSON routes answer 500, without a crash, when a chunked request body breaks off. Sending it
+  again works. An inline publish answers 400.
+- **Delete all my content** (`/me/purge`) writes its `moderation` log line before it runs, so the
+  line carries no outcome.
+- SQLite search ranking (FTS5) uses statistics of the whole index, so text in other spaces can
+  change the order, never the membership, of a person's results. PostgreSQL is unaffected.
+
 ## 1.0.0
 
 ### Added
