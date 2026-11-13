@@ -34,6 +34,8 @@ test('abuseHref and safeHttpUrl accept email and http(s) only', () => {
     'abuse@example.org, other@example.org',
     'javascript:alert(1)//@example.org',
     ' abuse@example.org',
+    'javascript:alert(1)@x.y',
+    '"abuse"@example.org',
   ]) {
     expect(abuseHref(contact), JSON.stringify(contact)).toBeNull();
   }
@@ -71,6 +73,24 @@ test('the sign-in page links the terms, the privacy notice and the abuse contact
   expect(screen.queryByText(t('pages.reportAbuse'), { exact: false })).not.toBeInTheDocument();
 });
 
+test('every address the server takes is a link, which addresses that one person only', () => {
+  // As the server's check has them: what an address may hold, and what RFC 6068 encodes in it.
+  const cases: [string, string][] = [
+    ["o'brien@example.ie", "mailto:o'brien@example.ie"],
+    ['100%real@example.org', 'mailto:100%25real@example.org'],
+    ['abuse+pinwall@example.org', 'mailto:abuse+pinwall@example.org'],
+    ['first.last@mail.example.org', 'mailto:first.last@mail.example.org'],
+    ['team#abuse@example.org', 'mailto:team%23abuse@example.org'],
+    ['desk/abuse@example.org', 'mailto:desk%2Fabuse@example.org'],
+    // A ? or & in the address is part of it, never the start of a header.
+    ['who?cc=boss@example.org', 'mailto:who%3Fcc%3Dboss@example.org'],
+    ['a&b@example.org', 'mailto:a%26b@example.org'],
+    // An encoded character stays as written: the % is encoded, so nothing decodes to a ?.
+    ['who%3Fcc@example.org', 'mailto:who%253Fcc@example.org'],
+  ];
+  for (const [contact, href] of cases) expect(abuseHref(contact), contact).toBe(href);
+});
+
 test('a link that is no http(s) URL shows nowhere on the sign-in page', async () => {
   renderRoute('/signin', {
     me: null,
@@ -98,11 +118,30 @@ test('share pages show the abuse contact', async () => {
   await screen.findByRole('heading', { level: 1, name: 'Homepage' }, TIMEOUT);
   const flag = await screen.findByRole('link', { name: 'Report abuse' }, TIMEOUT);
   expect(flag).toHaveAttribute('href', 'mailto:abuse@example.org');
-  expect(flag).toHaveAttribute('target', '_blank');
-  expect(flag).toHaveAttribute('rel', 'noopener noreferrer');
+  // An address opens the mail app, so no tab is left behind.
+  expect(flag).not.toHaveAttribute('target');
+  expect(flag).not.toHaveAttribute('rel');
   // It comes before Open original.
   const original = screen.getByRole('link', { name: 'Open original' });
   expect(flag.compareDocumentPosition(original) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  cleanup();
+
+  // A page to report on opens in a tab of its own, which cannot reach back to the share page.
+  serveViewer();
+  renderRoute('/s/tok', { me: null, config: { abuse_contact: 'https://example.org/report' } });
+  const page = await screen.findByRole('link', { name: 'Report abuse' }, TIMEOUT);
+  expect(page).toHaveAttribute('href', 'https://example.org/report');
+  expect(page).toHaveAttribute('target', '_blank');
+  expect(page).toHaveAttribute('rel', 'noopener noreferrer');
+  cleanup();
+
+  // An address with an apostrophe is an address too: the bar links it.
+  serveViewer();
+  renderRoute('/s/tok', { me: null, config: { abuse_contact: "o'brien@example.ie" } });
+  expect(await screen.findByRole('link', { name: 'Report abuse' }, TIMEOUT)).toHaveAttribute(
+    'href',
+    "mailto:o'brien@example.ie",
+  );
   cleanup();
 
   // A link that is gone, and one that asks for a password: the abuse line only, never the terms.

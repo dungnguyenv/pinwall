@@ -13,12 +13,29 @@ import { Button } from '../ui/index.ts';
 
 /** No whitespace or control character, which a URL or an address has no use for. */
 const PLAIN = /^[^\s\p{Cc}]+$/u;
-/** What an address never holds: it would turn a `mailto:` link into more than an address. */
-const NOT_IN_ADDRESS = '\\s\\p{Cc}@:/?#<>"\'\\\\%';
+/**
+ * What the part of an address before the `@` never holds: whitespace, a control character, or
+ * one of RFC 5322's specials, which only a quoted address may hold. Anything else the server
+ * takes is a link: `mailtoHref` encodes what a URL would read as more than the address.
+ */
+const NOT_IN_LOCAL = '\\s\\p{Cc}@()<>\\[\\]:;,\\\\"';
+/** What a domain never holds: it would end the address, or turn it into more than one. */
+const NOT_IN_DOMAIN = '\\s\\p{Cc}@:/?#<>"\'\\\\%';
 const EMAIL = new RegExp(
-  `^[^${NOT_IN_ADDRESS}]+@[^${NOT_IN_ADDRESS}.]+(?:\\.[^${NOT_IN_ADDRESS}.]+)+$`,
+  `^[^${NOT_IN_LOCAL}]+@[^${NOT_IN_DOMAIN}.]+(?:\\.[^${NOT_IN_DOMAIN}.]+)+$`,
   'u',
 );
+/** What RFC 6068 has a `mailto:` URL percent-encode in an address (beyond what a browser does). */
+const MAILTO_ENCODED = /[%/?#[\]&;=^`{|}]/g;
+
+/** `mailto:` and the address, each character the URL would read otherwise percent-encoded. */
+function mailtoHref(address: string): string {
+  const encoded = address.replace(
+    MAILTO_ENCODED,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`,
+  );
+  return `mailto:${encoded}`;
+}
 
 /** The URL when it is http(s), else null. */
 export function safeHttpUrl(url: string | undefined): string | null {
@@ -31,24 +48,27 @@ export function safeHttpUrl(url: string | undefined): string | null {
   }
 }
 
-/** 'mailto:' + contact for an email address, the URL for an http(s) URL, null for anything else. */
+/** A `mailto:` URL for an email address, the URL for an http(s) URL, null for anything else. */
 export function abuseHref(contact: string): string | null {
-  if (EMAIL.test(contact)) return `mailto:${contact}`;
+  if (EMAIL.test(contact)) return mailtoHref(contact);
   return safeHttpUrl(contact);
 }
 
 /** A link in the footer's line, underlined so it reads as one inside a sentence. */
 const LINK_CLASS = 'rounded-sm underline underline-offset-2 hover:text-fg [overflow-wrap:anywhere]';
 
-/** A link to a page elsewhere opens in a new tab, so a sign-in or a review is not left behind. */
+/**
+ * How a link to `href` opens: a page elsewhere in a new tab, so a sign-in, a review or a shared
+ * page is not left behind; an address in the mail app, with no tab, which would stay blank.
+ */
+function opening(href: string): { target?: '_blank'; rel?: string } {
+  return href.startsWith('mailto:') ? {} : { target: '_blank', rel: 'noopener noreferrer' };
+}
+
+/** A link in the footer's line, to a page elsewhere or to an address. */
 function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
-  const mail = href.startsWith('mailto:');
   return (
-    <a
-      href={href}
-      className={LINK_CLASS}
-      {...(mail ? {} : { target: '_blank', rel: 'noopener noreferrer' })}
-    >
+    <a href={href} className={LINK_CLASS} {...opening(href)}>
       {children}
     </a>
   );
@@ -114,7 +134,7 @@ export function ReportAbuseLink({ config }: { config: PublicConfig }) {
       leadingIcon={<Flag />}
       className="px-2.5 text-fg-muted hover:text-fg"
     >
-      <a href={href} target="_blank" rel="noopener noreferrer">
+      <a href={href} {...opening(href)}>
         <span className="max-md:sr-only">{t('web.policy.reportAbuse')}</span>
       </a>
     </Button>
