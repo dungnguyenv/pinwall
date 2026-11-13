@@ -3,6 +3,7 @@ import type { Transaction } from 'kysely';
 import type { Db } from '../auth/passkeys.ts';
 import { hasAccess } from '../auth/roles.ts';
 import { revokeProjectGrants } from '../content/grants.ts';
+import type { DbDialect } from '../db/connect.ts';
 import type { Database, MemberRole, ProjectMemberRow, UserRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import { badRequest, conflict, notFound } from '../lib/errors.ts';
@@ -10,7 +11,15 @@ import { t } from '../lib/i18n.ts';
 import { revokeUploadSessionsFor } from '../publish/sessions.ts';
 import { endShareLinkStreams, recheckViewerStreams } from './live.ts';
 import { revokeProjectShareLinksOf } from './shares.ts';
-import { assertCan, lockProject, roleIn, type Scope, seesAll, type ViewerScope } from './spaces.ts';
+import {
+  assertCan,
+  holdRoleIn,
+  lockProject,
+  roleIn,
+  type Scope,
+  seesAll,
+  type ViewerScope,
+} from './spaces.ts';
 
 /**
  * Members exist only in `personal` mode: any other scope (team mode, the system) gets the answer
@@ -22,6 +31,21 @@ function personalScope(scope: Scope): ViewerScope {
 }
 
 const notMember = () => notFound(t('spaces.members.notMember'));
+
+/**
+ * Takes the project for an owner's membership change (lockProject), then reads the viewer's role
+ * again and refuses as the check before the lock does unless they still manage its members: a
+ * change of owner that held the lock (M12's transfer) may have committed in between.
+ */
+async function lockAsManager(
+  trx: Transaction<Database>,
+  dialect: DbDialect,
+  viewer: ViewerScope,
+  projectId: string,
+): Promise<void> {
+  await lockProject(trx, dialect, projectId);
+  assertCan(viewer, await holdRoleIn(trx, dialect, viewer, projectId), 'manageMembers');
+}
 
 /** The members of `projectId`, each with their account's name and email. */
 function memberRows(db: Db, projectId: string) {
@@ -86,7 +110,7 @@ export async function setMemberRole(
   const viewer = personalScope(scope);
   assertCan(viewer, await roleIn(db, viewer, projectId), 'manageMembers');
   const { member, linkIds } = await db.transaction().execute(async (trx) => {
-    await lockProject(trx, dialect, projectId);
+    await lockAsManager(trx, dialect, viewer, projectId);
     const row = await memberRows(trx, projectId)
       .where('project_members.user_id', '=', userId)
       .executeTakeFirst();
@@ -126,7 +150,8 @@ export async function removeMember(
   const role = await roleIn(db, viewer, projectId);
   if (userId !== viewer.user.id) assertCan(viewer, role, 'manageMembers');
   const ended = await db.transaction().execute(async (trx) => {
-    await lockProject(trx, dialect, projectId);
+    if (userId === viewer.user.id) await lockProject(trx, dialect, projectId);
+    else await lockAsManager(trx, dialect, viewer, projectId);
     const result = await trx
       .deleteFrom('project_members')
       .where('project_id', '=', projectId)
@@ -254,7 +279,7 @@ export async function addMember(
 
   const now = deps.clock.now();
   await db.transaction().execute(async (trx) => {
-    await lockProject(trx, dialect, projectId);
+    await lockAsManager(trx, dialect, viewer, projectId);
     const existing = await trx
       .selectFrom('project_members')
       .select('user_id')

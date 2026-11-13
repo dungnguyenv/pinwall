@@ -81,7 +81,7 @@ SQLite transactions already run one at a time (`BEGIN IMMEDIATE`). Team mode has
 
 - **A membership change** (add, role change, removal, leave):
   1. checks sight and role with `roleIn(db, …)`, without a lock;
-  2. opens a transaction and takes `lockProject` (`FOR UPDATE`);
+  2. opens a transaction and takes `lockProject` (`FOR UPDATE`); the owner's changes (add, role change, removal) then read the role again with `holdRoleIn` and refuse as in step 1 when the caller no longer manages the members, since a change of owner under the same lock (M12's transfer) may have committed in between;
   3. changes the membership, then runs its effects.
 
   After the lock it never locks an artifact row. Links go first, one artifact at a time in id order, then grants in token order.

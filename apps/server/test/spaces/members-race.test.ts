@@ -6,7 +6,7 @@ import type { Database, UserRow } from '../../src/db/schema.ts';
 import { lockArtifact } from '../../src/domain/artifacts.ts';
 import { addReply } from '../../src/domain/comments.ts';
 import { deleteArtifact, deleteVersion } from '../../src/domain/deletion.ts';
-import { removeMember, setMemberRole } from '../../src/domain/members.ts';
+import { addMember, removeMember, setMemberRole } from '../../src/domain/members.ts';
 import { createShareLink, revokeProjectShareLinksOf } from '../../src/domain/shares.ts';
 import {
   holdProject,
@@ -16,6 +16,7 @@ import {
   SYSTEM_SCOPE,
   scopeForUser,
 } from '../../src/domain/spaces.ts';
+import { t } from '../../src/lib/i18n.ts';
 import { hashSecret, newId, newSecret } from '../../src/lib/ids.ts';
 import type { TestContext } from '../helpers/context.ts';
 import { dialects, untilWaitingOnALock } from '../helpers/db.ts';
@@ -441,6 +442,49 @@ describe.runIf(dialects.includes('postgres'))('membership changes on Postgres', 
         .where('id', '=', fx.ids.pV2)
         .execute();
       expect(versions).toEqual([]);
+    },
+  );
+
+  // M12's transfer gives a project another owner under lockProject: an owner check made before
+  // the lock no longer holds once the transfer has committed.
+  test.each<[string, () => Promise<unknown>]>([
+    [
+      'adds a member',
+      () =>
+        addMember(ctx.deps, ownerScope(), fx.ids.P, {
+          email: String(fx.people.S.user.email),
+          role: 'viewer',
+          userId: null,
+        }),
+    ],
+    [
+      'changes a role',
+      () => setMemberRole(ctx.deps, ownerScope(), fx.ids.P, fx.people.E.user.id, 'viewer'),
+    ],
+    ['removes a member', () => removeMember(ctx.deps, ownerScope(), fx.ids.P, fx.people.E.user.id)],
+  ])(
+    'A %s while P passes to another owner: refused once the change has waited',
+    async (_name, change) => {
+      const { settledFirst, outcome } = await contend(async (trx) => {
+        await lockProject(trx, 'postgres', fx.ids.P);
+        await trx
+          .updateTable('projects')
+          .set({ owner_id: fx.people.X.user.id })
+          .where('id', '=', fx.ids.P)
+          .execute();
+      }, change);
+      expect(settledFirst, 'the change waited for the transfer').toBe(false);
+      expect(outcome).toMatchObject({ status: 404, message: t('project.notFound') });
+      const members = await ctx.deps.db.db
+        .selectFrom('project_members')
+        .select(['user_id', 'role'])
+        .where('project_id', '=', fx.ids.P)
+        .orderBy('role')
+        .execute();
+      expect(members).toEqual([
+        { user_id: fx.people.E.user.id, role: 'editor' },
+        { user_id: fx.people.V.user.id, role: 'viewer' },
+      ]);
     },
   );
 
