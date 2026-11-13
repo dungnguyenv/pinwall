@@ -26,6 +26,7 @@ import { ARTIFACT_TOPIC, indexArtifact } from './search.ts';
 import {
   assertCan,
   defaultProjectFor,
+  holdRoleIn,
   roleIn,
   type Scope,
   scopeForUser,
@@ -370,7 +371,8 @@ async function insertArtifact(
     .$if(dialect === 'postgres', (qb) => qb.forShare())
     .executeTakeFirst();
   if (project === undefined) throw notFound(t('project.notFound'));
-  assertCan(scope, await roleIn(trx, scope, project.id), 'publish');
+  // The role in a statement after the hold: the one above saw the memberships of before any wait.
+  assertCan(scope, await holdRoleIn(trx, dialect, scope, project.id), 'publish');
   assertNotArchived(project);
 
   const artifact: ArtifactRow = {
@@ -413,7 +415,7 @@ async function lockCurrent(
   const artifact =
     (await lockArtifact(trx, dialect, scope, artifactId)) ??
     (await getArtifact(trx, scope, artifactId, now));
-  assertCan(scope, await roleIn(trx, scope, artifact.project_id), 'publish');
+  assertCan(scope, await holdRoleIn(trx, dialect, scope, artifact.project_id), 'publish');
   await assertCurrent(trx, artifact, expectedVersionId);
   return { artifact, tags: await getTags(trx, artifact.id) };
 }

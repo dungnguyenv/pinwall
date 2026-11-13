@@ -20,8 +20,8 @@ import {
   assertCan,
   can,
   forbiddenRole,
+  holdRoleIn,
   type ProjectRole,
-  roleIn,
   type Scope,
   scopeForUser,
   seesAll,
@@ -116,7 +116,7 @@ export async function createShareLink(
   const row = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const artifact = await holdArtifact(trx, dialect, scope, artifactId, now);
-    assertCan(scope, await roleIn(trx, scope, artifact.project_id), 'createShareLink');
+    assertCan(scope, await holdRoleIn(trx, dialect, scope, artifact.project_id), 'createShareLink');
     const version = p.versionId === null ? null : await versionOf(trx, artifact, p.versionId);
     const link: ShareLinkRow = {
       id: newId('shr'),
@@ -239,7 +239,7 @@ export async function revokeShareLink(
     const artifact = await holdArtifact(trx, dialect, scope, seen.artifact_id, now);
     // A deletion the hold waited for may have taken the link along.
     const link = dialect === 'postgres' ? await getShareLink(trx, scope, linkId) : seen;
-    const role = await roleIn(trx, scope, artifact.project_id);
+    const role = await holdRoleIn(trx, dialect, scope, artifact.project_id);
     if (!canRevoke(scope, role, actor, link, artifact)) {
       throw seesAll(scope)
         ? forbidden(t('share.revokeForbidden'))

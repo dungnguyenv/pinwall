@@ -18,8 +18,8 @@ import {
   assertCan,
   can,
   forbiddenRole,
+  holdRoleIn,
   type ProjectRole,
-  roleIn,
   type Scope,
   SYSTEM_SCOPE,
   scopeForUser,
@@ -287,7 +287,7 @@ export async function createThread(
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const artifact = await holdArtifact(trx, dialect, scope, artifactId, now);
-    await assertMayComment(trx, scope, actor, artifact);
+    await assertMayComment(trx, dialect, scope, actor, artifact);
     const link = await holdGuestLink(trx, deps, actor, now);
     const version =
       p.versionId === null
@@ -330,7 +330,7 @@ export async function addReply(
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const { comment: target, artifact } = await holdComment(trx, dialect, scope, commentId, now);
-    await assertMayComment(trx, scope, actor, artifact);
+    await assertMayComment(trx, dialect, scope, actor, artifact);
     await holdGuestLink(trx, deps, actor, now);
     const root =
       target.parent_id === null ? target : await getComment(trx, scope, target.parent_id);
@@ -403,7 +403,7 @@ export async function deleteComment(
     if (actor.kind === 'guest') {
       if (!(await guestMayChange(deps, actor, comment))) throw forbidden(t('comment.guestWindow'));
     } else {
-      const role = await roleIn(trx, scope, artifact.project_id);
+      const role = await holdRoleIn(trx, dialect, scope, artifact.project_id);
       if (!canDeleteComment(scope, role, actor.user, comment, artifact)) {
         throw seesAll(scope)
           ? forbidden(t('comment.deleteForbidden'))
@@ -450,7 +450,7 @@ export async function resolveThread(
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const { comment, artifact } = await holdComment(trx, dialect, scope, commentId, now);
-    assertCan(scope, await roleIn(trx, scope, artifact.project_id), 'comment');
+    assertCan(scope, await holdRoleIn(trx, dialect, scope, artifact.project_id), 'comment');
     assertThread(comment);
     const version =
       versionId === null
@@ -484,7 +484,7 @@ export async function reopenThread(
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const { comment, artifact } = await holdComment(trx, dialect, scope, commentId, now);
-    assertCan(scope, await roleIn(trx, scope, artifact.project_id), 'comment');
+    assertCan(scope, await holdRoleIn(trx, dialect, scope, artifact.project_id), 'comment');
     assertThread(comment);
     await trx
       .updateTable('comments')
@@ -543,12 +543,13 @@ function canDeleteComment(
  */
 async function assertMayComment(
   trx: Transaction<Database>,
+  dialect: DbDialect,
   scope: Scope,
   actor: CommentActor,
   artifact: ArtifactRow,
 ): Promise<void> {
   if (actor.kind === 'guest') return;
-  assertCan(scope, await roleIn(trx, scope, artifact.project_id), 'comment');
+  assertCan(scope, await holdRoleIn(trx, dialect, scope, artifact.project_id), 'comment');
 }
 
 /** Only a thread's first comment carries its status. */

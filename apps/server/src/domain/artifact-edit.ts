@@ -5,7 +5,7 @@ import { conflict, forbidden, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { getArtifact, getTags, lockArtifact, normalizeTags } from './artifacts.ts';
 import { reindexArtifact } from './search.ts';
-import { assertCan, roleIn, type Scope, seesAll, whereVisible } from './spaces.ts';
+import { assertCan, holdRoleIn, type Scope, seesAll, whereVisible } from './spaces.ts';
 
 /**
  * Renames an artifact, moves it to another project, or replaces its tags; only what is given,
@@ -32,7 +32,7 @@ export async function updateArtifact(
     const now = deps.clock.now();
     const current =
       (await lockArtifact(trx, dialect, scope, id)) ?? (await getArtifact(trx, scope, id, now));
-    assertCan(scope, await roleIn(trx, scope, current.project_id), 'editArtifact', {
+    assertCan(scope, await holdRoleIn(trx, dialect, scope, current.project_id), 'editArtifact', {
       publishedBy: current.created_by,
       userId: scope.kind === 'viewer' ? scope.user.id : undefined,
     });
@@ -61,7 +61,7 @@ export async function updateArtifact(
         if (project.owner_id !== source.owner_id) {
           throw forbidden(t('spaces.move.otherSpace'), { reason: 'other_space' });
         }
-        assertCan(scope, await roleIn(trx, scope, project.id), 'publish');
+        assertCan(scope, await holdRoleIn(trx, dialect, scope, project.id), 'publish');
       }
       if (project.archived_at !== null) throw conflict(t('project.archived'));
       patch.project_id = project.id;

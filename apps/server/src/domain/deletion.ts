@@ -16,6 +16,7 @@ import { ARTIFACT_TOPIC, indexArtifact, reindexArtifact } from './search.ts';
 import {
   can,
   forbiddenRole,
+  holdProject,
   type ProjectRole,
   roleIn,
   type Scope,
@@ -75,6 +76,8 @@ export async function deleteVersion(
     const artifact =
       (await lockArtifact(trx, dialect, scope, artifactId)) ??
       (await getArtifact(trx, scope, artifactId, now));
+    // A membership change and this deletion then take turns on the links, grants and tombstones.
+    await holdProject(trx, dialect, deps.config.visibility, artifact.project_id);
     const version = await getVersionByNumber(trx, artifact, n);
     if (!seesAll(scope)) {
       await assertCanDelete(trx, scope, auth, artifact.project_id, version.created_by);
@@ -172,6 +175,8 @@ export async function deleteArtifact(
     const artifact =
       (await lockArtifact(trx, dialect, scope, artifactId)) ??
       (await getArtifact(trx, scope, artifactId, now));
+    // A membership change and this deletion then take turns on the links, grants and tombstones.
+    await holdProject(trx, dialect, deps.config.visibility, artifact.project_id);
     await assertCanDelete(trx, scope, auth, artifact.project_id, artifact.created_by);
     const target: DeletionTarget = { artifactId: artifact.id };
     const shas = await blobsOf(trx, target);
