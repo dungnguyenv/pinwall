@@ -1,13 +1,11 @@
-import { execFileSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { chromium } from '@playwright/test';
+import { buildAnnotator } from './annotator.ts';
 import { makeWebm } from './make-video.ts';
 import { startPinwall, stopPinwall } from './pinwall-server.ts';
 import { REVIEW_SERVERS, serverEnvNames } from './review-servers.ts';
-
-const REPO_ROOT = resolve(import.meta.dirname, '..', '..');
 
 /** The temporary directory holding the fixture video; its name says the suite made it. */
 const VIDEO_DIR_PREFIX = 'pinwall-e2e-video-';
@@ -37,21 +35,6 @@ export default async function reviewSetup(): Promise<void> {
   } catch (error) {
     await cleanUpReviewRun();
     throw error;
-  }
-}
-
-/** `pnpm --filter @pinwall/annotator build`, with its output shown only when it fails. */
-function buildAnnotator(): void {
-  try {
-    execFileSync('pnpm', ['--filter', '@pinwall/annotator', 'build'], {
-      cwd: REPO_ROOT,
-      stdio: 'pipe',
-    });
-  } catch (error) {
-    const { stdout, stderr } = error as { stdout?: Buffer; stderr?: Buffer };
-    throw new Error(`The annotator did not build:\n${stdout ?? ''}${stderr ?? ''}`, {
-      cause: error,
-    });
   }
 }
 
