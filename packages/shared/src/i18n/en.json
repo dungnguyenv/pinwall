@@ -933,5 +933,14 @@
   "backup.schemaBehind": "The database is at migration {{at}}, older than this Pinwall ({{version}}), which expects {{expected}}. A backup never migrates the database: back up with the Pinwall version that runs it, in the server's container or with the server's image.",
   "backup.schemaAhead": "The database is at migration {{at}}, which this Pinwall ({{version}}) does not know: it expects {{expected}}. A newer Pinwall runs this database: back up with that version, in the server's container or with the server's image.",
   "spaces.guard.refused": "PINWALL_VISIBILITY is team, but Pinwall last ran in personal mode and {{owners}} people own projects. In team mode every member would see all of their projects. To allow that, run pinwall visibility team --confirm once and start Pinwall again, or set PINWALL_VISIBILITY=personal.",
-  "spaces.guard.confirmed": "Team mode confirmed: at the next start every member sees the projects of all {{owners}} owners."
+  "spaces.guard.confirmed": "Team mode confirmed: at the next start every member sees the projects of all {{owners}} owners.",
+  "spaces.role.comment": "Only people in this project can comment on it.",
+  "spaces.role.publish": "You can view this project but not publish to it. Ask its owner to make you an editor.",
+  "spaces.role.editArtifact": "Only the project's owner, or the editor who published this artifact, can change it.",
+  "spaces.role.deleteArtifact": "Only the project's owner, or the editor who published it, can delete this.",
+  "spaces.role.deleteOthersComment": "Only the comment's author or the project's owner can delete this comment.",
+  "spaces.role.createShareLink": "Viewers cannot create share links. Ask the project's owner to make you an editor.",
+  "spaces.role.revokeShareLink": "Only the project's owner, or the editor who made this link, can revoke it.",
+  "spaces.role.manageProject": "Only the project's owner can rename or archive it, or change its instructions.",
+  "spaces.role.manageMembers": "Only the project's owner can add, remove or change members."
 }
