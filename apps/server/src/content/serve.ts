@@ -135,7 +135,7 @@ export function contentErrorResponse(
   kind: ContentErrorKind,
   framedOnly = false,
 ): Response {
-  const page = renderContentErrorPage(kind);
+  const page = renderContentErrorPage(kind, c.var.deps.config.abuseContact);
   return reply(c, ERROR_STATUS[kind], { 'Content-Type': HTML }, page, framedOnly);
 }
 

@@ -128,6 +128,30 @@ function custom<T>(parse: (value: string) => T) {
   });
 }
 
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Whether `value` is an absolute `http:` or `https:` URL. */
+function isHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/** `PINWALL_ABUSE_CONTACT`: an email address, or an http(s) URL. */
+function parseAbuseContact(value: string): string {
+  if (EMAIL_SHAPE.test(value) || isHttpUrl(value)) return value;
+  throw new Error('must be an email address or an http(s) URL');
+}
+
+/** `PINWALL_TERMS_URL` and `PINWALL_PRIVACY_URL`: an http(s) URL. */
+function parsePolicyUrl(value: string): string {
+  if (isHttpUrl(value)) return value;
+  throw new Error('must be an http(s) URL');
+}
+
 const wholeNumber = (min: number, max: number = Number.MAX_SAFE_INTEGER) =>
   z
     .string()
@@ -473,6 +497,9 @@ export function loadConfig(
       'PINWALL_SHARE_LINKS',
       z.enum(['members', 'approved'], { error: 'must be "members" or "approved"' }),
     ) ?? 'members';
+  const abuseContact = r.read('PINWALL_ABUSE_CONTACT', custom(parseAbuseContact)) ?? null;
+  const termsUrl = r.read('PINWALL_TERMS_URL', custom(parsePolicyUrl)) ?? null;
+  const privacyUrl = r.read('PINWALL_PRIVACY_URL', custom(parsePolicyUrl)) ?? null;
 
   // Limits and lifetimes
   const limits = {
@@ -519,6 +546,9 @@ export function loadConfig(
     access,
     visibility,
     shareLinks,
+    abuseContact,
+    termsUrl,
+    privacyUrl,
     limits,
     quota,
     ttl,

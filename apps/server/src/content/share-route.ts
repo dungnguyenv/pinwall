@@ -106,6 +106,10 @@ function linkErrorPage(c: Context<AppEnv>, err: unknown): Response {
     title: copy === null ? t('error.client.title') : t(`${copy}.title`),
     message: copy === null ? err.message : t(`${copy}.message`),
     requestId: c.var.requestId,
+    // Only the pages that say the link is missing or ended.
+    ...(err.status === 404 || err.status === 410
+      ? { abuseContact: c.var.deps.config.abuseContact }
+      : {}),
   });
   return c.html(page, err.status as ContentfulStatusCode);
 }

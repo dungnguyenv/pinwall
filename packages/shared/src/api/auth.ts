@@ -17,6 +17,20 @@ export const Me = z.object({
     .object({ password: z.boolean(), passkeys: z.number().int().nonnegative() })
     .nullable(),
   created_at: Timestamp,
+  /**
+   * Whether this person may make share links and open raw links. Sent only when links need an
+   * admin's approval (`PINWALL_SHARE_LINKS=approved`); absent means everyone may.
+   */
+  can_create_share_links: z.boolean().optional(),
+  /**
+   * What this person's space holds. Sent, with `limits`, in `personal` mode or when a quota
+   * applies to them; absent means there is no quota to show.
+   */
+  usage: z.object({ bytes: z.number().int(), artifacts: z.number().int() }).optional(),
+  /** What this person may store; `null` is no limit. Sent with `usage`. */
+  limits: z
+    .object({ bytes: z.number().int().nullable(), artifacts: z.number().int().nullable() })
+    .optional(),
 });
 export type Me = z.infer<typeof Me>;
 

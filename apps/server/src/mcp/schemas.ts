@@ -27,6 +27,16 @@ export const WhoamiOut = z.object({
   }),
   upload_url_ttl_seconds: z.number().int(),
   authoring_notes: z.array(z.string()),
+  /** Sent only in `personal` mode, where each person has a space of their own. */
+  visibility: z.literal('personal').optional(),
+  /** What the caller's space holds. Sent, with `quota`, in `personal` mode or when a quota applies. */
+  usage: z.object({ bytes: z.number().int(), artifacts: z.number().int() }).optional(),
+  /** What the caller may store; `null` is no limit. */
+  quota: z
+    .object({ bytes: z.number().int().nullable(), artifacts: z.number().int().nullable() })
+    .optional(),
+  /** Whether the caller may create share links. Sent only when links need an admin's approval. */
+  can_create_share_links: z.boolean().optional(),
 });
 export type WhoamiOut = z.infer<typeof WhoamiOut>;
 

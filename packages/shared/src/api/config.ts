@@ -8,6 +8,17 @@ export const PublicConfig = z.object({
   passkeys_available: z.boolean(),
   /** Sent only in `personal` mode, where each person has a space of their own; absent means `team`. */
   visibility: z.enum(['team', 'personal']).optional(),
+  /**
+   * Sent only as `approved`: only admins and approved members may make share links. Absent means
+   * `members`, as in 1.0.
+   */
+  share_links: z.enum(['members', 'approved']).optional(),
+  /** An email address or an http(s) URL for reports of abuse; sent only when the admin set one. */
+  abuse_contact: z.string().optional(),
+  /** An http(s) URL of the terms of use; sent only when the admin set one. */
+  terms_url: z.string().optional(),
+  /** An http(s) URL of the privacy notice; sent only when the admin set one. */
+  privacy_url: z.string().optional(),
   limits: z.object({
     max_upload_bytes: z.number().int(),
     max_inline_bytes: z.number().int(),

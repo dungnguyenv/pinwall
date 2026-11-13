@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { effectiveRole } from '../../auth/roles.ts';
 import type { Config } from '../../config/types.ts';
+import { mayExpose } from '../../domain/exposure.ts';
+import { limitsOf, quotaApplies, usageOf } from '../../domain/usage.ts';
 import { t } from '../../lib/i18n.ts';
 import { DESCRIPTIONS } from '../descriptions.ts';
 import { formatBytes } from '../format.ts';
@@ -23,7 +25,7 @@ function authoringNotes(config: Config): string[] {
   ];
 }
 
-function whoami({ deps, auth }: ToolContext): WhoamiOut {
+async function whoami({ deps, auth }: ToolContext): Promise<WhoamiOut> {
   const { user } = auth;
   const role = effectiveRole(user);
   // `resolveAuth` admits only members and admins, and `/mcp` never reads a session cookie.
@@ -45,7 +47,36 @@ function whoami({ deps, auth }: ToolContext): WhoamiOut {
     },
     upload_url_ttl_seconds: Math.floor(config.ttl.uploadSessionMs / 1000),
     authoring_notes: authoringNotes(config),
+    // The fields below are sent only when their setting is not at its 1.0 default.
+    ...(config.visibility === 'personal' ? { visibility: 'personal' as const } : {}),
+    ...(quotaApplies(config, user)
+      ? { usage: await usageOf(deps.db.db, config, user.id), quota: limitsOf(config, user) }
+      : {}),
+    ...(config.shareLinks === 'approved'
+      ? { can_create_share_links: mayExpose(config, user) }
+      : {}),
   };
+}
+
+/** "no limit" for a limit that is null, else `show` of it. */
+const limitText = (limit: number | null, show: (n: number) => string = String) =>
+  limit === null ? t('mcp.whoami.noLimit') : show(limit);
+
+/** The lines `whoami` adds under the authoring notes: the caller's space, and a refused permission. */
+function accountLines({ usage, quota, can_create_share_links }: WhoamiOut): string[] {
+  const lines: string[] = [];
+  if (usage !== undefined && quota !== undefined) {
+    lines.push(
+      t('mcp.whoami.space', {
+        bytes: formatBytes(usage.bytes),
+        bytesLimit: limitText(quota.bytes, formatBytes),
+        artifacts: usage.artifacts,
+        artifactsLimit: limitText(quota.artifacts),
+      }),
+    );
+  }
+  if (can_create_share_links === false) lines.push(t('mcp.whoami.noShareLinks'));
+  return lines;
 }
 
 /** `whoami`: the caller, how they connected, and what this Pinwall accepts. */
@@ -59,7 +90,7 @@ export const registerIdentityTools: ToolModule = (server, ctx) => {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     runTool(ctx, async () => {
-      const structured = whoami(ctx);
+      const structured = await whoami(ctx);
       const { user } = structured;
       const summary = t('mcp.whoami.text', {
         url: structured.pinwall_url,
@@ -72,7 +103,7 @@ export const registerIdentityTools: ToolModule = (server, ctx) => {
         inline: formatBytes(structured.limits.max_inline_bytes),
       });
       const notes = structured.authoring_notes.map((note) => `- ${note}`);
-      return { text: [summary, ...notes].join('\n'), structured };
+      return { text: [summary, ...notes, ...accountLines(structured)].join('\n'), structured };
     }),
   );
 };

@@ -58,6 +58,15 @@ export interface Config {
    * opened top-level). `members`: everyone, as in 1.0; `approved`: admins and approved members.
    */
   shareLinks: 'members' | 'approved';
+  /**
+   * `PINWALL_ABUSE_CONTACT`: where people report abuse, an email address or an http(s) URL. Shown
+   * on the pages for links that are gone or not found. `null`: no abuse line anywhere.
+   */
+  abuseContact: string | null;
+  /** `PINWALL_TERMS_URL`: an http(s) URL of the terms of use, linked from the sign-in page. */
+  termsUrl: string | null;
+  /** `PINWALL_PRIVACY_URL`: an http(s) URL of the privacy notice, linked from the sign-in page. */
+  privacyUrl: string | null;
   limits: {
     maxUploadBytes: number;
     maxInlineBytes: number;

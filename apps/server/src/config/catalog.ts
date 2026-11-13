@@ -383,6 +383,31 @@ export const CONFIG_VARS: readonly ConfigVar[] = [
     description:
       "members: any member may make share links and open raw links, as in Pinwall 1.0. approved: only admins and the members an admin approved in Admin → Users may; everyone else's pages open only inside Pinwall's viewer. Approve people before switching: links made by others stop opening.",
   },
+  {
+    name: 'PINWALL_ABUSE_CONTACT',
+    section: 'spaces',
+    secret: false,
+    default: null,
+    defaultNote: 'none',
+    description:
+      'An email address or an http(s) URL where people report abuse. When set, it is shown on share pages, on the pages for links that are gone or not found, and on the sign-in page.',
+  },
+  {
+    name: 'PINWALL_TERMS_URL',
+    section: 'spaces',
+    secret: false,
+    default: null,
+    defaultNote: 'none',
+    description: 'An http(s) URL of your terms of use, linked from the sign-in page when set.',
+  },
+  {
+    name: 'PINWALL_PRIVACY_URL',
+    section: 'spaces',
+    secret: false,
+    default: null,
+    defaultNote: 'none',
+    description: 'An http(s) URL of your privacy notice, linked from the sign-in page when set.',
+  },
 
   // Upload limits
   {

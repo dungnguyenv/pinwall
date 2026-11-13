@@ -3,6 +3,8 @@ import type { Kysely } from 'kysely';
 import type { AuthContext } from '../app.ts';
 import type { Database, UserRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
+import { mayExpose } from '../domain/exposure.ts';
+import { limitsOf, quotaApplies, usageOf } from '../domain/usage.ts';
 import { AppError } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { effectiveRole } from './roles.ts';
@@ -49,6 +51,7 @@ export async function toMe(deps: AppDeps, auth: AuthContext): Promise<Me> {
   if (role !== 'admin' && role !== 'member') {
     throw new AppError('access_denied', 403, t('auth.accessDenied'));
   }
+  const { config } = deps;
   return {
     id: user.id,
     kind: user.kind,
@@ -60,5 +63,15 @@ export async function toMe(deps: AppDeps, auth: AuthContext): Promise<Me> {
     via: auth.via,
     credentials: user.kind === 'owner' ? await ownerCredentials(deps.db.db, user.id) : null,
     created_at: user.created_at,
+    // The fields below are sent only when their setting is not at its 1.0 default.
+    ...(config.shareLinks === 'approved'
+      ? { can_create_share_links: mayExpose(config, user) }
+      : {}),
+    ...(quotaApplies(config, user)
+      ? {
+          usage: await usageOf(deps.db.db, config, user.id),
+          limits: limitsOf(config, user),
+        }
+      : {}),
   };
 }

@@ -8,6 +8,13 @@ export interface ErrorPageProps {
   requestId: string;
   /** Links shown as buttons; the first is the primary one. */
   actions?: { label: string; href: string }[];
+  /** `PINWALL_ABUSE_CONTACT`, for the pages of things that are gone or not found. */
+  abuseContact?: string | null;
+}
+
+/** Where a report of abuse goes: an email address opens a message, a URL is the page itself. */
+export function abuseHref(contact: string): string {
+  return /^https?:\/\//i.test(contact) ? contact : `mailto:${contact}`;
 }
 
 /**
@@ -33,6 +40,11 @@ export function renderErrorPage(p: ErrorPageProps): string {
       <p class="pw-meta">
         {t('error.requestId')} <code>{p.requestId}</code>
       </p>
+      {p.abuseContact && (
+        <p class="pw-meta">
+          {t('pages.reportAbuse')} <a href={abuseHref(p.abuseContact)}>{p.abuseContact}</a>
+        </p>
+      )}
     </Layout>,
   );
 }

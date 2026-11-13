@@ -89,6 +89,11 @@ function homeActions(c: Context) {
   return [{ label: t('error.goHome'), href: deps ? publicUrl(deps.config, '/') : '/' }];
 }
 
+/** Where to report abuse, on the pages that say something is gone or not found; else null. */
+function abuseContactFor(c: Context, status: number): string | null {
+  return status === 404 || status === 410 ? (depsOf(c)?.config.abuseContact ?? null) : null;
+}
+
 function htmlTitle(reply: ErrorReply): string {
   if (reply.status === 404) return t('error.notFound.title');
   if (reply.status >= 500) return t('error.server.title');
@@ -108,6 +113,7 @@ function respond(c: Context, reply: ErrorReply): Response {
       message: reply.message,
       requestId: requestIdOf(c),
       actions: homeActions(c),
+      abuseContact: abuseContactFor(c, reply.status),
     });
     return c.html(page, reply.status);
   }

@@ -98,6 +98,9 @@ Whether every member sees every project, or each person has a space of their own
 | --- | --- | --- |
 | `PINWALL_VISIBILITY` | `team` | team: every member sees every project, as in Pinwall 1.0. personal: each person sees only the projects they own or were added to. Going from personal back to team needs pinwall visibility team --confirm once. |
 | `PINWALL_SHARE_LINKS` | `members` | members: any member may make share links and open raw links, as in Pinwall 1.0. approved: only admins and the members an admin approved in Admin → Users may; everyone else's pages open only inside Pinwall's viewer. Approve people before switching: links made by others stop opening. |
+| `PINWALL_ABUSE_CONTACT` | none | An email address or an http(s) URL where people report abuse. When set, it is shown on share pages, on the pages for links that are gone or not found, and on the sign-in page. |
+| `PINWALL_TERMS_URL` | none | An http(s) URL of your terms of use, linked from the sign-in page when set. |
+| `PINWALL_PRIVACY_URL` | none | An http(s) URL of your privacy notice, linked from the sign-in page when set. |
 
 ## Upload limits
 

@@ -420,6 +420,9 @@
   "web.config.help.PINWALL_ACCESS_RECHECK_INTERVAL": "How often Pinwall asks your identity provider whether a person still has access.",
   "web.config.help.PINWALL_VISIBILITY": "team: every member sees every project, as in Pinwall 1.0. personal: each person sees only the projects they own or were added to. Takes a restart.",
   "web.config.help.PINWALL_SHARE_LINKS": "members: anyone may share, as in Pinwall 1.0. approved: only admins and the people you approve in Users may make share links and raw links.",
+  "web.config.help.PINWALL_ABUSE_CONTACT": "An email address or an http(s) URL where people report abuse; shown on share pages, on the pages for links that are gone or not found, and on the sign-in page.",
+  "web.config.help.PINWALL_TERMS_URL": "An http(s) URL of your terms of use, linked from the sign-in page.",
+  "web.config.help.PINWALL_PRIVACY_URL": "An http(s) URL of your privacy notice, linked from the sign-in page.",
   "web.config.help.PINWALL_MAX_UPLOAD_BYTES": "The largest single upload request Pinwall accepts.",
   "web.config.help.PINWALL_MAX_INLINE_BYTES": "The most content an agent can send inline in one publish over MCP.",
   "web.config.help.PINWALL_MAX_FILE_BYTES": "The largest single file inside an artifact version.",
@@ -957,5 +960,9 @@
   "purge.busy": "New artifacts kept arriving while this space was being deleted. Try again.",
   "content.framedOnly.title": "Open this page in Pinwall",
   "content.framedOnly.message": "This page can only be viewed inside Pinwall's viewer.",
-  "mcp.hint.quota_exceeded": "Do not retry this publish. Tell the person their space is full: they can delete old versions in Pinwall, or ask an admin for more room."
+  "mcp.hint.quota_exceeded": "Do not retry this publish. Tell the person their space is full: they can delete old versions in Pinwall, or ask an admin for more room.",
+  "pages.reportAbuse": "Report abuse:",
+  "mcp.whoami.space": "Your space: {{bytes}} of {{bytesLimit}}, {{artifacts}} of {{artifactsLimit}} artifacts.",
+  "mcp.whoami.noLimit": "no limit",
+  "mcp.whoami.noShareLinks": "You cannot create share links yet: an admin of this Pinwall has to allow it first."
 }

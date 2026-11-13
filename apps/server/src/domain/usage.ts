@@ -189,6 +189,22 @@ export function limitsOf(config: Config, user: UserRow): QuotaLimits {
 const noLimitAtZero = (limit: number): number | null => (limit === 0 ? null : limit);
 
 /**
+ * Whether `user` has a space worth showing, so `/me` and `whoami` send its usage and limits:
+ * always in personal mode, where everyone has one; in team mode only when an instance quota is
+ * set or the user has an override. With none of them the answer is the 1.0 one, which has no such
+ * keys.
+ */
+export function quotaApplies(config: Config, user: UserRow): boolean {
+  return (
+    config.visibility === 'personal' ||
+    config.quota.bytes > 0 ||
+    config.quota.artifacts > 0 ||
+    user.quota_bytes !== null ||
+    user.quota_artifacts !== null
+  );
+}
+
+/**
  * Without locks: for checkTarget and restore's early check. When the space is the publisher's
  * own, it goes by `need.actor` as the caller read it, so a publisher without limits costs no
  * query here; the commit reads the row again.
