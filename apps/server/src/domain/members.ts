@@ -1,10 +1,15 @@
 import type { MemberCandidate, ProjectMember } from '@pinwall/shared';
+import type { Transaction } from 'kysely';
 import type { Db } from '../auth/passkeys.ts';
 import { hasAccess } from '../auth/roles.ts';
-import type { MemberRole, ProjectMemberRow, UserRow } from '../db/schema.ts';
+import { revokeProjectGrants } from '../content/grants.ts';
+import type { Database, MemberRole, ProjectMemberRow, UserRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import { badRequest, conflict, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
+import { revokeUploadSessionsFor } from '../publish/sessions.ts';
+import { endShareLinkStreams, recheckViewerStreams } from './live.ts';
+import { revokeProjectShareLinksOf } from './shares.ts';
 import { assertCan, lockProject, roleIn, type Scope, seesAll, type ViewerScope } from './spaces.ts';
 
 /**
@@ -66,7 +71,9 @@ export async function listMembers(
 
 /**
  * The owner gives the member `userId` another role; giving the role they have changes nothing.
- * Returns the member in the owner's view. Someone who is not a member answers 404.
+ * An editor made a viewer loses the share links they made on the project's artifacts (revoked,
+ * with what those links opened and their live streams), and nothing else: a viewer makes no
+ * links. Returns the member in the owner's view. Someone who is not a member answers 404.
  */
 export async function setMemberRole(
   deps: AppDeps,
@@ -78,12 +85,13 @@ export async function setMemberRole(
   const { db, dialect } = deps.db;
   const viewer = personalScope(scope);
   assertCan(viewer, await roleIn(db, viewer, projectId), 'manageMembers');
-  return db.transaction().execute(async (trx) => {
+  const { member, linkIds } = await db.transaction().execute(async (trx) => {
     await lockProject(trx, dialect, projectId);
     const row = await memberRows(trx, projectId)
       .where('project_members.user_id', '=', userId)
       .executeTakeFirst();
     if (row === undefined) throw notMember();
+    let linkIds: string[] = [];
     if (row.role !== role) {
       await trx
         .updateTable('project_members')
@@ -91,14 +99,21 @@ export async function setMemberRole(
         .where('project_id', '=', projectId)
         .where('user_id', '=', userId)
         .execute();
+      if (row.role === 'editor' && role === 'viewer') {
+        linkIds = await revokeProjectShareLinksOf(trx, userId, projectId, deps.clock.now());
+      }
     }
-    return toMember({ ...row, role }, true);
+    return { member: toMember({ ...row, role }, true), linkIds };
   });
+  for (const linkId of linkIds) endShareLinkStreams(deps, linkId);
+  return member;
 }
 
 /**
- * The owner removes `userId`, or a member removes themselves (leaves). Someone who is not a
- * member answers 404, and so does the owner leaving their own project.
+ * The owner removes `userId`, or a member removes themselves (leaves), with the effects of
+ * `endProjectAccess` and `finishEndedAccess`: what the person could reach in the project through
+ * earlier grants, links, streams and upload URLs ends at once. Their comments and artifacts stay.
+ * Someone who is not a member answers 404, and so does the owner leaving their own project.
  */
 export async function removeMember(
   deps: AppDeps,
@@ -110,7 +125,7 @@ export async function removeMember(
   const viewer = personalScope(scope);
   const role = await roleIn(db, viewer, projectId);
   if (userId !== viewer.user.id) assertCan(viewer, role, 'manageMembers');
-  await db.transaction().execute(async (trx) => {
+  const ended = await db.transaction().execute(async (trx) => {
     await lockProject(trx, dialect, projectId);
     const result = await trx
       .deleteFrom('project_members')
@@ -118,6 +133,54 @@ export async function removeMember(
       .where('user_id', '=', userId)
       .executeTakeFirst();
     if (Number(result.numDeletedRows) === 0) throw notMember();
+    return endProjectAccess(trx, projectId, userId, deps.clock.now());
+  });
+  await finishEndedAccess(deps, ended);
+}
+
+/** What `endProjectAccess` ended, for `finishEndedAccess` to finish once it has committed. */
+export interface EndedAccess {
+  userId: string;
+  projectId: string;
+  /** The share links revoked, whose live streams are still open. */
+  linkIds: string[];
+  /** The project's artifacts: the person's upload URLs for a new version of one go too. */
+  artifactIds: string[];
+}
+
+/**
+ * Spec §4.3 removal, in the transaction that holds the project (lockProject): the person's links
+ * on its artifacts, then their grants on its versions. Locks no artifact row. The links go
+ * first, one artifact at a time in id order, as in `revokeAllCredentials`, so a "Revoke now" of
+ * the same person cannot wait on this transaction while it waits on that one.
+ */
+export async function endProjectAccess(
+  trx: Transaction<Database>,
+  projectId: string,
+  userId: string,
+  now: number,
+): Promise<EndedAccess> {
+  const linkIds = await revokeProjectShareLinksOf(trx, userId, projectId, now);
+  await revokeProjectGrants(trx, userId, projectId, now);
+  const artifacts = await trx
+    .selectFrom('artifacts')
+    .select('id')
+    .where('project_id', '=', projectId)
+    .execute();
+  return { userId, projectId, linkIds, artifactIds: artifacts.map((artifact) => artifact.id) };
+}
+
+/**
+ * After commit: ends the revoked links' streams, makes the person's member streams check their
+ * sight (those on the project's artifacts end), and drops their unused upload URLs into the
+ * project.
+ */
+export async function finishEndedAccess(deps: AppDeps, ended: EndedAccess): Promise<void> {
+  for (const linkId of ended.linkIds) endShareLinkStreams(deps, linkId);
+  recheckViewerStreams(deps, ended.userId);
+  await revokeUploadSessionsFor(deps, ended.userId, {
+    projectId: ended.projectId,
+    artifactIds: ended.artifactIds,
   });
 }
 

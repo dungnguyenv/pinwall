@@ -7,7 +7,7 @@ import { sessionCookieName } from '../../src/auth/session-cookie.ts';
 import { createSession, deleteUserSessions } from '../../src/auth/sessions.ts';
 import type { UserRow, VersionRow } from '../../src/db/schema.ts';
 import { deleteArtifact, deleteVersion } from '../../src/domain/deletion.ts';
-import { SHARE_LINK_TOPIC } from '../../src/domain/live.ts';
+import { SHARE_LINK_TOPIC, VIEWER_ACCESS_TOPIC } from '../../src/domain/live.ts';
 import { ARTIFACT_TOPIC } from '../../src/domain/search.ts';
 import { SHARE_RATES, UNLOCK_MAX_MS } from '../../src/domain/share-access.ts';
 import { createShareLink, revokeShareLink } from '../../src/domain/shares.ts';
@@ -120,13 +120,17 @@ describe.each(dialects)('live updates on %s', (dialect) => {
     return s;
   }
 
-  /** Counts the stream's unsubscribe calls, through the real bus. */
+  /**
+   * Counts the unsubscribe calls of the streams' subscriptions to the artifact's topic, through
+   * the real bus: one per member stream, which also follows its viewer's access topic.
+   */
   function watchUnsubscribes() {
     const unsubscribed = vi.fn();
     const events = ctx.deps.events;
     const subscribe = events.subscribe.bind(events);
     vi.spyOn(events, 'subscribe').mockImplementation((name, handler) => {
       const off = subscribe(name, handler);
+      if (name !== topic) return off;
       return () => {
         unsubscribed();
         off();
@@ -268,6 +272,7 @@ describe.each(dialects)('live updates on %s', (dialect) => {
     const ended = async (calls: number) => {
       await vi.waitFor(() => expect(unsubscribed).toHaveBeenCalledTimes(calls));
       expect(bus().subscriberCount(topic)).toBe(0);
+      expect(bus().subscriberCount(VIEWER_ACCESS_TOPIC(m.user.id))).toBe(0);
       expect(vi.getTimerCount()).toBe(0);
       expect(ctx.deps.liveStreams.size).toBe(0);
     };

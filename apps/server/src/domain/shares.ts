@@ -283,25 +283,68 @@ export async function revokeShareLinksOf(
   for (const artifactId of open.map((row) => row.artifact_id).sort()) {
     if (!(await holdIfPresent(trx, dialect, artifactId))) continue;
     // Read under the hold: a deletion the hold waited for has taken its links along.
-    const links = await trx
-      .selectFrom('share_links')
-      .select('id')
-      .where('artifact_id', '=', artifactId)
-      .where('created_by', '=', userId)
-      .where('revoked_at', 'is', null)
-      .execute();
-    if (links.length === 0) continue;
-    const ids = links.map((link) => link.id);
-    await trx
-      .updateTable('share_links')
-      .set({ revoked_at: now })
-      .where('id', 'in', ids)
-      .where('revoked_at', 'is', null)
-      .execute();
-    await endGrantsOf(trx, ids, now);
-    revoked.push(...ids);
+    revoked.push(...(await revokeLinksOn(trx, userId, artifactId, now)));
   }
   return revoked;
+}
+
+/**
+ * `revokeShareLinksOf` for the artifacts of `projectId` only, as the person leaves the project
+ * or stops being one of its editors. For a transaction that holds the project (`lockProject`):
+ * the artifacts go in id order, and none is held, since a write that holds one may be waiting
+ * on the project. A link whose artifact a deletion took meanwhile is skipped. Returns the ids of
+ * the links revoked: once `trx` has committed, end their live streams with
+ * `endShareLinkStreams`.
+ */
+export async function revokeProjectShareLinksOf(
+  trx: Transaction<Database>,
+  userId: string,
+  projectId: string,
+  now: number,
+): Promise<string[]> {
+  const open = await trx
+    .selectFrom('share_links')
+    .innerJoin('artifacts', 'artifacts.id', 'share_links.artifact_id')
+    .select('share_links.artifact_id')
+    .distinct()
+    .where('artifacts.project_id', '=', projectId)
+    .where('share_links.created_by', '=', userId)
+    .where('share_links.revoked_at', 'is', null)
+    .execute();
+  const revoked: string[] = [];
+  for (const artifactId of open.map((row) => row.artifact_id).sort()) {
+    revoked.push(...(await revokeLinksOn(trx, userId, artifactId, now)));
+  }
+  return revoked;
+}
+
+/**
+ * Revokes the links `userId` made on `artifactId` that are not revoked yet, and ends the content
+ * grants made from them. Returns their ids.
+ */
+async function revokeLinksOn(
+  trx: Transaction<Database>,
+  userId: string,
+  artifactId: string,
+  now: number,
+): Promise<string[]> {
+  const links = await trx
+    .selectFrom('share_links')
+    .select('id')
+    .where('artifact_id', '=', artifactId)
+    .where('created_by', '=', userId)
+    .where('revoked_at', 'is', null)
+    .execute();
+  if (links.length === 0) return [];
+  const ids = links.map((link) => link.id);
+  await trx
+    .updateTable('share_links')
+    .set({ revoked_at: now })
+    .where('id', 'in', ids)
+    .where('revoked_at', 'is', null)
+    .execute();
+  await endGrantsOf(trx, ids, now);
+  return ids;
 }
 
 /** Holds the artifact `id` as `holdArtifact` does; false when it no longer exists. */
