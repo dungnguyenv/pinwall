@@ -52,7 +52,8 @@ export function canDelete(
  * to the sweep while a backup runs), and `version.deleted` (or `artifact.deleted`) goes out on
  * `ARTIFACT_TOPIC`. A missing artifact or version answers 404 (as does an artifact the caller
  * does not see), a deleted one 410, and a caller that `canDelete` refuses 403: in team mode
- * for the artifact's publisher, in personal mode for the version's.
+ * for the artifact's publisher; in personal mode for the version's, and for the artifact's too
+ * when the version is its last, since that deletes the artifact.
  */
 export async function deleteVersion(
   deps: AppDeps,
@@ -77,6 +78,11 @@ export async function deleteVersion(
     const version = await getVersionByNumber(trx, artifact, n);
     if (!seesAll(scope)) {
       await assertCanDelete(trx, scope, auth, artifact.project_id, version.created_by);
+      // The last version takes the artifact with it: an editor may delete that only if they
+      // published the artifact.
+      if (await isOnlyVersion(trx, artifact.id, version.id)) {
+        await assertCanDelete(trx, scope, auth, artifact.project_id, artifact.created_by);
+      }
     }
     const target: DeletionTarget = { versionId: version.id };
 
@@ -179,6 +185,18 @@ export async function deleteArtifact(
     type: 'artifact.deleted',
     artifact_id: artifactId,
   });
+}
+
+/** Whether `versionId` is the artifact's only version, so deleting it deletes the artifact. */
+async function isOnlyVersion(db: Db, artifactId: string, versionId: string): Promise<boolean> {
+  const other = await db
+    .selectFrom('versions')
+    .select('id')
+    .where('artifact_id', '=', artifactId)
+    .where('id', '<>', versionId)
+    .limit(1)
+    .executeTakeFirst();
+  return other === undefined;
 }
 
 /**

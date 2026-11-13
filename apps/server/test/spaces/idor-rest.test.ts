@@ -1,11 +1,12 @@
 import { CommentThreadList, CreatedShareLink, GuestCreated } from '@pinwall/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { DEFAULT_PROJECT_ID, ensureDefaultProject } from '../../src/domain/projects.ts';
+import { t } from '../../src/lib/i18n.ts';
 import { apiInit } from '../helpers/auth.ts';
 import type { TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 import { publishFiles } from '../helpers/publish.ts';
-import { restClient } from '../helpers/rest.ts';
+import { type ErrorJson, restClient } from '../helpers/rest.ts';
 import { sampleAnchor } from '../helpers/review.ts';
 import {
   type Case,
@@ -17,6 +18,7 @@ import {
   removeMember,
   type SpacesFixture,
   sameAnswer,
+  spacesClient,
   spacesContext,
   spacesFixture,
   UNKNOWN_IDS,
@@ -170,6 +172,7 @@ const renamee = patch((i) => `/artifacts/${i.e}`, { name: 'x' });
 const deletep = del((i) => `/artifacts/${i.p}`);
 const deletee = del((i) => `/artifacts/${i.e}`);
 const deletepV1 = del((i) => `/artifacts/${i.p}/versions/1`);
+const deleteeV1 = del((i) => `/artifacts/${i.e}/versions/1`);
 
 /** Project and artifact writes: team mode keeps the 1.0 rules, personal mode the roles of §4.3. */
 const WRITES: Case[] = [
@@ -205,6 +208,8 @@ const WRITES: Case[] = [
   c('S', 'delete version 1 of p', deletepV1, 403, 404),
   c('X', 'delete version 1 of p', deletepV1, 204, 404),
   c('A', 'delete version 1 of p', deletepV1, 204, 204),
+  // e's only version: deleting it deletes e, which E published.
+  c('E', 'delete version 1 of e', deleteeV1, 204, 204),
 ];
 
 describe.each(dialects)('REST project and artifact writes on %s', (dialect) => {
@@ -221,6 +226,57 @@ describe.each(dialects)('REST project and artifact writes on %s', (dialect) => {
     afterAll(() => ctx?.close());
 
     test.each(WRITES)('$who: $name', (writeCase) => expectCase(ctx, fx, mode, writeCase));
+
+    test("an editor cannot delete another's artifact by deleting its last version", async () => {
+      const { A, E } = fx.people;
+      const { p, pV2 } = fx.ids;
+      // E publishes versions 3 and 4 of A's p.
+      let expectedVersionId = pV2;
+      for (const n of [3, 4]) {
+        const { version } = await publishFiles(
+          ctx,
+          E.user,
+          { 'index.html': `<p>Version ${n}</p>` },
+          { kind: 'new_version', artifactId: p, expectedVersionId },
+        );
+        expectedVersionId = version.id;
+      }
+      const asA = spacesClient(ctx, A.cookie);
+      const asE = spacesClient(ctx, E.cookie);
+      const versionsOfp = async () => {
+        const r = await asA.get<{ items: { number: number }[] }>(`/artifacts/${p}/versions`);
+        expect(r.status, JSON.stringify(r.body)).toBe(200);
+        return r.body.items.map((version) => version.number).sort((a, b) => a - b);
+      };
+
+      // While other versions keep p, personal mode lets E delete a version E published; team
+      // mode keeps the 1.0 rule (the artifact's publisher, or an admin).
+      const notLast = await asE.del(`/artifacts/${p}/versions/4`);
+      expect(notLast.status, JSON.stringify(notLast.body)).toBe(mode === 'team' ? 403 : 204);
+      // A deletes every version but 3, which becomes p's last.
+      for (const n of await versionsOfp()) {
+        if (n !== 3) expect((await asA.del(`/artifacts/${p}/versions/${n}`)).status).toBe(204);
+      }
+      expect(await versionsOfp()).toEqual([3]);
+
+      // E's version 3 is p's last: deleting it would delete p, which A published.
+      const refused = await asE.del<ErrorJson>(`/artifacts/${p}/versions/3`);
+      expect(refused.status).toBe(403);
+      expect(refused.body.error).toEqual(
+        mode === 'team'
+          ? { code: 'forbidden', message: t('artifact.deleteForbidden') }
+          : {
+              code: 'forbidden',
+              message: t('spaces.role.deleteArtifact'),
+              details: { reason: 'role' },
+            },
+      );
+      expect(await versionsOfp()).toEqual([3]);
+
+      // p's owner may.
+      expect((await asA.del(`/artifacts/${p}/versions/3`)).status).toBe(204);
+      expect((await asA.get(`/artifacts/${p}`)).status).toBe(410);
+    });
   });
 });
 
