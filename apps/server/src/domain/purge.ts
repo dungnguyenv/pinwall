@@ -2,8 +2,8 @@ import type { UserRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import { AppError, badRequest, conflict, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
-import { systemDeleteArtifact } from './deletion.ts';
-import type { SystemScope } from './spaces.ts';
+import { purgeArtifactOf } from './deletion.ts';
+import { SYSTEM_SCOPE, type SystemScope } from './spaces.ts';
 
 /** How many times a purge goes over a project: once, and again for each publish that slipped in. */
 const MAX_PASSES = 3;
@@ -11,7 +11,10 @@ const MAX_PASSES = 3;
 /**
  * Deletes every project `userId` owns, each of its artifacts as `systemDeleteArtifact` deletes
  * one (links answer "gone", blobs are collected), then the project. Never deletes the user, and
- * never touches a project they only belong to. Returns how many projects and artifacts it removed.
+ * never touches a project they only belong to: each artifact's deletion checks, with its project
+ * held, that the project is still theirs, so what a transfer moved meanwhile is left to its new
+ * owner. Returns how many projects and artifacts it removed. Personal mode only (404 otherwise,
+ * as `assertPurgeAvailable` answers).
  *
  * A project goes only while it holds no artifact, so a publish that lands between the last
  * artifact's deletion and the project's does not make the project take it unseen: the project
@@ -24,6 +27,7 @@ export async function purgeSpace(
   scope: SystemScope,
   userId: string,
 ): Promise<{ projects: number; artifacts: number }> {
+  assertPurgeAvailable(deps);
   const { db } = deps.db;
   const owned = await db
     .selectFrom('projects')
@@ -37,7 +41,7 @@ export async function purgeSpace(
     for (let pass = 1; ; pass++) {
       // Gone, or moved to someone else, since the list was read: not this person's to delete.
       if (!(await isOwnedBy(deps, projectId, userId))) break;
-      artifacts += await deleteArtifactsOf(deps, scope, projectId);
+      artifacts += await deleteArtifactsOf(deps, scope, projectId, userId);
       if (await deleteEmptyProject(deps, projectId, userId)) {
         projects++;
         break;
@@ -58,11 +62,15 @@ async function isOwnedBy(deps: AppDeps, projectId: string, userId: string): Prom
   return row !== undefined;
 }
 
-/** Deletes the artifacts the project holds now; returns how many it deleted itself. */
+/**
+ * Deletes the artifacts the project holds now while it still belongs to `ownerId`; returns how
+ * many it deleted itself.
+ */
 async function deleteArtifactsOf(
   deps: AppDeps,
   scope: SystemScope,
   projectId: string,
+  ownerId: string,
 ): Promise<number> {
   const rows = await deps.db.db
     .selectFrom('artifacts')
@@ -73,8 +81,7 @@ async function deleteArtifactsOf(
   let deleted = 0;
   for (const { id } of rows) {
     try {
-      await systemDeleteArtifact(deps, scope, id);
-      deleted++;
+      if (await purgeArtifactOf(deps, scope, id, ownerId)) deleted++;
     } catch (err) {
       // Someone deleted it first: it is gone either way.
       if (!(err instanceof AppError && (err.status === 404 || err.status === 410))) throw err;
@@ -122,10 +129,22 @@ function isForeignKeyViolation(error: unknown): boolean {
 }
 
 /**
- * Purging needs projects that belong to people, which only `personal` mode has: anywhere else it
- * answers 404 with the message of a route that does not exist, so the endpoints are not there.
+ * A person's purge of their own space (`/me/purge`): `purgeSpace` bound to `user`'s own id, so
+ * the route that asks for it holds no system scope of its own.
  */
-export function assertPurgeAvailable(deps: AppDeps): void {
+export function purgeOwnSpace(
+  deps: AppDeps,
+  user: UserRow,
+): Promise<{ projects: number; artifacts: number }> {
+  return purgeSpace(deps, SYSTEM_SCOPE, user.id);
+}
+
+/**
+ * Purging needs projects that belong to people, which only `personal` mode has: anywhere else it
+ * answers 404 with the message of a route that does not exist. The purge routes refuse earlier,
+ * before authentication (`personalOnly`); this keeps the domain safe on its own.
+ */
+function assertPurgeAvailable(deps: AppDeps): void {
   if (deps.config.visibility !== 'personal') throw notFound(t('error.notFound.message'));
 }
 

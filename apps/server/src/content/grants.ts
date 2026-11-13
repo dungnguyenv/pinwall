@@ -244,11 +244,20 @@ export async function revokeVersionGrants(db: Db, versionId: string, now: number
   return endGrants(db, (eb) => eb('version_id', '=', versionId), now);
 }
 
-/** Deletes the grants that have expired; returns how many. */
+/**
+ * How long a grant is kept once it has expired, before the hourly purge deletes it. While kept it
+ * still answers 410 (expired) at the content host, and an admin's look-up of its URL still names
+ * the artifact, its owner and the version, so a report that arrives days after the URL was made
+ * can still be traced to whoever made it. A grant ended by a revocation or a deletion is deleted
+ * at once instead, and names no one.
+ */
+export const EXPIRED_GRANT_RETENTION_MS = 30 * 86_400_000;
+
+/** Deletes the grants expired for `EXPIRED_GRANT_RETENTION_MS` or longer; returns how many. */
 export async function purgeExpiredGrants(deps: AppDeps): Promise<number> {
   const result = await deps.db.db
     .deleteFrom('content_grants')
-    .where('expires_at', '<=', deps.clock.now())
+    .where('expires_at', '<=', deps.clock.now() - EXPIRED_GRANT_RETENTION_MS)
     .executeTakeFirst();
   return Number(result.numDeletedRows);
 }

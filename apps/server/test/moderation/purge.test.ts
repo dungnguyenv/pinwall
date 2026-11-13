@@ -4,13 +4,14 @@ import { systemDeleteArtifact, systemDeleteVersion } from '../../src/domain/dele
 import { assertPurgeConfirmed, purgeSpace } from '../../src/domain/purge.ts';
 import { createShareLink } from '../../src/domain/shares.ts';
 import { SYSTEM_SCOPE } from '../../src/domain/spaces.ts';
+import { transferContent } from '../../src/domain/transfer.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { newId } from '../../src/lib/ids.ts';
 import type { BlobStore } from '../../src/storage/index.ts';
 import { apiInit, createSignedInUser } from '../helpers/auth.ts';
 import { referencedShas } from '../helpers/backup.ts';
 import type { TestContext } from '../helpers/context.ts';
-import { dialects } from '../helpers/db.ts';
+import { dialects, untilWaitingOnALock } from '../helpers/db.ts';
 import { publishFiles } from '../helpers/publish.ts';
 import { restClient } from '../helpers/rest.ts';
 import { type Person, type SpacesFixture, spacesFixture } from '../spaces/fixture.ts';
@@ -89,10 +90,31 @@ describe.each(dialects)('purging a space on %s', (dialect) => {
         .where('id', '=', A.user.id)
         .executeTakeFirst();
       expect(user).toBeDefined();
+      // Logged once it ran, with what it deleted.
       expect(info).toHaveBeenCalledWith(
-        { admin_id: X.user.id, action: 'user.purge', target: { user_id: A.user.id } },
+        {
+          admin_id: X.user.id,
+          action: 'user.purge',
+          target: { user_id: A.user.id },
+          outcome: 'done',
+          result: { projects: owned.length, artifacts: 3 },
+        },
         'moderation',
       );
+    });
+
+    test('admin purge needs a browser session, never an API token', async () => {
+      const { A, X } = fx.people;
+      const owned = await projectsOf(A);
+      const r = await ctx.request(
+        `/api/v1/admin/users/${A.user.id}/purge`,
+        apiInit(ctx, { body: { confirm_email: A.user.email }, bearer: X.token }),
+      );
+      expect(r.status).toBe(403);
+      expect(await r.json()).toEqual({
+        error: { code: 'forbidden', message: t('auth.sessionRequired') },
+      });
+      expect(await projectsOf(A)).toEqual(owned);
     });
 
     /** A project of `person`'s own, with one artifact of a page nobody else has. */
@@ -140,6 +162,7 @@ describe.each(dialects)('purging a space on %s', (dialect) => {
     test('purge needs the email typed exactly', async () => {
       const { A, X } = fx.people;
       const owned = await projectsOf(A);
+      const info = vi.spyOn(ctx.deps.logger, 'info');
       for (const typed of ['nope', ` ${A.user.email}x`, A.user.id]) {
         const r = await purge(X, A.user.id, typed);
         expect(r.status, typed).toBe(400);
@@ -151,6 +174,22 @@ describe.each(dialects)('purging a space on %s', (dialect) => {
           },
         });
       }
+      // Refused, and logged as refused: nothing reads as a purge that did not happen.
+      expect(info).toHaveBeenCalledWith(
+        {
+          admin_id: X.user.id,
+          action: 'user.purge',
+          target: { user_id: A.user.id },
+          outcome: 'refused',
+          status: 400,
+          code: 'bad_request',
+        },
+        'moderation',
+      );
+      expect(info).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'user.purge', outcome: 'done' }),
+        'moderation',
+      );
       expect(
         (await restClient(ctx, X.cookie).post(`/admin/users/${A.user.id}/purge`, {})).status,
       ).toBe(400);
@@ -343,6 +382,64 @@ describe.each(dialects)('purging a space on %s', (dialect) => {
         },
       );
 
+      // PostgreSQL only: SQLite runs one transaction at a time, so a transfer cannot be in flight.
+      test.runIf(dialect === 'postgres')(
+        'artifacts of a project a transfer moves while the purge runs stay with their new owner',
+        async () => {
+          const { A, S } = fx.people;
+          const owned = await projectsOf(A);
+          const artifactsIn = async (projectIds: string[]) =>
+            (
+              await db()
+                .selectFrom('artifacts')
+                .select('id')
+                .where('project_id', 'in', projectIds)
+                .orderBy('id')
+                .execute()
+            ).map((row) => row.id);
+          const before = await artifactsIn(owned);
+          for (const project of owned) expect(await artifactsIn([project])).not.toEqual([]);
+
+          // The transfer holds every project of A's, then waits on A's link on p, which this
+          // transaction holds, while the purge starts and waits for the first project.
+          let release = () => {};
+          const released = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          let held = () => {};
+          const holding = new Promise<void>((resolve) => {
+            held = resolve;
+          });
+          const blocker = db()
+            .transaction()
+            .execute(async (trx) => {
+              await trx
+                .selectFrom('share_links')
+                .select('id')
+                .where('id', '=', fx.ids.pLink)
+                .forUpdate()
+                .execute();
+              held();
+              await released;
+            });
+          try {
+            await holding;
+            const transfer = transferContent(ctx.deps, SYSTEM_SCOPE, A.user, S.user);
+            await untilWaitingOnALock(db(), transfer);
+            const purging = purgeSpace(ctx.deps, SYSTEM_SCOPE, A.user.id);
+            await untilWaitingOnALock(db(), purging, 2);
+            release();
+            expect((await transfer).projects).toBe(owned.length);
+            expect(await purging).toEqual({ projects: 0, artifacts: 0 });
+          } finally {
+            release();
+            await blocker;
+          }
+          expect(await projectsOf(S)).toEqual(owned);
+          expect(await artifactsIn(owned)).toEqual(before);
+        },
+      );
+
       test('purge gives up with the busy message when new artifacts keep coming', async () => {
         const { E } = fx.people;
         const own = await projectWithOneArtifact(E);
@@ -369,25 +466,33 @@ describe.each(dialects)('purging a space on %s', (dialect) => {
     });
     afterAll(() => ctx?.close());
 
-    test('purge is personal-only: 404 in team mode, as an unknown route', async () => {
-      const { A, X } = fx.people;
-      const unknown = await restClient(ctx, X.cookie).get('/nowhere');
-      expect(unknown.status).toBe(404);
-      expect(unknown.body).toEqual({
-        error: { code: 'not_found', message: t('error.notFound.message') },
-      });
-
-      const admin = await restClient(ctx, X.cookie).post(`/admin/users/${A.user.id}/purge`, {
-        confirm_email: A.user.email,
-      });
-      expect({ status: admin.status, body: admin.body }).toEqual({
-        status: 404,
-        body: unknown.body,
-      });
-      const own = await restClient(ctx, A.cookie).post('/me/purge', {
-        confirm_email: A.user.email,
-      });
-      expect({ status: own.status, body: own.body }).toEqual({ status: 404, body: unknown.body });
+    test('purge is personal-only: in team mode, an unknown route to every caller', async () => {
+      const { A, S, X } = fx.people;
+      /** What `init` gets at `path` under /api/v1. */
+      const ask = async (path: string, init: RequestInit) => {
+        const res = await ctx.request(`/api/v1${path}`, init);
+        return { status: res.status, body: (await res.json()) as unknown };
+      };
+      const confirm = { confirm_email: A.user.email };
+      // Anyone, signed in or not, admin or not, by session or token, with any body.
+      const callers: [string, RequestInit][] = [
+        ['nobody', apiInit(ctx, { body: confirm })],
+        ['a member', apiInit(ctx, { body: confirm, cookie: S.cookie })],
+        ['an admin', apiInit(ctx, { body: confirm, cookie: X.cookie })],
+        ['an admin with a bad body', apiInit(ctx, { body: {}, cookie: X.cookie })],
+        ['an admin by token', apiInit(ctx, { body: confirm, bearer: X.token })],
+        ['the person', apiInit(ctx, { body: confirm, cookie: A.cookie })],
+        ['the person by token', apiInit(ctx, { body: confirm, bearer: A.token })],
+      ];
+      for (const [who, init] of callers) {
+        const unknown = await ask('/nowhere', init);
+        expect(unknown, who).toEqual({
+          status: 404,
+          body: { error: { code: 'not_found', message: t('error.notFound.message') } },
+        });
+        expect(await ask(`/admin/users/${A.user.id}/purge`, init), who).toEqual(unknown);
+        expect(await ask('/me/purge', init), who).toEqual(unknown);
+      }
 
       // Nothing was deleted.
       const left = await ctx.deps.db.db.selectFrom('artifacts').select('id').execute();

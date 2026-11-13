@@ -9,10 +9,11 @@ const BLOB_SWEEP_INTERVAL_MS = 600_000;
 
 /**
  * The publishing side of `pinwall serve`, run once the server listens: makes sure the default
- * project exists, and schedules the hourly removal of expired content grants and tombstones,
- * and the sweep of blobs no version references every ten minutes (what a backup deferred, or
- * what a crash left behind). The temp files of puts a crash cut short go with that sweep, and
- * once at start, since the first scheduled run comes only after ten minutes.
+ * project exists, and schedules the hourly removal of expired tombstones and of content grants
+ * expired for longer than `EXPIRED_GRANT_RETENTION_MS`, and the sweep of blobs no version
+ * references every ten minutes (what a backup deferred, or what a crash left behind). The temp
+ * files of puts a crash cut short go with that sweep, and once at start, since the first
+ * scheduled run comes only after ten minutes.
  */
 export async function startPublishing(deps: AppDeps): Promise<void> {
   await ensureDefaultProject(deps);

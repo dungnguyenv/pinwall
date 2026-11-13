@@ -218,11 +218,13 @@ export async function checkQuota(db: Db, config: Config, need: QuotaNeed): Promi
 
 /**
  * In the commit transaction, after the target is held and before the first insert. Reads the
- * subject's row; only when a limit applies does it take lockUser(subject) and then read usage, so
- * the default configuration takes no new lock. The lock makes the publishes into one space take
- * turns from there to their commit, so of two that would each fit alone but not together, the
- * second sees the first's version and is refused. It is the last lock a commit takes, after the
- * artifact, the project and the role: a commit holding a user row never waits for one of those.
+ * subject's row; only when a limit applies does it take lockUser(subject), read the row again and
+ * then read usage, so the default configuration takes no new lock. The lock makes the publishes
+ * into one space take turns from there to their commit, so of two that would each fit alone but
+ * not together, the second sees the first's version and is refused; it also waits for an admin's
+ * change of the subject's limits, which the second read then sees. It is the last lock a commit
+ * takes, after the artifact, the project and the role: a commit holding a user row never waits
+ * for one of those.
  */
 export async function assertQuota(
   trx: Transaction<Database>,
@@ -230,10 +232,13 @@ export async function assertQuota(
   config: Config,
   need: QuotaNeed,
 ): Promise<void> {
-  const subject = (await projectOwnerOf(trx, config, need)) ?? (await currentRow(trx, need.actor));
+  const seen = (await projectOwnerOf(trx, config, need)) ?? (await currentRow(trx, need.actor));
+  if (applicableLimits(config, seen, need) === null) return;
+  await lockUser(trx, dialect, seen.id);
+  // The limits as they are now: an admin may have changed them while the lock waited.
+  const subject = await currentRow(trx, seen);
   const limits = applicableLimits(config, subject, need);
   if (limits === null) return;
-  await lockUser(trx, dialect, subject.id);
   assertFits(need, subject, limits, await usageOf(trx, config, subject.id));
 }
 
@@ -276,7 +281,7 @@ function applicableLimits(config: Config, subject: UserRow, need: QuotaNeed): Qu
 function assertFits(need: QuotaNeed, subject: UserRow, limits: QuotaLimits, used: Usage): void {
   const whose = subject.id === need.actor.id ? 'own' : 'other';
   const owner = subject.name ?? subject.email ?? subject.id;
-  const spaceOwner = { id: subject.id, name: subject.name };
+  const spaceOwner = { id: subject.id, name: owner };
   if (limits.artifacts !== null && used.artifacts + need.artifacts > limits.artifacts) {
     throw new AppError(
       'quota_exceeded',

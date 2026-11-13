@@ -10,6 +10,7 @@ import { connectDb } from './db/connect.ts';
 import { migrateToLatest } from './db/migrate.ts';
 import type { UserRow } from './db/schema.ts';
 import { closeDeps, createDeps } from './deps.ts';
+import { SYSTEM_SCOPE } from './domain/spaces.ts';
 import { confirmTeamVisibility, startSpaces } from './domain/spaces-startup.ts';
 import { findUserByRef, transferContent } from './domain/transfer.ts';
 import { systemClock } from './lib/clock.ts';
@@ -165,7 +166,7 @@ async function transfer(
   try {
     const from = await findUserByRef(deps.db.db, refs.from);
     const to = await findUserByRef(deps.db.db, refs.to);
-    const moved = await transferContent(deps, from, to);
+    const moved = await transferContent(deps, SYSTEM_SCOPE, from, to);
     console.log(
       t('transfer.done', {
         projects: moved.projects,

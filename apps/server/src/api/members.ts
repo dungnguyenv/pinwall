@@ -13,9 +13,9 @@ import { authOf, requireAuth } from '../auth/guards.ts';
 import { RATE_RULES, rateLimit } from '../auth/rate-limits.ts';
 import { addMember, listMembers, removeMember, setMemberRole } from '../domain/members.ts';
 import { scopeOf } from '../domain/spaces.ts';
-import { notFoundHandler } from '../http/errors.ts';
 import { jsonBodyLimit } from './body-limit.ts';
 import { IdParam } from './pagination.ts';
+import { personalOnly } from './personal-only.ts';
 
 const error = (description: string) => ({
   description,
@@ -23,12 +23,6 @@ const error = (description: string) => ({
 });
 
 const security: Record<string, string[]>[] = [{ session: [] }, { bearer: [] }];
-
-/** Members exist only in `personal` mode: in `team` mode, before authentication, an unknown route. */
-const personalOnly: MiddlewareHandler<AppEnv> = async (c, next) => {
-  if (c.var.deps.config.visibility !== 'personal') return notFoundHandler(c);
-  await next();
-};
 
 const MemberParam = IdParam.extend({ user_id: z.string().min(1).max(100) });
 

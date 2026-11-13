@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { ArtifactList, ContentGrant, PublishSession } from '@pinwall/shared';
 import type { Transaction } from 'kysely';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
+import { revokeAllCredentials } from '../../src/auth/revoke.ts';
 import type { Database } from '../../src/db/schema.ts';
 import { holdArtifact } from '../../src/domain/artifacts.ts';
 import { createProject } from '../../src/domain/projects.ts';
@@ -11,10 +12,12 @@ import {
   holdRoleIn,
   lockProject,
   roleIn,
+  SYSTEM_SCOPE,
   scopeForUser,
 } from '../../src/domain/spaces.ts';
 import { findUserByRef, type TransferResult, transferContent } from '../../src/domain/transfer.ts';
 import { usageOf } from '../../src/domain/usage.ts';
+import type { PublishTarget } from '../../src/domain/versions.ts';
 import { SSE_HEARTBEAT_MS } from '../../src/http/sse.ts';
 import { AppError } from '../../src/lib/errors.ts';
 import { t } from '../../src/lib/i18n.ts';
@@ -169,7 +172,7 @@ describe.each(dialects)('transferring a space on %s', (dialect) => {
       const before = { A: await usage(A), V: await usage(V) };
       const info = vi.spyOn(ctx.deps.logger, 'info');
 
-      const result = await transferContent(ctx.deps, A.user, V.user);
+      const result = await transferContent(ctx.deps, SYSTEM_SCOPE, A.user, V.user);
       expect(result).toEqual({
         projects: owned.length,
         artifacts: 3,
@@ -224,7 +227,7 @@ describe.each(dialects)('transferring a space on %s', (dialect) => {
       ];
       const aElsewhere = await linkTo(A, other.o);
 
-      const result = await transferContent(ctx.deps, A.user, V.user);
+      const result = await transferContent(ctx.deps, SYSTEM_SCOPE, A.user, V.user);
       // The fixture's two links on p and q, and the two made here.
       expect(result.shareLinks).toBe(4);
       expect(await makerOf(fx.ids.pLink)).toBe(V.user.id);
@@ -239,7 +242,7 @@ describe.each(dialects)('transferring a space on %s', (dialect) => {
 
     test("members stay; B's own membership in a moved project is dropped", async () => {
       const { A, E, V } = fx.people;
-      const result = await transferContent(ctx.deps, A.user, V.user);
+      const result = await transferContent(ctx.deps, SYSTEM_SCOPE, A.user, V.user);
       expect(result.membershipsDropped).toBe(1);
 
       const members = await db()
@@ -269,7 +272,7 @@ describe.each(dialects)('transferring a space on %s', (dialect) => {
       const vDefault = made.target;
       if (vDefault === null) throw new Error('V has no default project');
 
-      const result = await transferContent(ctx.deps, A.user, V.user);
+      const result = await transferContent(ctx.deps, SYSTEM_SCOPE, A.user, V.user);
       expect(result.renamedDefault).toBe('Default (from A)');
       expect(t('transfer.defaultName', { name: 'A' })).toBe('Default (from A)');
       expect(await project(made.a.id)).toMatchObject({
@@ -297,7 +300,7 @@ describe.each(dialects)('transferring a space on %s', (dialect) => {
       const { user, cookie } = await createSignedInUser(ctx, { kind: 'oidc', name: 'N' });
       const N: Person = { user, cookie, token: '' };
 
-      const result = await transferContent(ctx.deps, A.user, N.user);
+      const result = await transferContent(ctx.deps, SYSTEM_SCOPE, A.user, N.user);
       expect(result.renamedDefault).toBeNull();
       expect(await project(made.a.id)).toMatchObject({
         is_default: 1,
@@ -313,7 +316,7 @@ describe.each(dialects)('transferring a space on %s', (dialect) => {
       const onP = await grantOf(A, fx.ids.p);
       const kept = await grantOf(A, other.o);
 
-      const result = await transferContent(ctx.deps, A.user, V.user);
+      const result = await transferContent(ctx.deps, SYSTEM_SCOPE, A.user, V.user);
       expect(result.grantsEnded).toBe(mode === 'personal' ? 1 : 0);
       expect(await served(onP)).toBe(mode === 'personal' ? 410 : 200);
       expect(await served(kept)).toBe(200);
@@ -349,7 +352,7 @@ describe.each(dialects)('transferring a space on %s', (dialect) => {
       };
       expect(await recent()).toContain(fx.ids.p);
 
-      await transferContent(ctx.deps, A.user, V.user);
+      await transferContent(ctx.deps, SYSTEM_SCOPE, A.user, V.user);
       await heartbeat();
       if (mode === 'personal') {
         expect(await stream.done()).toBe(true);
@@ -390,7 +393,7 @@ describe.each(dialects)('transferring a space on %s', (dialect) => {
       });
       const before = await counts();
 
-      await transferContent(ctx.deps, A.user, V.user);
+      await transferContent(ctx.deps, SYSTEM_SCOPE, A.user, V.user);
       for (const path of [newVersion, intoP]) {
         const res = await ctx.request(path, {
           method: 'POST',
@@ -412,7 +415,7 @@ describe.each(dialects)('transferring a space on %s', (dialect) => {
     test('transfer to oneself is refused and changes nothing', async () => {
       const { A } = fx.people;
       const owned = await projectsOf(A);
-      const error = await appErrorOf(transferContent(ctx.deps, A.user, A.user));
+      const error = await appErrorOf(transferContent(ctx.deps, SYSTEM_SCOPE, A.user, A.user));
       expect(error).toMatchObject({
         status: 400,
         code: 'bad_request',
@@ -506,7 +509,7 @@ describe.runIf(dialects.includes('postgres'))('a transfer taking turns on Postgr
     try {
       await Promise.race([holding, transaction]);
       let settled = false;
-      const transfer = transferContent(ctx.deps, fx.people.A.user, to.user);
+      const transfer = transferContent(ctx.deps, SYSTEM_SCOPE, fx.people.A.user, to.user);
       void transfer.then(
         () => {
           settled = true;
@@ -552,6 +555,65 @@ describe.runIf(dialects.includes('postgres'))('a transfer taking turns on Postgr
       .where('user_id', '=', S.user.id)
       .execute();
     expect(members).toEqual([]);
+  });
+
+  test("revoking A's links while A's projects move does not deadlock", async () => {
+    const { A, V } = fx.people;
+    const { db } = ctx.deps.db;
+    // One open link of A in each moved project, on artifacts whose ids cross the projects'
+    // order: the artifact in the first project sorts after the one in the second. Visited by
+    // artifact id alone, the revocation holds the second project and then asks for the first,
+    // which the transfer holds while it asks for the second.
+    const [low, high] = [fx.ids.P, fx.ids.Q].sort() as [string, string];
+    const inHigh = high === fx.ids.P ? fx.ids.p : fx.ids.q;
+    await db
+      .updateTable('share_links')
+      .set({ revoked_at: T })
+      .where('id', '=', low === fx.ids.P ? fx.ids.pLink : fx.ids.qLink)
+      .execute();
+    let inLow = '';
+    for (let tries = 0; inLow <= inHigh; tries++) {
+      if (tries === 20) throw new Error('No new artifact sorted after the other project’s');
+      const target: PublishTarget = { kind: 'new_artifact', projectId: low, name: null, tags: [] };
+      inLow = (await publishFiles(ctx, A.user, { 'index.html': '<p>low</p>' }, target)).artifact.id;
+    }
+    await createShareLink(ctx.deps, A.user, inLow, {
+      versionId: null,
+      password: null,
+      expiresAt: null,
+      allowComments: false,
+    });
+
+    // A transaction holds inLow, so the revocation waits there, with whatever it already holds.
+    let release = () => {};
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let held = () => {};
+    const holding = new Promise<void>((resolve) => {
+      held = resolve;
+    });
+    const blocker = db.transaction().execute(async (trx) => {
+      await trx.selectFrom('artifacts').select('id').where('id', '=', inLow).forUpdate().execute();
+      held();
+      await released;
+    });
+    try {
+      await holding;
+      const revoking = revokeAllCredentials(ctx.deps, A.user.id);
+      await untilWaitingOnALock(db, revoking);
+      const transfer = transferContent(ctx.deps, SYSTEM_SCOPE, A.user, V.user);
+      // The transfer waits for the revocation, or (in project order) does not wait at all.
+      await untilWaitingOnALock(db, transfer, 2);
+      release();
+      const [revoked, moved] = await Promise.allSettled([revoking, transfer]);
+      expect(revoked.status, String((revoked as PromiseRejectedResult).reason)).toBe('fulfilled');
+      expect(moved.status, String((moved as PromiseRejectedResult).reason)).toBe('fulfilled');
+      expect((moved as PromiseFulfilledResult<TransferResult>).value.projects).toBe(2);
+    } finally {
+      release();
+      await blocker;
+    }
   });
 
   test('a link A makes while the transfer waits is handed over too', async () => {

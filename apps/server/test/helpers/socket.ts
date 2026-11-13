@@ -1,5 +1,5 @@
 import { request as httpRequest, type IncomingHttpHeaders, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { type AddressInfo, connect, type Socket } from 'node:net';
 import { serve } from '@hono/node-server';
 import type { Hono } from 'hono';
 import type { AppEnv } from '../../src/app.ts';
@@ -94,4 +94,60 @@ export function split(buf: Buffer, n: number): Buffer[] {
     chunks.push(buf.subarray(start, start + size));
   }
   return chunks;
+}
+
+/** A request whose head and first body bytes went out, and which never ends. */
+export interface OpenRequest {
+  /**
+   * Aborts the connection with a TCP RST, as a client that crashes or loses its network does.
+   * Resolves once the server has seen its side of the connection close.
+   */
+  reset(): Promise<void>;
+}
+
+/**
+ * POSTs to `path` over a raw socket: the request head with `headers`, then `first` as one chunk
+ * of a chunked body, and nothing more.
+ */
+export async function openPost(
+  server: Server,
+  port: number,
+  path: string,
+  headers: Record<string, string>,
+  first: Buffer,
+): Promise<OpenRequest> {
+  const serverSide = new Promise<Socket>((resolve) => server.once('connection', resolve));
+  const client = connect(port, '127.0.0.1');
+  client.on('error', () => {});
+  await new Promise<void>((resolve) => client.once('connect', () => resolve()));
+  const head = Object.entries({
+    host: `127.0.0.1:${port}`,
+    ...headers,
+    'transfer-encoding': 'chunked',
+  })
+    .map(([name, value]) => `${name}: ${value}\r\n`)
+    .join('');
+  client.write(`POST ${path} HTTP/1.1\r\n${head}\r\n`);
+  client.write(`${first.length.toString(16)}\r\n`);
+  client.write(first);
+  client.write('\r\n');
+  const socket = await serverSide;
+  return {
+    reset: async () => {
+      const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+      client.resetAndDestroy();
+      await closed;
+    },
+  };
+}
+
+/**
+ * Records every uncaught exception from now until `stop()`, as `pinwall serve` would die of
+ * (`main.ts` exits on one).
+ */
+export function watchUncaught(): { errors: unknown[]; stop(): void } {
+  const errors: unknown[] = [];
+  const record = (error: unknown) => errors.push(error);
+  process.on('uncaughtException', record);
+  return { errors, stop: () => process.off('uncaughtException', record) };
 }
