@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { type Expression, type RawBuilder, type SqlBool, sql } from 'kysely';
+import { type Expression, type SqlBool, sql } from 'kysely';
 import type { AppEnv } from '../app.ts';
 import { authOf } from '../auth/guards.ts';
 import type { Db } from '../auth/passkeys.ts';
@@ -11,6 +11,10 @@ import { type AppError, forbidden, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { newId } from '../lib/ids.ts';
 import { ensureDefaultProject } from './projects.ts';
+import { personalViewer, visibleCondition } from './visible-condition.ts';
+
+// Lives in visible-condition.ts, where the database layer can load it, and is part of this API.
+export { visibleCondition };
 
 /** What someone is to a project they can see. */
 export type ProjectRole = 'owner' | MemberRole;
@@ -48,28 +52,6 @@ export function scopeOf(c: Context<AppEnv>): ViewerScope {
 /** Team mode or SYSTEM_SCOPE: no condition, every role 'owner', the 1.0 rules. */
 export function seesAll(scope: Scope): boolean {
   return personalViewer(scope) === null;
-}
-
-/** The id of the person whose space limits `scope`, or null when it sees everything. */
-function personalViewer(scope: Scope): string | null {
-  return scope.kind === 'viewer' && scope.visibility === 'personal' ? scope.user.id : null;
-}
-
-/**
- * "The project in projectIdColumn is owned by or shared with the viewer"; null when seesAll.
- * Two `IN` subqueries and no join, so it fits any query on a project id column, under
- * `FOR UPDATE` and inside raw SQL alike.
- */
-export function visibleCondition(
-  scope: Scope,
-  projectIdColumn: string,
-): RawBuilder<SqlBool> | null {
-  const userId = personalViewer(scope);
-  if (userId === null) return null;
-  const column = sql.ref(projectIdColumn);
-  const owned = sql`select id from projects where owner_id = ${userId}`;
-  const shared = sql`select project_id from project_members where user_id = ${userId}`;
-  return sql<SqlBool>`(${column} in (${owned}) or ${column} in (${shared}))`;
 }
 
 /** `qb` limited to what the viewer may see, or `qb` itself when the scope sees everything. */

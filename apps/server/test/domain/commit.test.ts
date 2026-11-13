@@ -79,7 +79,7 @@ describe.each(dialects)('version commit on %s', (dialect) => {
   const db = () => ctx.deps.db.db;
   const rows = (table: keyof Database) => db().selectFrom(table).selectAll().execute();
   const count = async (table: keyof Database) => (await rows(table)).length;
-  const search = (q: string) => searchQuery(ctx.deps.db, q, 10);
+  const search = (q: string) => searchQuery(ctx.deps.db, q, 10, SYSTEM_SCOPE);
   const filesOf = (versionId: string) =>
     db().selectFrom('version_files').selectAll().where('version_id', '=', versionId).execute();
 

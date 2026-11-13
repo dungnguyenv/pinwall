@@ -21,6 +21,7 @@ import { searchQuery } from '../../src/db/dialect.ts';
 import type { UserRow } from '../../src/db/schema.ts';
 import { BACKUP_LEASE } from '../../src/domain/blobs.ts';
 import { ensureDefaultProject } from '../../src/domain/projects.ts';
+import { SYSTEM_SCOPE } from '../../src/domain/spaces.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { deriveKey, encryptString } from '../../src/lib/crypto.ts';
 import { t } from '../../src/lib/i18n.ts';
@@ -269,7 +270,9 @@ describe.each(pairs)('round trip %s → %s', (from, to) => {
       for (const s of await referencedShas(src.deps)) {
         expect(await readAll(dst.deps.blobs.get(s))).toEqual(await readAll(src.deps.blobs.get(s)));
       }
-      expect(await searchQuery(dst.deps.db, 'chup anh', 10)).toEqual([seeded.artifactId]);
+      expect(await searchQuery(dst.deps.db, 'chup anh', 10, SYSTEM_SCOPE)).toEqual([
+        seeded.artifactId,
+      ]);
       await expectServing(dst, seeded);
     },
     RESTORE_TIMEOUT_MS,

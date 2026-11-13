@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { MARKDOWN_MAX_BYTES, SCAN_MAX_BYTES } from '../../src/content/metadata.ts';
 import { searchQuery } from '../../src/db/dialect.ts';
 import type { UserRow, VersionRow } from '../../src/db/schema.ts';
+import { SYSTEM_SCOPE } from '../../src/domain/spaces.ts';
 import type { PublishTarget } from '../../src/domain/versions.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { AppError } from '../../src/lib/errors.ts';
@@ -521,7 +522,7 @@ describe.each(dialects)('ingest on %s', (dialect) => {
         'index.html': `<title>보고서</title><p>${words.join(' ')}</p>`,
       });
       for (const q of [words[0], words[40_000], words[66_664], '보고서']) {
-        expect(await searchQuery(ctx.deps.db, q ?? '', 10), q).toEqual([artifact.id]);
+        expect(await searchQuery(ctx.deps.db, q ?? '', 10, SYSTEM_SCOPE), q).toEqual([artifact.id]);
       }
     });
 

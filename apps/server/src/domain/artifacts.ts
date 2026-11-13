@@ -169,7 +169,8 @@ function inActiveProjects(db: Db) {
 /**
  * One page of the artifacts `scope` sees, narrowed by project, tag and a search. Without `q` they
  * come by last update, newest first, with ties broken by id so a page boundary never repeats or
- * skips one. With `q`, best match first; only the best 1,000 matches can be paged through.
+ * skips one. With `q`, best match first; only the best 1,000 matches `scope` sees can be paged
+ * through.
  * Without `projectId`, artifacts of archived projects are left out; with one that does not exist
  * or that `scope` does not see, 404. `q` is folded and cut to `SEARCH_MAX_WORDS` words; a blank
  * `q` is no search.
@@ -227,8 +228,10 @@ export async function listArtifacts(
 
   const offset = p.cursor === null ? 0 : decodeCursor(p.cursor, SearchCursor).o;
   const words = folded.split(' ').slice(0, SEARCH_MAX_WORDS).join(' ');
-  const hits = await searchQuery({ db, dialect }, words, SEARCH_MAX_RESULTS);
-  // The index knows nothing of projects and tags, and may still list an artifact that is gone.
+  // The best matches `scope` sees: matches in other spaces take none of their places.
+  const hits = await searchQuery({ db, dialect }, words, SEARCH_MAX_RESULTS, scope);
+  // The index knows nothing of the project asked for, archives and tags, and may still list an
+  // artifact that is gone.
   const found = new Map<string, ArtifactRow>();
   for (let start = 0; start < hits.length; start += ID_CHUNK) {
     const rows = await filtered()

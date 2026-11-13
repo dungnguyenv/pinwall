@@ -2,6 +2,7 @@ import { describe, expect, onTestFinished, test } from 'vitest';
 import type { DbHandle } from '../../src/db/connect.ts';
 import { searchDelete, searchQuery, searchUpsert } from '../../src/db/dialect.ts';
 import { migrateToLatest } from '../../src/db/migrate.ts';
+import { SYSTEM_SCOPE } from '../../src/domain/spaces.ts';
 import { SEARCH_BODY_MAX_BYTES } from '../../src/lib/search-fold.ts';
 import { dialects, withDb } from '../helpers/db.ts';
 
@@ -56,20 +57,22 @@ describe.each(dialects)('%s search', (dialect) => {
       tags: '',
       body: 'Dịch vụ chụp ảnh điện thoại',
     });
-    expect(await searchQuery(h, 'chup anh', 10)).toEqual(['art_1']);
-    expect(await searchQuery(h, 'dien thoai', 10)).toEqual(['art_1']);
-    expect(await searchQuery(h, 'Chụp', 10)).toEqual(['art_1']);
-    expect(await searchQuery(h, 'bang gi', 10)).toEqual(['art_1']); // prefix
-    expect(await searchQuery(h, 'ĐIỆN THOẠI'.normalize('NFD'), 10)).toEqual(['art_1']);
-    expect(await searchQuery(h, 'chup xe', 10)).toEqual([]); // every word must match
+    expect(await searchQuery(h, 'chup anh', 10, SYSTEM_SCOPE)).toEqual(['art_1']);
+    expect(await searchQuery(h, 'dien thoai', 10, SYSTEM_SCOPE)).toEqual(['art_1']);
+    expect(await searchQuery(h, 'Chụp', 10, SYSTEM_SCOPE)).toEqual(['art_1']);
+    expect(await searchQuery(h, 'bang gi', 10, SYSTEM_SCOPE)).toEqual(['art_1']); // prefix
+    expect(await searchQuery(h, 'ĐIỆN THOẠI'.normalize('NFD'), 10, SYSTEM_SCOPE)).toEqual([
+      'art_1',
+    ]);
+    expect(await searchQuery(h, 'chup xe', 10, SYSTEM_SCOPE)).toEqual([]); // every word must match
     await searchDelete(h, 'art_1');
-    expect(await searchQuery(h, 'chup', 10)).toEqual([]);
+    expect(await searchQuery(h, 'chup', 10, SYSTEM_SCOPE)).toEqual([]);
   });
 
   test('search ignores FTS syntax in user input', async () => {
     const h = await open('art_1');
     await searchUpsert(h, { artifactId: 'art_1', name: 'Report', tags: '', body: 'plain text' });
-    expect(await searchQuery(h, '"unbalanced AND (', 10)).toEqual([]); // must not throw
+    expect(await searchQuery(h, '"unbalanced AND (', 10, SYSTEM_SCOPE)).toEqual([]); // must not throw
     for (const q of [
       'NEAR(plain other, 2)',
       'body:plain OR x',
@@ -84,10 +87,10 @@ describe.each(dialects)('%s search', (dialect) => {
       'ː', // ... and this one into a colon
       '½',
     ]) {
-      expect(await searchQuery(h, q, 10), q).toEqual([]);
+      expect(await searchQuery(h, q, 10, SYSTEM_SCOPE), q).toEqual([]);
     }
     // Punctuation around real words is dropped, not parsed.
-    expect(await searchQuery(h, '(plain) -text*', 10)).toEqual(['art_1']);
+    expect(await searchQuery(h, '(plain) -text*', 10, SYSTEM_SCOPE)).toEqual(['art_1']);
   });
 
   test('file names, emails, hosts and paths are split into words, as the query is', async () => {
@@ -112,15 +115,15 @@ describe.each(dialects)('%s search', (dialect) => {
       body: 'https://chup.vn/anh-dep?x=1',
     });
 
-    expect(await searchQuery(h, 'dashboard', 10)).toEqual(['art_1']);
-    expect(await searchQuery(h, 'dashboard.html', 10)).toEqual(['art_1']);
-    expect(await searchQuery(h, 'example', 10)).toEqual(['art_2']);
-    expect(await searchQuery(h, 'ops@example.com', 10)).toEqual(['art_2']);
-    expect(await searchQuery(h, 'setup', 10)).toEqual(['art_3']);
-    expect(await searchQuery(h, 'docs', 10)).toEqual(['art_3']);
-    expect(await searchQuery(h, 'final v2', 10)).toEqual(['art_4']);
-    expect(await searchQuery(h, 'anh dep', 10)).toEqual(['art_4']);
-    expect(await searchQuery(h, 'chup', 10)).toEqual(['art_4']);
+    expect(await searchQuery(h, 'dashboard', 10, SYSTEM_SCOPE)).toEqual(['art_1']);
+    expect(await searchQuery(h, 'dashboard.html', 10, SYSTEM_SCOPE)).toEqual(['art_1']);
+    expect(await searchQuery(h, 'example', 10, SYSTEM_SCOPE)).toEqual(['art_2']);
+    expect(await searchQuery(h, 'ops@example.com', 10, SYSTEM_SCOPE)).toEqual(['art_2']);
+    expect(await searchQuery(h, 'setup', 10, SYSTEM_SCOPE)).toEqual(['art_3']);
+    expect(await searchQuery(h, 'docs', 10, SYSTEM_SCOPE)).toEqual(['art_3']);
+    expect(await searchQuery(h, 'final v2', 10, SYSTEM_SCOPE)).toEqual(['art_4']);
+    expect(await searchQuery(h, 'anh dep', 10, SYSTEM_SCOPE)).toEqual(['art_4']);
+    expect(await searchQuery(h, 'chup', 10, SYSTEM_SCOPE)).toEqual(['art_4']);
   });
 
   test('operator words in the query are plain words', async () => {
@@ -131,9 +134,9 @@ describe.each(dialects)('%s search', (dialect) => {
       tags: '',
       body: 'rock and roll or not',
     });
-    expect(await searchQuery(h, 'ROCK AND', 10)).toEqual(['art_1']);
-    expect(await searchQuery(h, 'NOT roll', 10)).toEqual(['art_1']);
-    expect(await searchQuery(h, 'rock OR jazz', 10)).toEqual([]);
+    expect(await searchQuery(h, 'ROCK AND', 10, SYSTEM_SCOPE)).toEqual(['art_1']);
+    expect(await searchQuery(h, 'NOT roll', 10, SYSTEM_SCOPE)).toEqual(['art_1']);
+    expect(await searchQuery(h, 'rock OR jazz', 10, SYSTEM_SCOPE)).toEqual([]);
   });
 
   test('upsert replaces the previous entry', async () => {
@@ -150,10 +153,10 @@ describe.each(dialects)('%s search', (dialect) => {
       tags: 'final',
       body: 'shared',
     });
-    expect(await searchQuery(h, 'old', 10)).toEqual([]);
-    expect(await searchQuery(h, 'draft', 10)).toEqual([]);
-    expect(await searchQuery(h, 'new final', 10)).toEqual(['art_1']);
-    expect(await searchQuery(h, 'shared', 10)).toEqual(['art_1']);
+    expect(await searchQuery(h, 'old', 10, SYSTEM_SCOPE)).toEqual([]);
+    expect(await searchQuery(h, 'draft', 10, SYSTEM_SCOPE)).toEqual([]);
+    expect(await searchQuery(h, 'new final', 10, SYSTEM_SCOPE)).toEqual(['art_1']);
+    expect(await searchQuery(h, 'shared', 10, SYSTEM_SCOPE)).toEqual(['art_1']);
   });
 
   test('ranks better matches first and honours the limit', async () => {
@@ -166,10 +169,10 @@ describe.each(dialects)('%s search', (dialect) => {
     });
     await searchUpsert(h, { artifactId: 'art_2', name: 'Ảnh', tags: 'ảnh', body: 'ảnh ảnh ảnh' });
     await searchUpsert(h, { artifactId: 'art_3', name: 'Menu', tags: '', body: 'cà phê' });
-    expect(await searchQuery(h, 'anh', 10)).toEqual(['art_2', 'art_1']);
-    expect(await searchQuery(h, 'anh', 1)).toEqual(['art_2']);
-    expect(await searchQuery(h, 'anh', 0)).toEqual([]);
-    await expect(searchQuery(h, 'anh', -1)).rejects.toThrow(RangeError);
+    expect(await searchQuery(h, 'anh', 10, SYSTEM_SCOPE)).toEqual(['art_2', 'art_1']);
+    expect(await searchQuery(h, 'anh', 1, SYSTEM_SCOPE)).toEqual(['art_2']);
+    expect(await searchQuery(h, 'anh', 0, SYSTEM_SCOPE)).toEqual([]);
+    await expect(searchQuery(h, 'anh', -1, SYSTEM_SCOPE)).rejects.toThrow(RangeError);
   });
 
   test("search writes join the caller's transaction", async () => {
@@ -180,11 +183,11 @@ describe.each(dialects)('%s search', (dialect) => {
         const scope = { db: trx, dialect: h.dialect };
         await searchUpsert(scope, { artifactId: 'art_2', name: 'Kept too', tags: '', body: '' });
         await searchDelete(scope, 'art_1');
-        expect(await searchQuery(scope, 'kept', 10)).toEqual(['art_2']);
+        expect(await searchQuery(scope, 'kept', 10, SYSTEM_SCOPE)).toEqual(['art_2']);
         throw new Error('roll back');
       }),
     ).rejects.toThrow('roll back');
-    expect(await searchQuery(h, 'kept', 10)).toEqual(['art_1']);
+    expect(await searchQuery(h, 'kept', 10, SYSTEM_SCOPE)).toEqual(['art_1']);
   });
 
   test('200k characters of distinct Korean words are indexed and stay searchable', async () => {
@@ -193,10 +196,12 @@ describe.each(dialects)('%s search', (dialect) => {
     const words = hangulWords(66_666);
     await searchUpsert(h, { artifactId: 'art_1', name: '보고서', tags: '', body: words.join(' ') });
     for (const word of [words[0], words[33_333], words[66_665], '보고서', '보고']) {
-      expect(await searchQuery(h, word ?? '', 10), word).toEqual(['art_1']);
+      expect(await searchQuery(h, word ?? '', 10, SYSTEM_SCOPE), word).toEqual(['art_1']);
     }
     // NFD input folds the same way.
-    expect(await searchQuery(h, (words[12_345] ?? '').normalize('NFD'), 10)).toEqual(['art_1']);
+    expect(await searchQuery(h, (words[12_345] ?? '').normalize('NFD'), 10, SYSTEM_SCOPE)).toEqual([
+      'art_1',
+    ]);
   });
 
   test('a body beyond SEARCH_BODY_MAX_BYTES is indexed up to it, in whole words', async () => {
@@ -205,9 +210,9 @@ describe.each(dialects)('%s search', (dialect) => {
     const words = hangulWords(200_000);
     await searchUpsert(h, { artifactId: 'art_1', name: '', tags: '', body: words.join(' ') });
     const kept = Math.floor((SEARCH_BODY_MAX_BYTES + 1) / 7);
-    expect(await searchQuery(h, words[0] ?? '', 10)).toEqual(['art_1']);
-    expect(await searchQuery(h, words[kept - 1] ?? '', 10)).toEqual(['art_1']);
-    expect(await searchQuery(h, words[kept] ?? '', 10)).toEqual([]);
-    expect(await searchQuery(h, words[199_999] ?? '', 10)).toEqual([]);
+    expect(await searchQuery(h, words[0] ?? '', 10, SYSTEM_SCOPE)).toEqual(['art_1']);
+    expect(await searchQuery(h, words[kept - 1] ?? '', 10, SYSTEM_SCOPE)).toEqual(['art_1']);
+    expect(await searchQuery(h, words[kept] ?? '', 10, SYSTEM_SCOPE)).toEqual([]);
+    expect(await searchQuery(h, words[199_999] ?? '', 10, SYSTEM_SCOPE)).toEqual([]);
   });
 });

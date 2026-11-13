@@ -1,4 +1,6 @@
 import { sql } from 'kysely';
+import type { Scope } from '../domain/spaces.ts';
+import { visibleCondition } from '../domain/visible-condition.ts';
 import { cutToUtf8Bytes, foldForSearch, SEARCH_BODY_MAX_BYTES } from '../lib/search-fold.ts';
 import type { DbDialect, DbHandle } from './connect.ts';
 
@@ -75,42 +77,69 @@ export async function searchDelete(h: DbScope, artifactId: string): Promise<void
 
 /**
  * Artifact ids whose name, tags or body contain every word of `q` as a word prefix, best match
- * first. `q` is folded, then split into runs of letters and digits, so nothing the user types
- * is ever read as query syntax.
+ * first, among those `scope` sees. `q` is folded, then split into runs of letters and digits, so
+ * nothing the user types is ever read as query syntax. A scope that sees everything runs the 1.0
+ * query, which reads the index alone. Any other scope's condition sits in the query itself,
+ * before `LIMIT`, so matches in other spaces never take the places of the viewer's own.
  */
-export async function searchQuery(h: DbScope, q: string, limit: number): Promise<string[]> {
+export async function searchQuery(
+  h: DbScope,
+  q: string,
+  limit: number,
+  scope: Scope,
+): Promise<string[]> {
   if (!Number.isSafeInteger(limit) || limit < 0) {
     throw new RangeError(`search limit must be a non-negative integer, got ${limit}`);
   }
   const words = searchWords(foldForSearch(q));
   if (words.length === 0 || limit === 0) return [];
+  const visible = visibleCondition(scope, 'a.project_id');
 
   if (h.dialect === 'sqlite') {
     // Each word becomes a quoted prefix term; terms side by side are ANDed.
     const match = words.map((word) => `"${word.replaceAll('"', '""')}"*`).join(' ');
-    const { rows } = await sql<{ artifact_id: string }>`
-      select artifact_id from search_index
-      where search_index match ${match}
-      order by rank, artifact_id
-      limit ${limit}
-    `.execute(h.db);
+    const query =
+      visible === null
+        ? sql<{ artifact_id: string }>`
+            select artifact_id from search_index
+            where search_index match ${match}
+            order by rank, artifact_id
+            limit ${limit}
+          `
+        : sql<{ artifact_id: string }>`
+            select s.artifact_id from search_index s join artifacts a on a.id = s.artifact_id
+            where s.search_index match ${match} and ${visible}
+            order by s.rank, s.artifact_id
+            limit ${limit}
+          `;
+    const { rows } = await query.execute(h.db);
     return rows.map((r) => r.artifact_id);
   }
 
   // The document went through unaccent, so the words must too. unaccent can turn a letter into
   // punctuation (U+02BC becomes an apostrophe), so each result is quoted as a tsquery lexeme
   // (quotes and backslashes escaped) before `to_tsquery` parses it: 'word':* & 'word':*
-  const { rows } = await sql<{ artifact_id: string }>`
+  const withQuery = sql`
     with q as (
       select to_tsquery('simple', string_agg(
         '''' || replace(replace(unaccent(word), '\\', '\\\\'), '''', '''''') || ''':*',
         ' & ')) as query
       from unnest(${words}::text[]) as word
-    )
-    select s.artifact_id from search_index s, q
-    where s.document @@ q.query
-    order by ts_rank(s.document, q.query) desc, s.artifact_id
-    limit ${limit}
-  `.execute(h.db);
+    )`;
+  const query =
+    visible === null
+      ? sql<{ artifact_id: string }>`${withQuery}
+          select s.artifact_id from search_index s, q
+          where s.document @@ q.query
+          order by ts_rank(s.document, q.query) desc, s.artifact_id
+          limit ${limit}
+        `
+      : sql<{ artifact_id: string }>`${withQuery}
+          select s.artifact_id from search_index s join artifacts a on a.id = s.artifact_id, q
+          where s.document @@ q.query and ${visible}
+          order by ts_rank(s.document, q.query) desc, s.artifact_id
+          limit ${limit}
+        `;
+  const { rows } = await query.execute(h.db);
   return rows.map((r) => r.artifact_id);
 }
