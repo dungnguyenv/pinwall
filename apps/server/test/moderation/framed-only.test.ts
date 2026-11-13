@@ -88,6 +88,7 @@ describe.each(dialects)('framed-only content on %s', (dialect) => {
         const refused = await get(token, path, destination);
         expect(refused.status, `${path} as ${destination}`).toBe(403);
         expect(refused.headers.get('content-security-policy')).toBe(framedCsp);
+        expect(refused.headers.get('vary')).toBe('Sec-Fetch-Dest');
         expect(await refused.text()).toContain(t('content.framedOnly.title'));
       }
 
@@ -102,11 +103,14 @@ describe.each(dialects)('framed-only content on %s', (dialect) => {
         expect(served.status, `${path} as ${destination}`).toBe(200);
         expect(served.headers.get('content-security-policy')).toContain(FRAME_ANCESTORS);
         expect(served.headers.get('content-security-policy')).toBe(framedCsp);
+        // Cached in a frame, the same URL must not be reused for a top-level load.
+        expect(served.headers.get('vary')).toBe('Sec-Fetch-Dest');
       }
 
       const missing = await get(token, 'missing.html', 'iframe');
       expect(missing.status).toBe(404);
       expect(missing.headers.get('content-security-policy')).toBe(framedCsp);
+      expect(missing.headers.get('vary')).toBe('Sec-Fetch-Dest');
 
       if (isolation === 'single-domain') {
         // `/c/<token>` without its slash redirects a frame, and refuses a top-level load.
@@ -114,6 +118,7 @@ describe.each(dialects)('framed-only content on %s', (dialect) => {
         const redirected = await root('iframe');
         expect(redirected.status).toBe(308);
         expect(redirected.headers.get('content-security-policy')).toBe(framedCsp);
+        expect(redirected.headers.get('vary')).toBe('Sec-Fetch-Dest');
         expect((await root('document')).status).toBe(403);
       }
     });
@@ -149,6 +154,7 @@ describe.each(dialects)('framed-only content on %s', (dialect) => {
       const own = await get(await previewGrant(X, artifact.id, { n: 1 }), '', 'document');
       expect(own.status).toBe(200);
       expect(own.headers.get('content-security-policy')).toBe(plainCsp);
+      expect(own.headers.get('vary')).toBeNull();
 
       const { token } = await createShareLink(ctx.deps, X.user, artifact.id, {
         versionId: null,
@@ -162,6 +168,7 @@ describe.each(dialects)('framed-only content on %s', (dialect) => {
       const shared = await get(tokenIn(content.url), '', 'document');
       expect(shared.status).toBe(200);
       expect(shared.headers.get('content-security-policy')).toBe(plainCsp);
+      expect(shared.headers.get('vary')).toBeNull();
     });
   });
 });

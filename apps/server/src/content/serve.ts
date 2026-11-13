@@ -49,7 +49,9 @@ const HEADER_NAMES = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:[ \t]*,[ \t]*[!#$%&'*+.^_`|
  * (no `X-Frame-Options`, no cookie). The sandbox policy is added in single-domain mode, where
  * content shares the app's origin. A response for a `framedOnly` grant also carries
  * `frame-ancestors 'self' <app origin>`, so only Pinwall's own pages, and the artifact's own
- * nested frames, can frame it; in single-domain mode it joins the sandbox policy. An error
+ * nested frames, can frame it; in single-domain mode it joins the sandbox policy. It also varies
+ * on `Sec-Fetch-Dest`, since the same URL answers a frame and refuses a top-level load: a browser
+ * must not reuse what it cached for one as the answer to the other. An error
  * response (`status` 400 or more) is never cached: the file, the grant or the blob it lacks may
  * be back a moment later.
  *
@@ -76,6 +78,7 @@ export function contentHeaders(
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Range, ETag',
     ...(policies.length === 0 ? {} : { 'Content-Security-Policy': policies.join('; ') }),
+    ...(framedOnly ? { Vary: 'Sec-Fetch-Dest' } : {}),
   };
 }
 
