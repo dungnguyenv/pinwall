@@ -667,7 +667,6 @@
   "web.shortcuts.frameNote": "While the page has the keyboard, keys go to the page. Click outside it first, or use the buttons.",
   "web.sidebar.shared": "Shared with me",
   "web.sidebar.sharedBy": "{{owner}} · {{role}}",
-  "web.sidebar.loadingShared": "Loading shared projects",
   "web.role.owner": "Owner",
   "web.role.editor": "Editor",
   "web.role.viewer": "Viewer",
