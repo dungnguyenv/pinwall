@@ -708,6 +708,8 @@
   "web.share.notApproved.title": "Sharing outside Pinwall needs an admin's approval",
   "web.share.notApproved.suspended": "Links you already made are suspended: they do not open until an admin approves your account.",
   "web.share.viewerRole.title": "Viewers cannot make share links",
+  "web.share.roleLoading": "Checking your role in this project",
+  "web.share.roleFailed": "Your role in this project could not be read",
   "web.review.rawUnavailable": "Raw page not available",
   "web.policy.terms": "Terms of use",
   "web.policy.privacy": "Privacy",

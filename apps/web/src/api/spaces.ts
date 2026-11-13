@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { canRevoke } from '../review/share/share-status.ts';
+import type { ApiError } from './client.ts';
 import type { ArtifactSummary, Me, Project, ShareLink, VersionSummary } from './dto.ts';
 import { useProject } from './library.ts';
 import { useMe, usePublicConfig } from './session.ts';
@@ -32,12 +33,31 @@ export function standingOf(
   return project?.role ?? null;
 }
 
-/** The person's standing in the project; in personal mode the project is read for its role. */
-export function useStanding(projectId: string | null | undefined): Standing {
+/** The person's standing, and how the read of the project that tells it went. */
+export interface StandingRead {
+  standing: Standing;
+  /** Why the project could not be read, while that leaves the standing unknown; else null. */
+  error: ApiError | null;
+  /** Reads the project again. */
+  retry(): void;
+}
+
+/** `useStanding`, with the read of the project behind it, for a page that waits on it. */
+export function useStandingRead(projectId: string | null | undefined): StandingRead {
   const visibility = useVisibility();
   const personal = visibility === 'personal' && projectId != null && projectId !== '';
   const project = useProject(projectId ?? '', { enabled: personal });
-  return standingOf(visibility, personal ? project.data : undefined);
+  const standing = standingOf(visibility, personal ? project.data : undefined);
+  return {
+    standing,
+    error: standing === null && personal ? project.error : null,
+    retry: () => void project.refetch(),
+  };
+}
+
+/** The person's standing in the project; in personal mode the project is read for its role. */
+export function useStanding(projectId: string | null | undefined): Standing {
+  return useStandingRead(projectId).standing;
 }
 
 export interface Rights {

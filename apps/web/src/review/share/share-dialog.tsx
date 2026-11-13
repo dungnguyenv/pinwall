@@ -2,11 +2,12 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Eye, Lock, TriangleAlert } from 'lucide-react';
 import { type ReactNode, type Ref, useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { errorMessage } from '../../api/client.ts';
 import type { ArtifactSummary, CreatedShareLink, VersionSummary } from '../../api/dto.ts';
 import { qk } from '../../api/keys.ts';
 import { useMe } from '../../api/session.ts';
-import { mayExpose, useArtifactRights } from '../../api/spaces.ts';
-import { Button, CopyField, Dialog } from '../../ui/index.ts';
+import { mayExpose, useArtifactRights, useStandingRead } from '../../api/spaces.ts';
+import { Button, CopyField, Dialog, ErrorState, LoadingRegion, Skeleton } from '../../ui/index.ts';
 import { ShareForm } from './share-form.tsx';
 import { LinkStatusText, LinkTitle, ShareLinkList } from './share-link-list.tsx';
 
@@ -22,7 +23,10 @@ import { LinkStatusText, LinkTitle, ShareLinkList } from './share-link-list.tsx'
  * changes: one whom the server's policy does not let make share links yet (an
  * admin has to approve them; the server may also say so mid-way, when approval
  * was taken away while the dialog was open), and a viewer of the project. Their
- * links still list, and revoke where their rights allow it.
+ * links still list, and revoke where their rights allow it. In personal mode
+ * the form also waits for the person's role in the project: while it is read
+ * the dialog says so, and if the project cannot be read it says that, with a
+ * way to try again. Never a reason that is not known to be true.
  *
  * `shown` is the version on screen, which the link can be fixed to; null when
  * it is not known, which leaves only the latest version to choose.
@@ -42,6 +46,7 @@ export function ShareDialog({
   const queryClient = useQueryClient();
   const me = useMe().data;
   const rights = useArtifactRights(artifact);
+  const role = useStandingRead(artifact.project_id);
   const formId = useId();
   const urlBox = useRef<HTMLDivElement>(null);
   const explanation = useRef<HTMLDivElement>(null);
@@ -62,8 +67,18 @@ export function ShareDialog({
 
   // Approval comes before the role, as on the server. Without a `me` the 1.0 rule applies.
   const notApproved = refused || (me != null && !mayExpose(me));
-  const viewer = !notApproved && !rights.createShareLinks;
-  const explained = notApproved || viewer;
+  // What stands where the form would be: the form when the role allows it, else why not, as
+  // far as it is known. A role still being read is no reason, and neither is one that failed.
+  const pane: 'notApproved' | 'form' | 'viewer' | 'failed' | 'reading' = notApproved
+    ? 'notApproved'
+    : rights.createShareLinks
+      ? 'form'
+      : role.standing === 'viewer'
+        ? 'viewer'
+        : role.error
+          ? 'failed'
+          : 'reading';
+  const form = pane === 'form';
 
   // The form was the focus when it went; the words that replace it take over.
   useEffect(() => {
@@ -90,18 +105,14 @@ export function ShareDialog({
       onOpenChange={onOpenChange}
       dismissible={!locked}
       title={created ? t('web.share.createdTitle') : t('web.share.title', { name: artifact.name })}
-      description={created || explained ? undefined : t('web.share.hint')}
+      description={created || !form ? undefined : t('web.share.hint')}
       // The dialog has finished closing: only now may the URL go, or its text
       // would blank out while the dialog fades.
       onCloseAutoFocus={() => setCreated(null)}
       footer={
         created ? (
           <Button onClick={() => onOpenChange(false)}>{t('web.share.done')}</Button>
-        ) : explained ? (
-          <Button variant="secondary" onClick={() => onOpenChange(false)}>
-            {t('web.common.close')}
-          </Button>
-        ) : (
+        ) : form ? (
           <>
             <Button variant="secondary" disabled={pending} onClick={() => onOpenChange(false)}>
               {t('web.common.cancel')}
@@ -110,6 +121,10 @@ export function ShareDialog({
               {t('web.share.create')}
             </Button>
           </>
+        ) : (
+          <Button variant="secondary" onClick={() => onOpenChange(false)}>
+            {t('web.common.close')}
+          </Button>
         )
       }
     >
@@ -131,15 +146,30 @@ export function ShareDialog({
         </div>
       ) : (
         <div className="flex flex-col gap-7">
-          {notApproved ? (
+          {pane === 'notApproved' ? (
             <Callout ref={explanation} icon={<Lock />} title={t('web.share.notApproved.title')}>
               <p>{t('spaces.exposure.shareLink')}</p>
               <p>{t('web.share.notApproved.suspended')}</p>
             </Callout>
-          ) : viewer ? (
+          ) : pane === 'viewer' ? (
             <Callout icon={<Eye />} title={t('web.share.viewerRole.title')}>
               <p>{t('spaces.role.createShareLink')}</p>
             </Callout>
+          ) : pane === 'failed' ? (
+            <ErrorState
+              compact
+              title={t('web.share.roleFailed')}
+              message={errorMessage(role.error, t)}
+              onRetry={role.retry}
+            />
+          ) : pane === 'reading' ? (
+            <LoadingRegion label={t('web.share.roleLoading')}>
+              <div className="flex flex-col gap-5">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-2/3" />
+              </div>
+            </LoadingRegion>
           ) : (
             <ShareForm
               artifactId={artifact.id}
@@ -162,8 +192,9 @@ export function ShareDialog({
 }
 
 /**
- * Why there is no form: a title and the reason in the server's own words. Takes
- * focus with `ref` when it replaces a form the person was using.
+ * Why there is no form: a title and the reason in the server's own words, as a
+ * status named by its title, so it is read as one piece. Takes focus with `ref`
+ * when it replaces a form the person was using.
  */
 function Callout({
   ref,
@@ -176,9 +207,12 @@ function Callout({
   title: string;
   children: ReactNode;
 }) {
+  const titleId = useId();
   return (
     <div
       ref={ref}
+      role="status"
+      aria-labelledby={titleId}
       tabIndex={-1}
       className="flex items-start gap-2.5 rounded-lg bg-surface-muted px-3.5 py-3"
     >
@@ -186,7 +220,9 @@ function Callout({
         {icon}
       </span>
       <div className="flex min-w-0 flex-col gap-1.5 text-fg-muted text-sm">
-        <p className="font-medium text-base text-fg">{title}</p>
+        <p id={titleId} className="font-medium text-base text-fg">
+          {title}
+        </p>
         {children}
       </div>
     </div>

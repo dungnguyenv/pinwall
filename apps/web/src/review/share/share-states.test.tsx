@@ -8,7 +8,7 @@ import { fx } from '../../test/fixtures.ts';
 import { renderRoute } from '../../test/render.tsx';
 import { reviewer, serveReview } from '../../test/review.ts';
 import { API, apiError, server } from '../../test/server.ts';
-import { fxShared, PERSONAL } from '../../test/spaces.ts';
+import { fxOwn, fxShared, PERSONAL } from '../../test/spaces.ts';
 
 const t = (key: string, o: Record<string, unknown> = {}) => i18n.t(key, o);
 const TIMEOUT = { timeout: 5000 };
@@ -76,7 +76,9 @@ test('a person who is not approved sees why instead of the form, and still lists
   expect(
     await within(dialog).findByText(t('web.share.notApproved.title'), {}, TIMEOUT),
   ).toBeVisible();
-  expect(within(dialog).getByText(t('spaces.exposure.shareLink'))).toBeVisible();
+  // The explanation is one named piece, so it is read as a whole.
+  const why = within(dialog).getByRole('status', { name: t('web.share.notApproved.title') });
+  expect(within(why).getByText(t('spaces.exposure.shareLink'))).toBeVisible();
   // Links made while the policy let them are suspended, which the link list does not say.
   expect(within(dialog).getByText(t('web.share.notApproved.suspended'))).toBeVisible();
   expect(within(dialog).queryByRole('button', { name: 'Create link' })).not.toBeInTheDocument();
@@ -102,7 +104,8 @@ test('a viewer sees why they cannot share, and revokes nothing', async () => {
   expect(
     await within(dialog).findByText(t('web.share.viewerRole.title'), {}, TIMEOUT),
   ).toBeVisible();
-  expect(within(dialog).getByText(t('spaces.role.createShareLink'))).toBeVisible();
+  const why = within(dialog).getByRole('status', { name: t('web.share.viewerRole.title') });
+  expect(within(why).getByText(t('spaces.role.createShareLink'))).toBeVisible();
   // Nothing about approval: the person is a viewer, not unapproved.
   expect(within(dialog).queryByText(t('web.share.notApproved.title'))).not.toBeInTheDocument();
   expect(within(dialog).queryByRole('button', { name: 'Create link' })).not.toBeInTheDocument();
@@ -123,6 +126,73 @@ test('a person who is neither approved nor an editor hears about approval first'
   expect(
     await within(dialog).findByText(t('web.share.notApproved.title'), {}, TIMEOUT),
   ).toBeVisible();
+  expect(within(dialog).queryByText(t('web.share.viewerRole.title'))).not.toBeInTheDocument();
+});
+
+/** Opens the Share dialog as soon as the version shows, before the project may have answered. */
+async function openShareAtOnce(user: UserEvent): Promise<HTMLElement> {
+  await screen.findByTitle('Pricing, v1', {}, TIMEOUT);
+  await user.click(screen.getByRole('button', { name: 'Share' }));
+  return screen.findByRole('dialog', { name: /^Share/ }, TIMEOUT);
+}
+
+test('while the role is read, the dialog says so: no reason and no form yet', async () => {
+  serveReview({ versions: [1] });
+  serveShares();
+  let answer: () => void = () => {};
+  const answered = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  server.use(
+    http.get(`${API}/projects/prj_2`, async () => {
+      await answered;
+      return HttpResponse.json(fxOwn({ id: 'prj_2', name: 'Launch site' }));
+    }),
+  );
+  const { user } = renderRoute('/a/art_1/v/1', { me: person(), config: PERSONAL });
+  const dialog = await openShareAtOnce(user);
+
+  expect(within(dialog).getByRole('status', { name: t('web.share.roleLoading') })).toBeVisible();
+  // An owner is never told they are a viewer, and nothing offers a link yet.
+  expect(within(dialog).queryByText(t('web.share.viewerRole.title'))).not.toBeInTheDocument();
+  expect(within(dialog).queryByRole('button', { name: 'Create link' })).not.toBeInTheDocument();
+  expect(within(dialog).queryByText(t('web.share.hint'))).not.toBeInTheDocument();
+
+  answer();
+  expect(await within(dialog).findByRole('button', { name: 'Create link' }, TIMEOUT)).toBeVisible();
+  expect(within(dialog).getByText(t('web.share.hint'))).toBeInTheDocument();
+  expect(
+    within(dialog).queryByRole('status', { name: t('web.share.roleLoading') }),
+  ).not.toBeInTheDocument();
+  expect(within(dialog).queryByText(t('web.share.viewerRole.title'))).not.toBeInTheDocument();
+});
+
+test('a project that cannot be read shows an error with Retry, never the viewer reason', async () => {
+  serveReview({ versions: [1] });
+  serveShares();
+  // Every read fails until the server is back.
+  let back = false;
+  server.use(
+    http.get(`${API}/projects/prj_2`, () =>
+      back
+        ? HttpResponse.json(fxShared('editor', { id: 'prj_2', name: 'Launch site' }))
+        : apiError(503, 'unavailable', 'Pinwall is busy. Try again.'),
+    ),
+  );
+  const { user } = renderRoute('/a/art_1/v/1', { me: person(), config: PERSONAL });
+  const dialog = await openShareAtOnce(user);
+
+  const failed = await within(dialog).findByRole('alert', {}, TIMEOUT);
+  expect(failed).toHaveTextContent(t('web.share.roleFailed'));
+  expect(failed).toHaveTextContent('Pinwall is busy. Try again.');
+  expect(within(dialog).queryByText(t('web.share.viewerRole.title'))).not.toBeInTheDocument();
+  expect(within(dialog).queryByRole('button', { name: 'Create link' })).not.toBeInTheDocument();
+
+  // Read again, the project says the person is an editor, who may make links.
+  back = true;
+  await user.click(within(failed).getByRole('button', { name: 'Retry' }));
+  expect(await within(dialog).findByRole('button', { name: 'Create link' }, TIMEOUT)).toBeVisible();
+  expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
   expect(within(dialog).queryByText(t('web.share.viewerRole.title'))).not.toBeInTheDocument();
 });
 
@@ -155,6 +225,10 @@ test('approval taken away while the dialog is open switches it to the explanatio
     await within(dialog).findByText(t('web.share.notApproved.title'), {}, TIMEOUT),
   ).toBeVisible();
   expect(within(dialog).getByText(t('spaces.exposure.shareLink'))).toBeVisible();
+  // The words that replace the form take its focus, and say what they are about.
+  expect(
+    within(dialog).getByRole('status', { name: t('web.share.notApproved.title') }),
+  ).toHaveFocus();
   // The person is read again, so the rest of the app learns of it too.
   await waitFor(() => expect(meReads).toBeGreaterThan(readsBefore), TIMEOUT);
   // The form and its alert are gone, and no toast speaks.
