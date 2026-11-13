@@ -943,5 +943,6 @@
   "spaces.role.revokeShareLink": "Only the project's owner, or the editor who made this link, can revoke it.",
   "spaces.role.manageProject": "Only the project's owner can rename or archive it, or change its instructions.",
   "spaces.role.manageMembers": "Only the project's owner can add, remove or change members.",
-  "spaces.move.otherSpace": "An artifact can only move between projects that have the same owner."
+  "spaces.move.otherSpace": "An artifact can only move between projects that have the same owner.",
+  "spaces.members.notMember": "This person is not a member of this project."
 }

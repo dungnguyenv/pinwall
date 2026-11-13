@@ -1,11 +1,12 @@
 import type { Context } from 'hono';
-import { type Expression, type SqlBool, sql } from 'kysely';
+import { type Expression, type SqlBool, sql, type Transaction } from 'kysely';
 import type { AppEnv } from '../app.ts';
 import { authOf } from '../auth/guards.ts';
 import type { Db } from '../auth/passkeys.ts';
 import { effectiveRole } from '../auth/roles.ts';
 import type { Visibility } from '../config/types.ts';
-import type { MemberRole, ProjectRow, UserRow } from '../db/schema.ts';
+import type { DbDialect } from '../db/connect.ts';
+import type { Database, MemberRole, ProjectRow, UserRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import { type AppError, forbidden, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
@@ -120,6 +121,19 @@ export async function rolesIn(
     if (role !== null) roles.set(row.id, role);
   }
   return roles;
+}
+
+/**
+ * Postgres: the project row FOR UPDATE until `trx` ends, so changes to one project's membership
+ * take turns. SQLite: nothing, as a transaction already has the database to itself.
+ */
+export async function lockProject(
+  trx: Transaction<Database>,
+  dialect: DbDialect,
+  projectId: string,
+): Promise<void> {
+  if (dialect !== 'postgres') return;
+  await trx.selectFrom('projects').select('id').where('id', '=', projectId).forUpdate().execute();
 }
 
 export type SpaceAction =
