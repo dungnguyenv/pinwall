@@ -2,8 +2,9 @@
 
 How to run Pinwall with Docker, choose how artifacts are isolated, put it behind a proxy or a
 Cloudflare Tunnel, install it on Kubernetes and watch it. Every setting is listed in
-[configuration.md](configuration.md); sign-in is in [sign-in.md](sign-in.md), and backups in
-[backup.md](backup.md).
+[configuration.md](configuration.md); sign-in is in [sign-in.md](sign-in.md), backups are in
+[backup.md](backup.md), and running Pinwall for people you do not know is in
+[open-instance.md](open-instance.md).
 
 - [Docker](#docker)
 - [Content isolation](#content-isolation)
@@ -94,6 +95,11 @@ Switching is a change of those variables and a restart. The links people hold, t
 through a share link, are addresses on the app origin that open the content in whichever mode is
 running, so every one of them keeps working after the restart. The address of the page itself, with
 a long token in it, is short-lived, so share the artifact's link from the app instead.
+
+An instance that is open to people you do not know should use a content domain. Strangers' pages
+then stay off the domain of the app, so a blocklisted page cannot take the app down with it; see
+[a separate content domain](open-instance.md#a-separate-content-domain) in the guide to running an
+open instance.
 
 ## Behind a proxy or Cloudflare Tunnel
 

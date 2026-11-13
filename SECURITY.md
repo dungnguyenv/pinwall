@@ -8,7 +8,8 @@ Report it privately, through GitHub's private vulnerability reporting on the rep
 request for it, and do not discuss it in public before a fix is out.
 
 A report helps most when it says which version you ran, how Pinwall was set up (single-domain or
-content-domain mode, SQLite or PostgreSQL, behind which proxy), and the steps that show the problem.
+content-domain mode, `team` or `personal` visibility, SQLite or PostgreSQL, behind which proxy), and
+the steps that show the problem.
 A maintainer will acknowledge it, work on a fix with you in the private advisory, and credit you in
 the release notes unless you would rather stay unnamed. Please give us a reasonable time to fix it
 before you publish anything.
@@ -21,8 +22,8 @@ release, upgrade to the latest one; the changelog says what changed.
 ## How Pinwall is built to be safe
 
 The short version, for deciding whether a report is a vulnerability. Pinwall's documents explain the
-choices behind them: [README.md](README.md), [docs/install.md](docs/install.md#content-isolation) and
-[docs/configuration.md](docs/configuration.md).
+choices behind them: [README.md](README.md), [docs/install.md](docs/install.md#content-isolation),
+[docs/open-instance.md](docs/open-instance.md) and [docs/configuration.md](docs/configuration.md).
 
 - **Artifacts are untrusted.** A page an agent publishes can run any script. In single-domain mode
   every content response carries a `Content-Security-Policy: sandbox` header without
@@ -44,6 +45,25 @@ choices behind them: [README.md](README.md), [docs/install.md](docs/install.md#c
 - **The app's own pages** carry a strict Content-Security-Policy, `X-Frame-Options: DENY`, and HSTS
   on https. Pinwall builds every absolute address from `PINWALL_PUBLIC_ORIGIN` and trusts forwarded
   headers only when `PINWALL_TRUST_PROXY` says so.
+- **Private spaces.** With `PINWALL_VISIBILITY=personal`, a person sees only the projects they own
+  or were added to, as a viewer or an editor. A request that names something in someone else's space
+  (a project, an artifact, a version, a comment, a share link, a content token) gets the answer that
+  an id which does not exist would get, never a 403, on REST, MCP, search, live updates and content
+  alike, so existence does not leak. Admins of the app count as someone else: they cannot read
+  private work, and moderate through metadata and the look-up of reported addresses. The operator of
+  the installation, who can read the database, can read everything, as with any self-hosted service.
+  Moving a person's space to another account is a command on the server, `pinwall transfer`, and not
+  a feature of the app, so that an admin cannot move a stranger's space into their own account to
+  read it.
+- **Who may expose content.** With `PINWALL_SHARE_LINKS=approved`, only admins and the people an
+  admin approved can make share links, open raw links or have their pages open as a top-level page.
+  For everyone else, content is served only inside Pinwall's viewer: a top-level load is refused,
+  and responses name Pinwall as the only page that may frame them. The check runs each time a link
+  is opened, and taking approval away revokes the person's links.
+- **Moderation.** Admins can look up a reported share URL, artifact link or content URL, revoke
+  links, end a version's open pages, delete a version or an artifact, and block the owner. Every
+  such action is a structured log line, which is the audit trail. Per-person quotas and rate limits
+  bound what one account can publish, share or open.
 - **Access follows the identity provider.** Someone removed at the provider loses access by the next
   re-check (12 hours by default, 24 at most), and an admin can end a person's access with
   **Revoke now**: their next request is refused, and a live-update stream they have open ends
@@ -53,15 +73,25 @@ choices behind them: [README.md](README.md), [docs/install.md](docs/install.md#c
 - **The image** runs as a non-root user with a read-only root filesystem, and is built from a base
   image pinned by digest.
 
-Things that are by design, and not vulnerabilities: everyone who can open an artifact can read every
-file in it, so a secret that an agent publishes is visible until someone deletes it (and it stays in
-older backups); a single-domain installation is weaker than one with a separate content domain, as
-the README says; every member can open every artifact of the installation, because Pinwall has no
-per-project permissions; adding a passkey, a password or an API token does not ask the person to
-sign in again, so whoever holds a signed-in session can add a lasting credential; and an OAuth
-refresh token used a second time within 120 seconds gets a new pair instead of ending the grant, so
-agents that share a sign-in do not sign each other out, which also means that a stolen refresh
-token replayed within those 120 seconds goes unnoticed.
+Things that are by design, and not vulnerabilities:
+
+- Everyone who can open an artifact can read every file in it, so a secret that an agent publishes
+  is visible until someone deletes it (and it stays in older backups).
+- A single-domain installation is weaker than one with a separate content domain, as the README
+  says.
+- In `team` mode, the default, every member can open every artifact of the installation, as in
+  Pinwall 1.0. Choose `personal` mode when people should not see each other's work.
+- With SQLite, the order of a person's search results comes from FTS5 `bm25`, which ranks with
+  statistics of the whole index. Text in other spaces can change the order of what someone finds,
+  never which results they get, and only aggregate term frequency and document length leak.
+  PostgreSQL ranking looks at one document at a time and does not depend on other documents.
+- A content grant is kept for 30 days after it expires, so that an admin can still trace a reported
+  content address to the person who made it.
+- Adding a passkey, a password or an API token does not ask the person to sign in again, so whoever
+  holds a signed-in session can add a lasting credential.
+- An OAuth refresh token used a second time within 120 seconds gets a new pair instead of ending the
+  grant, so agents that share a sign-in do not sign each other out. That also means that a stolen
+  refresh token replayed within those 120 seconds goes unnoticed.
 
 ## Verifying a release
 

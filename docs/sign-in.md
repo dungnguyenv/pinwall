@@ -1,11 +1,13 @@
 # Sign-in
 
 Who can sign in to Pinwall, and as what: the built-in owner account, and single sign-on through an
-OpenID Connect provider, with tested recipes for Zitadel, Keycloak and Google.
+OpenID Connect provider, with tested recipes for Zitadel, Keycloak and Google, and how to let anyone
+the provider signs in become a member.
 
 - [Zitadel](#zitadel)
 - [Keycloak](#keycloak)
 - [Google](#google)
+- [Open sign-up](#open-sign-up)
 
 The built-in **owner account** needs no identity provider. You create it with the setup link from
 [the first start](install.md#docker), with a passkey or a password, and it is always an admin.
@@ -120,4 +122,82 @@ PINWALL_MEMBER_EMAILS=friend@gmail.com
 address in those domains a member, and `PINWALL_MEMBER_EMAILS` adds single addresses. Only an
 address that Google reports as verified counts. Set at least one member list: when none of the
 member groups, emails and domains is set, Pinwall makes everyone that Google signs in a member,
-and any Google account can sign in.
+and any Google account can sign in. That is what an [open instance](#open-sign-up) wants, and
+nothing else should.
+
+## Open sign-up
+
+An open instance lets anyone the provider signs in become a member. Pinwall does this without a
+setting of its own: when no member group, email or domain rule is set, everyone the provider admits
+is a member, and the admin rules still make admins. A person you block stays blocked. The rest of
+the setup, such as quotas and who may share pages, is in
+[Running an open instance](open-instance.md).
+
+- **Use it only with `PINWALL_VISIBILITY=personal`,** where each person sees just their own
+  projects. In `team` mode Pinwall logs a warning at startup, because everyone the provider signs in
+  would see every project.
+- **A person whose token has no roles claim is admitted as a member.** The access re-check does not
+  count a missing claim as a removal either.
+- **The warning "a sign-in token had no roles claim" appears only when a member group rule exists.**
+  Without one, a missing claim is normal.
+
+### Zitadel with Google
+
+1. Give Pinwall's people an organization of their own in Zitadel. Set its login policy so that
+   Google is the only way in: Google added as an identity provider of the organization, with new
+   accounts created on first sign-in, and no username and password.
+2. In the Zitadel project, add the role `pinwall-admin`, switch on **Assert Roles on
+   Authentication**, and give the role to the admins. Nobody else needs a role, because a person
+   with none is a member. Leave off any project setting that requires a role to sign in, since a new
+   person has none.
+3. Register the application as in [Zitadel](#zitadel) above, with the same redirect URIs and grant
+   types.
+4. Add the scope `urn:zitadel:iam:org:id:<organization id>` to Pinwall's scopes. It keeps sign-in
+   to that organization, so its login policy is the one that applies. Optionally add
+   `urn:zitadel:iam:org:idp:id:<Google IdP id>`, which sends the person straight to Google, without
+   a login page in between.
+5. Give Pinwall these variables, with no member rule. The scope list replaces the default one, so
+   it repeats the default scopes:
+
+```sh
+PINWALL_OIDC_ISSUER=https://zitadel.example
+PINWALL_OIDC_CLIENT_ID=<client id>
+PINWALL_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc-client-secret
+PINWALL_OIDC_DISPLAY_NAME=Google
+PINWALL_OIDC_SCOPES=openid email profile offline_access urn:zitadel:iam:org:id:<organization id>
+PINWALL_OIDC_ROLES_CLAIM=urn:zitadel:iam:org:project:roles
+PINWALL_OIDC_ADMIN_GROUPS=pinwall-admin
+```
+
+### Google directly
+
+Set Google up as in [Google](#google) above, and give Pinwall only the admin list. On the OAuth
+consent screen, choose the external user type and publish the app: while it is in testing, Google
+lets in only the test users you list.
+
+```sh
+PINWALL_OIDC_ISSUER=https://accounts.google.com
+PINWALL_OIDC_CLIENT_ID=<client id>.apps.googleusercontent.com
+PINWALL_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc-client-secret
+PINWALL_OIDC_DISPLAY_NAME=Google
+PINWALL_OIDC_SCOPES=openid email profile
+PINWALL_OIDC_EXTRA_AUTH_PARAMS=access_type=offline&prompt=consent
+PINWALL_ADMIN_EMAILS=you@example.com
+```
+
+Only an address that Google reports as verified makes an admin. Every other Google account that
+signs in is a member.
+
+### Order of operations
+
+This order holds for any instance that already has people and work on it:
+
+1. **Deploy 1.1 in personal mode while the member rule still holds.** Set
+   `PINWALL_VISIBILITY=personal`, and the quota and approval settings from
+   [Settings](open-instance.md#settings), and restart.
+2. **Move the existing work with `pinwall transfer`,** and check that a second account sees none of
+   it. [Moving work between people](open-instance.md#moving-work-between-people) shows how.
+3. **Remove the member rule.** Delete the member groups, emails and domains, and restart.
+
+Removing the rule first exposes everything: until the instance is in personal mode, every member
+sees every project, and now everyone could be a member.

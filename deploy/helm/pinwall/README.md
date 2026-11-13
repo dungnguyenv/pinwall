@@ -200,6 +200,21 @@ ingress:
         - "*.pinwall-content.example"
 ```
 
+An open instance, where each person has a space of their own, links to the outside need an admin's
+approval, and every person has a quota. Add these to the `env` of your install, next to the single
+sign-on settings. The [guide to running an open instance](../../../docs/open-instance.md) explains
+each one, and the order to change an instance that already holds work in:
+
+```yaml
+env:
+  PINWALL_VISIBILITY: personal
+  PINWALL_SHARE_LINKS: approved
+  PINWALL_QUOTA_BYTES: 500MB
+  PINWALL_QUOTA_ARTIFACTS: "200"
+  PINWALL_PREVIEW_TTL: 2h
+  PINWALL_ABUSE_CONTACT: abuse@pinwall.example
+```
+
 ## What the chart sets and refuses
 
 The Deployment has one replica and the `Recreate` strategy, so the old pod stops before the new one

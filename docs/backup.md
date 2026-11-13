@@ -36,8 +36,9 @@ is no longer empty.
 What to know about the archive:
 
 - It holds the whole database: accounts, password hashes, passkeys, sessions, API and OAuth tokens
-  (as hashes), projects, artifacts, versions, comments, share links, and every stored file. It is
-  as sensitive as the database, so store and move it that way.
+  (as hashes), projects with their owners and members, the instance settings, artifacts, versions,
+  comments, share links, and every stored file. It is as sensitive as the database, so store and
+  move it that way.
 - Deleting an artifact, a version or a comment removes it from the running installation and from its
   storage. It stays in every backup made before, and a restore of such a backup brings it back. When
   something secret was published, delete the older backups too.
@@ -46,6 +47,29 @@ What to know about the archive:
   uses them for the identity provider's refresh tokens and for the unlock of password-protected
   share links. Back the key up separately, next to the archive but not inside it. Restore with a
   different key and the single sign-on users have to sign in again, which the restore warns about.
+
+## Restoring a 1.0 backup into 1.1
+
+A backup made by Pinwall 1.0 restores into 1.1 with the same commands. The result is exactly what
+you get when 1.1 migrates that database itself:
+
+- **Every project gets its owner,** as migration `0003_spaces` gives them. A project belongs to the
+  person who created it. The default project, and any project whose creator is unknown, goes to the
+  first account of these that exists: the owner account, the earliest active admin, the earliest
+  user. On an empty instance it stays without an owner until the first person who needs a default
+  project adopts it.
+- **Every person starts as not approved to expose content,** with no quota of their own (see
+  [Who may share outside Pinwall](open-instance.md#who-may-share-outside-pinwall)).
+
+Archives made by 1.1 hold two more tables than 1.0's: project members and the instance settings,
+which record the visibility mode the instance last ran in. A 1.1 archive keeps its owners as they
+were. Restoring one that was made in `personal` mode into an instance that is set to `team` is
+refused at the first start when more than one person owns a project, as
+[going back to team mode](open-instance.md#moving-work-between-people) always is.
+
+The other direction does not work: Pinwall 1.0 refuses a 1.1 archive, because it comes from a
+database with migrations that 1.0 does not have. To go back to 1.0, restore the backup you took
+before you upgraded.
 
 ## Moving from SQLite and local disk to Postgres and S3
 

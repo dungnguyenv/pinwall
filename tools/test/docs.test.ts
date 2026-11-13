@@ -213,6 +213,49 @@ describe('required contents', () => {
     expect(changelog).toMatch(/^## 1\.0\.0$/m);
   });
 
+  test('the open-instance guide gives the settings, the order and the abuse workflow', async () => {
+    const guide = await readFile(join(ROOT, 'docs/open-instance.md'), 'utf8');
+    for (const line of [
+      'PINWALL_VISIBILITY=personal',
+      'PINWALL_SHARE_LINKS=approved',
+      'PINWALL_QUOTA_BYTES=500MB',
+      'PINWALL_QUOTA_ARTIFACTS=200',
+      'PINWALL_PREVIEW_TTL=2h',
+      'PINWALL_ABUSE_CONTACT=',
+      'pinwall transfer --from',
+    ]) {
+      expect(guide, line).toContain(line);
+    }
+    expect(guide).toMatch(/30 days/);
+    const anchors = anchorsOf(guide);
+    for (const anchor of [
+      'settings',
+      'order-of-operations',
+      'quotas-and-rate-limits',
+      'who-may-share-outside-pinwall',
+      'handling-an-abuse-report',
+      'the-moderation-log',
+      'moving-work-between-people',
+      'a-separate-content-domain',
+    ]) {
+      expect(anchors.has(anchor), anchor).toBe(true);
+    }
+  });
+
+  test('sign-in has an Open sign-up section with the Zitadel role claim and no member rule', async () => {
+    const signIn = await readFile(join(ROOT, 'docs/sign-in.md'), 'utf8');
+    expect(anchorsOf(signIn).has('open-sign-up')).toBe(true);
+    const section = signIn.slice(signIn.indexOf('## Open sign-up'));
+    expect(section).toContain('PINWALL_OIDC_ROLES_CLAIM=urn:zitadel:iam:org:project:roles');
+    expect(section).toContain('PINWALL_OIDC_ADMIN_GROUPS=pinwall-admin');
+    expect(section).not.toMatch(/^PINWALL_OIDC_MEMBER_GROUPS=/m);
+  });
+
+  test('the backup guide has a section on restoring a 1.0 backup into 1.1', async () => {
+    const backup = await readFile(join(ROOT, 'docs/backup.md'), 'utf8');
+    expect(anchorsOf(backup).has('restoring-a-10-backup-into-11')).toBe(true);
+  });
+
   test('the chart README lists every value of values.yaml', async () => {
     const chart = join(ROOT, 'deploy/helm/pinwall');
     const values = parse(await readFile(join(chart, 'values.yaml'), 'utf8')) as Record<
