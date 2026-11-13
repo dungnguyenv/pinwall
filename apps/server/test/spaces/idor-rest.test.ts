@@ -1,8 +1,10 @@
 import { CommentThreadList, CreatedShareLink, GuestCreated } from '@pinwall/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { DEFAULT_PROJECT_ID, ensureDefaultProject } from '../../src/domain/projects.ts';
 import { apiInit } from '../helpers/auth.ts';
 import type { TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
+import { publishFiles } from '../helpers/publish.ts';
 import { restClient } from '../helpers/rest.ts';
 import { sampleAnchor } from '../helpers/review.ts';
 import {
@@ -200,6 +202,8 @@ const WRITES: Case[] = [
   // Team: A is neither e's publisher nor an admin; personal: A owns e's project.
   c('A', 'delete e', deletee, 403, 204),
   c('E', 'delete version 1 of p', deletepV1, 403, 403),
+  c('S', 'delete version 1 of p', deletepV1, 403, 404),
+  c('X', 'delete version 1 of p', deletepV1, 204, 404),
   c('A', 'delete version 1 of p', deletepV1, 204, 204),
 ];
 
@@ -217,6 +221,64 @@ describe.each(dialects)('REST project and artifact writes on %s', (dialect) => {
     afterAll(() => ctx?.close());
 
     test.each(WRITES)('$who: $name', (writeCase) => expectCase(ctx, fx, mode, writeCase));
+  });
+});
+
+const get =
+  (path: Path): Case['send'] =>
+  (api, i) =>
+    api.get(path(i));
+const readP = get((i) => `/projects/${i.P}`);
+const filterByP = get((i) => `/artifacts?project_id=${i.P}`);
+const sessionInP: Case['send'] = (api, i) =>
+  api.post('/publish-sessions', { target: { project_id: i.P } });
+const inlineIntoP: Case['send'] = (api, i) =>
+  api.post('/publish/inline', {
+    target: { project_id: i.P },
+    files: [{ path: 'index.html', content: '<p>Inline</p>' }],
+  });
+
+/**
+ * The default project's well-known id, `prj_00000000000000000000`, as P: A's own in personal mode
+ * (A adopted it), everyone's in team mode. A 404 must equal the answer for an unknown project.
+ */
+const DEFAULT_PROJECT: Case[] = [
+  c('A', 'read the default project', readP, 200, 200),
+  c('S', 'read the default project', readP, 200, 404),
+  c('X', 'read the default project', readP, 200, 404),
+  c('S', "list the default project's artifacts", filterByP, 200, 404),
+  c('S', 'rename the default project', renameP, 200, 404),
+  c('S', 'start a publish session in the default project', sessionInP, 201, 404),
+  c('S', 'publish inline into the default project', inlineIntoP, 201, 404),
+];
+
+describe.each(dialects)("someone else's default project on %s", (dialect) => {
+  describe.each(MODES)('in %s mode', (mode) => {
+    let ctx: TestContext;
+    let fx: SpacesFixture;
+    beforeAll(async () => {
+      ctx = await spacesContext(dialect, mode);
+      const own = await spacesFixture(ctx);
+      // The default of a fresh instance; A's first publish without a project lands there, which
+      // in personal mode makes it A's.
+      await ensureDefaultProject(ctx.deps);
+      const { artifact } = await publishFiles(ctx, own.people.A.user, {
+        'index.html': '<!doctype html><h1>Default</h1>',
+      });
+      expect(artifact.project_id).toBe(DEFAULT_PROJECT_ID);
+      const project = await ctx.deps.db.db
+        .selectFrom('projects')
+        .select('owner_id')
+        .where('id', '=', DEFAULT_PROJECT_ID)
+        .executeTakeFirstOrThrow();
+      expect(project.owner_id).toBe(mode === 'personal' ? own.people.A.user.id : null);
+      fx = { ...own, ids: { ...own.ids, P: DEFAULT_PROJECT_ID } };
+    });
+    afterAll(() => ctx?.close());
+
+    test.each(DEFAULT_PROJECT)('$who: $name', (defaultCase) =>
+      expectCase(ctx, fx, mode, defaultCase),
+    );
   });
 });
 

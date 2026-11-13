@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
+import { createShareLink, revokeShareLink } from '../../src/domain/shares.ts';
 import { SSE_HEARTBEAT_MS } from '../../src/http/sse.ts';
 import type { TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
@@ -23,7 +24,7 @@ const fakeHeartbeat = () => vi.useFakeTimers({ toFake: ['setInterval', 'clearInt
 /** Moves the faked interval on to the next heartbeat: a ping, then the access check. */
 const heartbeat = () => vi.advanceTimersByTimeAsync(SSE_HEARTBEAT_MS);
 
-describe.each(dialects)('member live streams on %s', (dialect) => {
+describe.each(dialects)('live streams in spaces on %s', (dialect) => {
   describe.each(MODES)('in %s mode', (mode) => {
     let ctx: TestContext;
     let server: Awaited<ReturnType<typeof listen>>;
@@ -90,6 +91,43 @@ describe.each(dialects)('member live streams on %s', (dialect) => {
       }
       expect(await s.done(STAYS_OPEN_MS)).toBe(false);
       await s.cancel();
+    });
+
+    test("a share link's stream ends within one heartbeat of its maker losing sight", async () => {
+      fakeHeartbeat();
+      const { E } = fx.people;
+      const options = { versionId: null, password: null, expiresAt: null, allowComments: true };
+      const { token } = await createShareLink(ctx.deps, E.user, fx.ids.p, options);
+      // A link E revoked: what a link whose maker lost sight must answer like.
+      const revoked = await createShareLink(ctx.deps, E.user, fx.ids.p, options);
+      await revokeShareLink(ctx.deps, E.user, revoked.row.id);
+      const openShare = (of: string) =>
+        fetch(`http://127.0.0.1:${server.port}/api/v1/share/${of}/events`);
+
+      const res = await openShare(token);
+      expect(res.status, res.status === 200 ? '' : await res.text()).toBe(200);
+      const s = readSse(res);
+      expect(await s.next()).toBe(RETRY);
+      // A heartbeat while E sees p leaves the guest's stream open.
+      await heartbeat();
+      expect(await s.done(STAYS_OPEN_MS)).toBe(false);
+
+      await removeMember(ctx, fx.ids.P, E.user.id);
+      await heartbeat();
+      if (mode === 'team') {
+        expect(await s.done(STAYS_OPEN_MS)).toBe(false);
+        await s.cancel();
+        return;
+      }
+      expect(await s.done()).toBe(true);
+      // Opened again, it answers as the revoked link's stream does.
+      const refused = await openShare(token);
+      const gone = await openShare(revoked.token);
+      expect(refused.status).toBe(410);
+      sameAnswer(
+        { status: refused.status, body: await refused.json() },
+        { status: gone.status, body: await gone.json() },
+      );
     });
   });
 });

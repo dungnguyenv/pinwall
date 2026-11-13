@@ -160,5 +160,39 @@ describe.each(dialects)('content and links on %s', (dialect) => {
       await addMember(ctx, P, E.user.id, 'editor', A.user.id);
       await expectOpens();
     });
+
+    test("a share link's original stops opening when its maker can no longer see the artifact", async () => {
+      const { A, E } = fx.people;
+      const { P, p } = fx.ids;
+      // Open to comments: `/s/<token>` hands on to the share viewer, and `original` is the only
+      // way to the stored bytes.
+      const options = { versionId: null, password: null, expiresAt: null, allowComments: true };
+      const { token } = await createShareLink(ctx.deps, E.user, p, options);
+      const revoked = await createShareLink(ctx.deps, E.user, p, options);
+      await revokeShareLink(ctx.deps, E.user, revoked.row.id);
+
+      const original = (of: string) => ctx.request(`/s/${of}/original`, { redirect: 'manual' });
+
+      /** `original` redirects to a new raw grant, which serves. */
+      async function expectOpens(): Promise<void> {
+        const opened = await original(token);
+        expect(opened.status, await opened.clone().text()).toBe(302);
+        const bytes = await ctx.request(opened.headers.get('location') ?? '');
+        expect(bytes.status).toBe(200);
+      }
+
+      await expectOpens();
+      await removeMember(ctx, P, E.user.id);
+      if (mode === 'team') {
+        await expectOpens();
+        return;
+      }
+      const refused = await answerOf(await original(token));
+      expect(refused.status).toBe(410);
+      sameAnswer(refused, await answerOf(await original(revoked.token)));
+
+      await addMember(ctx, P, E.user.id, 'editor', A.user.id);
+      await expectOpens();
+    });
   });
 });

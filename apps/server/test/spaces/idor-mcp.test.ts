@@ -1,7 +1,7 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
-import { DEFAULT_PROJECT_ID } from '../../src/domain/projects.ts';
+import { DEFAULT_PROJECT_ID, ensureDefaultProject } from '../../src/domain/projects.ts';
 import { t } from '../../src/lib/i18n.ts';
 import type {
   ListArtifactsOut,
@@ -12,6 +12,7 @@ import type {
 import type { TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 import { connectMcp, toolText } from '../helpers/mcp.ts';
+import { publishFiles } from '../helpers/publish.ts';
 import {
   type CaseIds,
   MODES,
@@ -231,6 +232,82 @@ describe.each(dialects)('MCP tools in spaces on %s', (dialect) => {
       const { project: theirs } = await owner.ok<ProjectDetailOut>('get_project');
       expect(theirs.is_default).toBe(true);
       expect(theirs.id).not.toBe(project.id);
+    });
+  });
+});
+
+/**
+ * Each tool that takes a project id, with the arguments that name `projectId`: the default
+ * project's well-known id, or an unknown one.
+ */
+const PROJECT_TOOLS: [string, (projectId: string) => Record<string, unknown>][] = [
+  ['get_project', (projectId) => ({ project_id: projectId })],
+  ['list_artifacts', (projectId) => ({ project_id: projectId })],
+  ['search_artifacts', (projectId) => ({ query: 'Default', project_id: projectId })],
+  ['create_publish_session', (projectId) => ({ project_id: projectId })],
+  [
+    'publish_inline',
+    (projectId) => ({
+      project_id: projectId,
+      files: [{ path: 'index.html', content: '<p>x</p>' }],
+    }),
+  ],
+];
+
+describe.each(dialects)("MCP tools on someone else's default project on %s", (dialect) => {
+  describe.each(MODES)('in %s mode', (mode) => {
+    let ctx: TestContext;
+    let fx: SpacesFixture;
+    let clients: Client[];
+    beforeAll(async () => {
+      ctx = await spacesContext(dialect, mode);
+      fx = await spacesFixture(ctx);
+      // The default of a fresh instance; A's first publish without a project lands there, which
+      // in personal mode makes it A's.
+      await ensureDefaultProject(ctx.deps);
+      const { artifact } = await publishFiles(ctx, fx.people.A.user, {
+        'index.html': '<!doctype html><h1>Default</h1>',
+      });
+      expect(artifact.project_id).toBe(DEFAULT_PROJECT_ID);
+    });
+    beforeEach(() => {
+      clients = [];
+    });
+    afterEach(() => Promise.all(clients.map((client) => client.close())));
+    afterAll(() => ctx?.close());
+
+    /** A call of `name` by `who`'s agent, signed in with their API token. */
+    async function callAs(who: Who, name: string, args: Record<string, unknown>) {
+      const client = await connectMcp(ctx, { bearer: fx.people[who].token });
+      clients.push(client);
+      return (await client.callTool({ name, arguments: args })) as CallToolResult;
+    }
+
+    test('A reads it as its owner in personal mode, as everyone does in team mode', async () => {
+      const r = await callAs('A', 'get_project', { project_id: DEFAULT_PROJECT_ID });
+      expect(r.isError, toolText(r)).toBeFalsy();
+      const { project } = r.structuredContent as ProjectDetailOut;
+      expect(project).toMatchObject({ id: DEFAULT_PROJECT_ID, is_default: true });
+      if (mode === 'personal') {
+        expect(project).toMatchObject({ role: 'owner', owner: { id: fx.people.A.user.id } });
+      }
+    });
+
+    describe.each(['S', 'X'] as const)('%s naming it', (who) => {
+      test.each(PROJECT_TOOLS)(
+        '%s: personal answers as for an unknown project; team as 1.0',
+        async (name, argsOf) => {
+          const r = await callAs(who, name, argsOf(DEFAULT_PROJECT_ID));
+          if (mode === 'team') {
+            expect(r.isError, toolText(r)).toBeFalsy();
+            return;
+          }
+          const missing = await callAs(who, name, argsOf(UNKNOWN_IDS.P));
+          expect(r.isError, toolText(r)).toBe(true);
+          expect(toolText(r)).toBe(toolText(missing));
+          expect(r.structuredContent).toEqual(missing.structuredContent);
+        },
+      );
     });
   });
 });
