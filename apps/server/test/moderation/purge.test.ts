@@ -89,8 +89,15 @@ describe.each(dialects)('purging a space on %s', (dialect) => {
         .where('id', '=', A.user.id)
         .executeTakeFirst();
       expect(user).toBeDefined();
+      // Logged once it ran, with what it deleted.
       expect(info).toHaveBeenCalledWith(
-        { admin_id: X.user.id, action: 'user.purge', target: { user_id: A.user.id } },
+        {
+          admin_id: X.user.id,
+          action: 'user.purge',
+          target: { user_id: A.user.id },
+          outcome: 'done',
+          result: { projects: owned.length, artifacts: 3 },
+        },
         'moderation',
       );
     });
@@ -140,6 +147,7 @@ describe.each(dialects)('purging a space on %s', (dialect) => {
     test('purge needs the email typed exactly', async () => {
       const { A, X } = fx.people;
       const owned = await projectsOf(A);
+      const info = vi.spyOn(ctx.deps.logger, 'info');
       for (const typed of ['nope', ` ${A.user.email}x`, A.user.id]) {
         const r = await purge(X, A.user.id, typed);
         expect(r.status, typed).toBe(400);
@@ -151,6 +159,22 @@ describe.each(dialects)('purging a space on %s', (dialect) => {
           },
         });
       }
+      // Refused, and logged as refused: nothing reads as a purge that did not happen.
+      expect(info).toHaveBeenCalledWith(
+        {
+          admin_id: X.user.id,
+          action: 'user.purge',
+          target: { user_id: A.user.id },
+          outcome: 'refused',
+          status: 400,
+          code: 'bad_request',
+        },
+        'moderation',
+      );
+      expect(info).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'user.purge', outcome: 'done' }),
+        'moderation',
+      );
       expect(
         (await restClient(ctx, X.cookie).post(`/admin/users/${A.user.id}/purge`, {})).status,
       ).toBe(400);

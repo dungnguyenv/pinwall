@@ -8,10 +8,16 @@ import {
 } from '@pinwall/shared';
 import type { MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../app.ts';
-import { logModeration } from '../auth/admin-users.ts';
+import { moderated } from '../auth/admin-users.ts';
 import { authOf, requireAdmin } from '../auth/guards.ts';
+import type { Config } from '../config/types.ts';
 import { systemDeleteArtifact, systemDeleteVersion } from '../domain/deletion.ts';
-import { endVersionGrants, listActiveShareLinks, lookupReportedUrl } from '../domain/moderation.ts';
+import {
+  endVersionGrants,
+  listActiveShareLinks,
+  lookupReportedUrl,
+  parseReportedUrl,
+} from '../domain/moderation.ts';
 import { systemRevokeShareLink } from '../domain/shares.ts';
 import { SYSTEM_SCOPE } from '../domain/spaces.ts';
 import { jsonBodyLimit } from './body-limit.ts';
@@ -154,6 +160,18 @@ const endGrants = createRoute({
 
 const noStore = { 'Cache-Control': 'no-store' };
 
+/**
+ * What a look-up's log line says it was asked about: the kind of address (null when it is none
+ * this Pinwall hands out), and the artifact when the address names one by id. Never the address,
+ * and never a token.
+ */
+function lookupTarget(config: Config, url: string): Record<string, unknown> {
+  const reported = parseReportedUrl(config, url);
+  if (reported === null) return { kind: null };
+  if (reported.kind === 'artifact') return { kind: 'artifact', artifact_id: reported.id };
+  return { kind: reported.kind === 'share' ? 'share_link' : 'content_grant' };
+}
+
 export function registerAdminModerationRoutes(api: OpenAPIHono<AppEnv>): void {
   api.openapi(listLinks, async (c) => {
     const { limit, cursor } = c.req.valid('query');
@@ -167,42 +185,55 @@ export function registerAdminModerationRoutes(api: OpenAPIHono<AppEnv>): void {
   api.openapi(revokeLink, async (c) => {
     const { deps } = c.var;
     const { id } = c.req.valid('param');
-    await systemRevokeShareLink(deps, SYSTEM_SCOPE, id);
-    logModeration(deps, authOf(c).user.id, 'share_link.revoke', { share_link_id: id });
+    await moderated(deps, authOf(c).user.id, 'share_link.revoke', { share_link_id: id }, () =>
+      systemRevokeShareLink(deps, SYSTEM_SCOPE, id),
+    );
     return c.body(null, 204);
   });
 
   api.openapi(lookup, async (c) => {
     const { deps } = c.var;
-    const found = await lookupReportedUrl(deps, SYSTEM_SCOPE, c.req.valid('json').url);
-    logModeration(deps, authOf(c).user.id, 'lookup', {
-      kind: found.kind,
-      artifact_id: found.artifact.id,
-    });
+    const { url } = c.req.valid('json');
+    const found = await moderated(
+      deps,
+      authOf(c).user.id,
+      'lookup',
+      lookupTarget(deps.config, url),
+      () => lookupReportedUrl(deps, SYSTEM_SCOPE, url),
+      (result) => ({ artifact_id: result.artifact.id }),
+    );
     return c.json(found, 200, noStore);
   });
 
   api.openapi(deleteArtifact, async (c) => {
     const { deps } = c.var;
     const { id } = c.req.valid('param');
-    await systemDeleteArtifact(deps, SYSTEM_SCOPE, id);
-    logModeration(deps, authOf(c).user.id, 'artifact.delete', { artifact_id: id });
+    await moderated(deps, authOf(c).user.id, 'artifact.delete', { artifact_id: id }, () =>
+      systemDeleteArtifact(deps, SYSTEM_SCOPE, id),
+    );
     return c.body(null, 204);
   });
 
   api.openapi(deleteVersion, async (c) => {
     const { deps } = c.var;
     const { id, n } = c.req.valid('param');
-    await systemDeleteVersion(deps, SYSTEM_SCOPE, id, n);
-    logModeration(deps, authOf(c).user.id, 'version.delete', { artifact_id: id, number: n });
+    await moderated(deps, authOf(c).user.id, 'version.delete', { artifact_id: id, number: n }, () =>
+      systemDeleteVersion(deps, SYSTEM_SCOPE, id, n),
+    );
     return c.body(null, 204);
   });
 
   api.openapi(endGrants, async (c) => {
     const { deps } = c.var;
     const { id } = c.req.valid('param');
-    const grants = await endVersionGrants(deps, SYSTEM_SCOPE, id);
-    logModeration(deps, authOf(c).user.id, 'version.end_grants', { version_id: id });
+    const grants = await moderated(
+      deps,
+      authOf(c).user.id,
+      'version.end_grants',
+      { version_id: id },
+      () => endVersionGrants(deps, SYSTEM_SCOPE, id),
+      (ended) => ({ grants: ended }),
+    );
     return c.json({ grants }, 200, noStore);
   });
 }

@@ -145,8 +145,18 @@ describe.each(dialects)('admin users moderation on %s', (dialect) => {
         quota_bytes: 1000,
         quota_artifacts: null,
       });
+      // The change asked for, and what it revoked.
       expect(info).toHaveBeenCalledWith(
-        { admin_id: X.user.id, action: 'user.update', target: { user_id: E.user.id } },
+        {
+          admin_id: X.user.id,
+          action: 'user.update',
+          target: {
+            user_id: E.user.id,
+            changes: { share_approved: true, quota_bytes: 1000, quota_artifacts: null },
+          },
+          outcome: 'done',
+          result: { share_links: 0 },
+        },
         'moderation',
       );
       const row = await ctx.deps.db.db
@@ -176,11 +186,23 @@ describe.each(dialects)('admin users moderation on %s', (dialect) => {
       expect(denied.status).toBe(403);
       expect(denied.body).toEqual({ error: { code: 'forbidden', message: t('auth.adminOnly') } });
 
+      const info = vi.spyOn(ctx.deps.logger, 'info');
       const unknown = await patch(ctx, X, 'usr_nobody', { share_approved: true });
       expect(unknown.status).toBe(404);
       expect(unknown.body).toEqual({
         error: { code: 'not_found', message: t('auth.userNotFound') },
       });
+      expect(info).toHaveBeenCalledWith(
+        {
+          admin_id: X.user.id,
+          action: 'user.update',
+          target: { user_id: 'usr_nobody', changes: { share_approved: true } },
+          outcome: 'refused',
+          status: 404,
+          code: 'not_found',
+        },
+        'moderation',
+      );
     });
 
     test("removing approval revokes the person's links when links need approval", async () => {
@@ -190,9 +212,18 @@ describe.each(dialects)('admin users moderation on %s', (dialect) => {
       expect(await opens(ap, link.token)).toBe(302);
       expect(await liveLinksOf(E)).toBe(2);
 
+      const info = vi.spyOn(ctx.deps.logger, 'info');
       const r = await patch(ap, X, E.user.id, { share_approved: false });
       expect(r.status, JSON.stringify(r.body)).toBe(200);
       expect(r.body).toMatchObject({ id: E.user.id, share_approved: false });
+      expect(info).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'user.update',
+          outcome: 'done',
+          result: { share_links: 2 },
+        }),
+        'moderation',
+      );
 
       const gone = await ap.request(`/s/${link.token}`, { redirect: 'manual' });
       expect(gone.status).toBe(410);

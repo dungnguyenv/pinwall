@@ -16,7 +16,7 @@ import type { AppEnv } from '../app.ts';
 import {
   getUser,
   listUsers,
-  logModeration,
+  moderated,
   setRoleOverride,
   updateUserModeration,
   userExists,
@@ -235,12 +235,19 @@ export function registerAdminUserRoutes(api: OpenAPIHono<AppEnv>): void {
     const { deps } = c.var;
     const { id } = c.req.valid('param');
     const body = c.req.valid('json');
-    const { user } = await updateUserModeration(deps, id, {
-      ...(body.share_approved === undefined ? {} : { shareApproved: body.share_approved }),
-      ...(body.quota_bytes === undefined ? {} : { quotaBytes: body.quota_bytes }),
-      ...(body.quota_artifacts === undefined ? {} : { quotaArtifacts: body.quota_artifacts }),
-    });
-    logModeration(deps, authOf(c).user.id, 'user.update', { user_id: id });
+    const { user } = await moderated(
+      deps,
+      authOf(c).user.id,
+      'user.update',
+      { user_id: id, changes: body },
+      () =>
+        updateUserModeration(deps, id, {
+          ...(body.share_approved === undefined ? {} : { shareApproved: body.share_approved }),
+          ...(body.quota_bytes === undefined ? {} : { quotaBytes: body.quota_bytes }),
+          ...(body.quota_artifacts === undefined ? {} : { quotaArtifacts: body.quota_artifacts }),
+        }),
+      (updated) => ({ share_links: updated.shareLinks }),
+    );
     return c.json(await adminUserOf(deps, user), 200, noStore);
   });
 
@@ -249,9 +256,18 @@ export function registerAdminUserRoutes(api: OpenAPIHono<AppEnv>): void {
     const { id } = c.req.valid('param');
     const { confirm_email } = c.req.valid('json');
     assertPurgeAvailable(deps);
-    assertPurgeConfirmed(await getUser(deps, id), confirm_email);
-    logModeration(deps, authOf(c).user.id, 'user.purge', { user_id: id });
-    return c.json(await purgeSpace(deps, SYSTEM_SCOPE, id), 200, noStore);
+    const purged = await moderated(
+      deps,
+      authOf(c).user.id,
+      'user.purge',
+      { user_id: id },
+      async () => {
+        assertPurgeConfirmed(await getUser(deps, id), confirm_email);
+        return purgeSpace(deps, SYSTEM_SCOPE, id);
+      },
+      (result) => ({ projects: result.projects, artifacts: result.artifacts }),
+    );
+    return c.json(purged, 200, noStore);
   });
 
   api.openapi(revokeNow, async (c) => {

@@ -260,6 +260,7 @@ describe.each(dialects)('admin moderation on %s', (dialect) => {
           admin_id: X.user.id,
           action: 'share_link.revoke',
           target: { share_link_id: fx.ids.pLink },
+          outcome: 'done',
         },
         'moderation',
       );
@@ -273,9 +274,22 @@ describe.each(dialects)('admin moderation on %s', (dialect) => {
 
     test('revoking a link that does not exist answers 404, even for another space', async () => {
       const { X } = fx.people;
+      const info = vi.spyOn(ctx.deps.logger, 'info');
       const r = await api(ctx, X).del(`/admin/share-links/${UNKNOWN_IDS.pLink}`);
       expect(r.status).toBe(404);
       expect(r.body).toEqual({ error: { code: 'not_found', message: t('share.unknown') } });
+      // A refused attempt is in the audit trail too.
+      expect(info).toHaveBeenCalledWith(
+        {
+          admin_id: X.user.id,
+          action: 'share_link.revoke',
+          target: { share_link_id: UNKNOWN_IDS.pLink },
+          outcome: 'refused',
+          status: 404,
+          code: 'not_found',
+        },
+        'moderation',
+      );
       // Not X's to see in personal mode, and still theirs to revoke.
       expect((await api(ctx, X).del(`/admin/share-links/${fx.ids.qLink}`)).status).toBe(204);
     });
@@ -316,7 +330,13 @@ describe.each(dialects)('admin moderation on %s', (dialect) => {
 
         // Logged as its kind and the artifact, never as the URL or its token.
         expect(info).toHaveBeenCalledWith(
-          { admin_id: X.user.id, action: 'lookup', target: { kind, artifact_id: fx.ids.p } },
+          {
+            admin_id: X.user.id,
+            action: 'lookup',
+            target: kind === 'artifact' ? { kind, artifact_id: fx.ids.p } : { kind },
+            outcome: 'done',
+            result: { artifact_id: fx.ids.p },
+          },
           'moderation',
         );
         const logged = JSON.stringify(info.mock.calls);
@@ -513,20 +533,38 @@ describe.each(dialects)('admin moderation on %s', (dialect) => {
       const { X } = fx.people;
       const u = await urlsOf(ctx, fx);
       const qToken = await tokenOf(ctx, fx.ids.qLink);
-      const lookup = (url: string) => api(ctx, X).post('/admin/lookup', { url });
+      const unknownShare = newSecret();
+      const unknownGrant = newContentToken();
+      const info = vi.spyOn(ctx.deps.logger, 'info');
+      const lines: unknown[] = [];
+      /** Looks `url` up, and checks the refusal was logged with `target`, never the address. */
+      const lookup = async (url: string, target: object, status: number, code: string) => {
+        info.mockClear();
+        const r = await api(ctx, X).post('/admin/lookup', { url });
+        expect(info, url).toHaveBeenCalledWith(
+          { admin_id: X.user.id, action: 'lookup', target, outcome: 'refused', status, code },
+          'moderation',
+        );
+        lines.push(...info.mock.calls);
+        return r;
+      };
       const unknown = { error: { code: 'not_found', message: t('moderation.lookup.unknown') } };
       const goneBody = { error: { code: 'gone', message: t('moderation.lookup.gone') } };
+      const none = { kind: null };
+      const share = { kind: 'share_link' };
+      const grant = { kind: 'content_grant' };
+      const artifact = (id: string) => ({ kind: 'artifact', artifact_id: id });
 
-      for (const url of [
-        `https://evil.example/s/${u.pToken}`,
-        `${u.origin}/s/${newSecret()}`,
-        `${u.origin}/a/${UNKNOWN_IDS.p}`,
-        `${u.origin}/a/${fx.ids.p}/v/9`,
-        `${u.origin}/c/${newContentToken()}/index.html`,
-        `${u.origin}/settings`,
-        u.origin,
-      ]) {
-        const r = await lookup(url);
+      for (const [url, target] of [
+        [`https://evil.example/s/${u.pToken}`, none],
+        [`${u.origin}/s/${unknownShare}`, share],
+        [`${u.origin}/a/${UNKNOWN_IDS.p}`, artifact(UNKNOWN_IDS.p)],
+        [`${u.origin}/a/${fx.ids.p}/v/9`, artifact(fx.ids.p)],
+        [`${u.origin}/c/${unknownGrant}/index.html`, grant],
+        [`${u.origin}/settings`, none],
+        [u.origin, none],
+      ] as const) {
+        const r = await lookup(url, target, 404, 'not_found');
         expect({ url, status: r.status, body: r.body }).toEqual({
           url,
           status: 404,
@@ -537,13 +575,13 @@ describe.each(dialects)('admin moderation on %s', (dialect) => {
       // Taken down: the artifact, a version, and the links and grants that went with them.
       expect((await api(ctx, X).del(`/admin/artifacts/${fx.ids.q}`)).status).toBe(204);
       expect((await api(ctx, X).del(`/admin/artifacts/${fx.ids.p}/versions/1`)).status).toBe(204);
-      for (const url of [
-        `${u.origin}/a/${fx.ids.q}`,
-        `${u.origin}/a/${fx.ids.p}/v/1`,
-        `${u.origin}/s/${qToken}`,
-        u.contentUrl(u.aGrantOnV1, 'index.html'),
-      ]) {
-        const r = await lookup(url);
+      for (const [url, target] of [
+        [`${u.origin}/a/${fx.ids.q}`, artifact(fx.ids.q)],
+        [`${u.origin}/a/${fx.ids.p}/v/1`, artifact(fx.ids.p)],
+        [`${u.origin}/s/${qToken}`, share],
+        [u.contentUrl(u.aGrantOnV1, 'index.html'), grant],
+      ] as const) {
+        const r = await lookup(url, target, 410, 'gone');
         expect({ url, status: r.status, body: r.body }).toEqual({
           url,
           status: 410,
@@ -556,13 +594,18 @@ describe.each(dialects)('admin moderation on %s', (dialect) => {
         'ftp://pinwall.example/a/x',
         '   ',
       ]) {
-        const r = await lookup(url);
+        const r = await lookup(url, none, 400, 'bad_request');
         expect({ url, status: r.status }).toEqual({ url, status: 400 });
         expect(r.body).toMatchObject({
           error: { code: 'bad_request', message: t('moderation.lookup.badUrl') },
         });
       }
-      expect((await lookup('')).status).toBe(400);
+      expect((await api(ctx, X).post('/admin/lookup', { url: '' })).status).toBe(400);
+      // Not one address or token reached the log.
+      const logged = JSON.stringify(lines);
+      for (const secret of [u.pToken, qToken, unknownShare, unknownGrant, u.aGrantOnV1]) {
+        expect(logged).not.toContain(secret);
+      }
     });
 
     test('look-up of a link whose artifact was deleted answers 410', async () => {
@@ -585,27 +628,36 @@ describe.each(dialects)('admin moderation on %s', (dialect) => {
       const deleted = await api(ctx, X).del(`/admin/artifacts/${fx.ids.q}`);
       expect(deleted.status, JSON.stringify(deleted.body)).toBe(204);
       expect((await api(ctx, A).get(`/artifacts/${fx.ids.q}`)).status).toBe(410);
-      expect(info).toHaveBeenCalledWith(
-        { admin_id: X.user.id, action: 'artifact.delete', target: { artifact_id: fx.ids.q } },
+      const line = (action: string, target: object, outcome: object) => [
+        { admin_id: X.user.id, action, target, ...outcome },
         'moderation',
+      ];
+      const done = { outcome: 'done' };
+      const refused = (status: number, code: string) => ({ outcome: 'refused', status, code });
+      expect(info).toHaveBeenCalledWith(
+        ...line('artifact.delete', { artifact_id: fx.ids.q }, done),
       );
-      // Deleting it again, or what was never there.
+      // Deleting it again, or what was never there: refused, and logged as such.
       expect((await api(ctx, X).del(`/admin/artifacts/${fx.ids.q}`)).status).toBe(410);
+      expect(info).toHaveBeenCalledWith(
+        ...line('artifact.delete', { artifact_id: fx.ids.q }, refused(410, 'gone')),
+      );
       expect((await api(ctx, X).del(`/admin/artifacts/${UNKNOWN_IDS.q}`)).status).toBe(404);
+      expect(info).toHaveBeenCalledWith(
+        ...line('artifact.delete', { artifact_id: UNKNOWN_IDS.q }, refused(404, 'not_found')),
+      );
 
       const version = await api(ctx, X).del(`/admin/artifacts/${fx.ids.p}/versions/1`);
       expect(version.status, JSON.stringify(version.body)).toBe(204);
       expect((await api(ctx, A).get(`/artifacts/${fx.ids.p}/versions/1`)).status).toBe(410);
       expect((await api(ctx, A).get(`/artifacts/${fx.ids.p}/versions/2`)).status).toBe(200);
       expect(info).toHaveBeenCalledWith(
-        {
-          admin_id: X.user.id,
-          action: 'version.delete',
-          target: { artifact_id: fx.ids.p, number: 1 },
-        },
-        'moderation',
+        ...line('version.delete', { artifact_id: fx.ids.p, number: 1 }, done),
       );
       expect((await api(ctx, X).del(`/admin/artifacts/${fx.ids.p}/versions/1`)).status).toBe(410);
+      expect(info).toHaveBeenCalledWith(
+        ...line('version.delete', { artifact_id: fx.ids.p, number: 1 }, refused(410, 'gone')),
+      );
       expect((await api(ctx, X).del(`/admin/artifacts/${fx.ids.p}/versions/0`)).status).toBe(400);
 
       const grant = await createGrant(ctx.deps, {
@@ -616,11 +668,11 @@ describe.each(dialects)('admin moderation on %s', (dialect) => {
       expect((await fetchContent(ctx, grant.token, 'index.html')).status).toBe(200);
       const ended = await api(ctx, X).post(`/admin/versions/${fx.ids.pV2}/end-grants`);
       expect(ended.status, JSON.stringify(ended.body)).toBe(200);
-      expect(EndGrantsResult.parse(ended.body).grants).toBeGreaterThanOrEqual(1);
+      const { grants } = EndGrantsResult.parse(ended.body);
+      expect(grants).toBeGreaterThanOrEqual(1);
       expect((await fetchContent(ctx, grant.token, 'index.html')).status).toBe(410);
       expect(info).toHaveBeenCalledWith(
-        { admin_id: X.user.id, action: 'version.end_grants', target: { version_id: fx.ids.pV2 } },
-        'moderation',
+        ...line('version.end_grants', { version_id: fx.ids.pV2 }, { ...done, result: { grants } }),
       );
       // The version and its artifact stay; only what was handed out ends.
       expect((await api(ctx, A).get(`/artifacts/${fx.ids.p}/versions/2`)).status).toBe(200);
@@ -631,6 +683,9 @@ describe.each(dialects)('admin moderation on %s', (dialect) => {
       ).toEqual({ grants: 0 });
       const missing = await api(ctx, X).post(`/admin/versions/${UNKNOWN_IDS.pV2}/end-grants`);
       expect(missing.status).toBe(404);
+      expect(info).toHaveBeenCalledWith(
+        ...line('version.end_grants', { version_id: UNKNOWN_IDS.pV2 }, refused(404, 'not_found')),
+      );
     });
 
     test('ending the grants of a version ends those of its share links too, and nothing else', async () => {

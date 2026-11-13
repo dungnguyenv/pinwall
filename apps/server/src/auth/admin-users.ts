@@ -4,7 +4,7 @@ import type { AppDeps } from '../deps.ts';
 import { endShareLinkStreams } from '../domain/live.ts';
 import { revokeShareLinksOf } from '../domain/shares.ts';
 import { decodeCursor, encodeCursor } from '../lib/cursor.ts';
-import { forbidden, notFound } from '../lib/errors.ts';
+import { AppError, forbidden, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { effectiveRole, type Role } from './roles.ts';
 
@@ -132,17 +132,43 @@ export async function updateUserModeration(
   return { user, shareLinks: linkIds.length };
 }
 
+/** What became of an admin moderation action, as its log line says. */
+type ModerationOutcome =
+  | { outcome: 'done'; result?: Record<string, unknown> }
+  | { outcome: 'refused'; status: number; code: string }
+  | { outcome: 'failed' };
+
 /**
- * Logs what an admin did, as one structured line: who, what, and the ids it touched, never a
- * token or a URL. Every admin moderation route calls it, so the log is the audit trail.
+ * Runs `run`, an admin moderation action on `target`, and logs it as one structured line whatever
+ * comes of it, so the log is the audit trail (no audit table): who (`admin_id`), what (`action`),
+ * on what (`target`: ids and the change asked for, never a token or a URL), and the `outcome`:
+ * `done`, with `result` when `report` says what it did; `refused`, with the status and code of
+ * the 4xx it answered; or `failed`, an error the error handler logs in full. Every admin
+ * moderation route runs its action through it. Rethrows what `run` throws.
  */
-export function logModeration(
+export async function moderated<T>(
   deps: AppDeps,
   adminId: string,
   action: string,
   target: Record<string, unknown>,
-): void {
-  deps.logger.info({ admin_id: adminId, action, target }, 'moderation');
+  run: () => Promise<T>,
+  report?: (value: T) => Record<string, unknown>,
+): Promise<T> {
+  const log = (outcome: ModerationOutcome) =>
+    deps.logger.info({ admin_id: adminId, action, target, ...outcome }, 'moderation');
+  let value: T;
+  try {
+    value = await run();
+  } catch (error) {
+    log(
+      error instanceof AppError && error.status < 500
+        ? { outcome: 'refused', status: error.status, code: error.code }
+        : { outcome: 'failed' },
+    );
+    throw error;
+  }
+  log(report === undefined ? { outcome: 'done' } : { outcome: 'done', result: report(value) });
+  return value;
 }
 
 /** The user with this id; 404 `auth.userNotFound` when there is none. */
