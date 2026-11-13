@@ -91,6 +91,9 @@ function pathsOf(command: readonly string[]): string[] {
   return paths;
 }
 
+/** The start of every command that runs server suites. */
+const SERVER = 'pnpm --filter @pinwall/server exec vitest run';
+
 describe('ITEMS', () => {
   test('lists the acceptance items of the spec, in its order', () => {
     expect(ITEMS.map((item) => item.id)).toEqual([
@@ -106,6 +109,15 @@ describe('ITEMS', () => {
       '8',
       '9',
       '10',
+      '1.1-1',
+      '1.1-2',
+      '1.1-3',
+      '1.1-4',
+      '1.1-5',
+      '1.1-6',
+      '1.1-7',
+      '1.1-8',
+      '1.1-9',
     ]);
   });
 
@@ -137,6 +149,9 @@ describe('ITEMS', () => {
       'google',
       'cloudflare-tunnel',
       'two-machines',
+      'open-sign-up',
+      'owner-instance',
+      'members-live',
     ]) {
       expect(manual.has(slug), slug).toBe(true);
     }
@@ -153,13 +168,40 @@ describe('ITEMS', () => {
         'e2e/review.config.ts',
         'apps/server/test/api/review-flow.test.ts',
         'apps/server/test/api/publishing-flow.test.ts',
+        ...[
+          'test/spaces/idor-rest',
+          'test/spaces/idor-mcp',
+          'test/spaces/idor-sse',
+          'test/spaces/idor-content',
+          'test/spaces/idor-publish',
+          'test/spaces/idor-members',
+          'test/spaces/search',
+          'test/spaces/scope-guard',
+          'test/auth/oidc/policy',
+          'test/spaces/warnings',
+          'test/spaces/projects',
+          'test/moderation/exposure',
+          'test/moderation/framed-only',
+          'test/moderation/admin-users',
+          'test/moderation/admin-moderation',
+          'test/moderation/purge',
+          'test/moderation/transfer',
+          'test/moderation/transfer-cli',
+          'test/moderation/quota',
+          'test/spaces/migration',
+          'test/spaces/restore-v10',
+          'test/spaces/visibility',
+          'test/spaces/visibility-cli',
+          'test/spaces/members-acceptance',
+          'test/spaces/members-removal',
+        ].map((filter) => `apps/server/${filter}.test.ts`),
       ]),
     );
     expect(named.filter((path) => !existsSync(join(ROOT, path)))).toEqual([]);
   });
 
-  test('the Playwright acceptance suite holds the install and backup-restore specs', () => {
-    for (const spec of ['install.spec.ts', 'backup-restore.spec.ts']) {
+  test('the Playwright acceptance suite holds the install, backup-restore and upgrade specs', () => {
+    for (const spec of ['install.spec.ts', 'backup-restore.spec.ts', 'upgrade.spec.ts']) {
       expect(existsSync(join(ROOT, 'e2e/acceptance', spec)), spec).toBe(true);
     }
   });
@@ -173,6 +215,14 @@ describe('ITEMS', () => {
       'pnpm test:e2e:keycloak',
       'pnpm test:e2e:review',
       'pnpm --filter @pinwall/server exec vitest run test/api/review-flow test/api/publishing-flow',
+      `${SERVER} test/spaces/idor-rest test/spaces/idor-mcp test/spaces/idor-sse test/spaces/idor-content test/spaces/idor-publish test/spaces/idor-members test/spaces/search test/spaces/scope-guard`,
+      `${SERVER} test/auth/oidc/policy test/spaces/warnings test/spaces/projects`,
+      `${SERVER} test/moderation/exposure test/moderation/framed-only`,
+      `${SERVER} test/moderation/admin-users test/moderation/admin-moderation test/moderation/purge test/moderation/transfer test/moderation/transfer-cli`,
+      `${SERVER} test/moderation/quota`,
+      `${SERVER} test/spaces/migration test/spaces/restore-v10`,
+      `${SERVER} test/spaces/visibility test/spaces/visibility-cli`,
+      `${SERVER} test/spaces/members-acceptance test/spaces/members-removal`,
     ]);
     const byLine = (id: string) =>
       ITEMS.find((item) => item.id === id)?.automated.map((c) => commandLine(c.command));
@@ -182,6 +232,10 @@ describe('ITEMS', () => {
     expect(byLine('4')).toEqual([
       'pnpm --filter @pinwall/server exec vitest run test/mcp/agent-flow',
       'pnpm test:e2e:review',
+    ]);
+    expect(byLine('1.1-6')).toEqual([
+      `${SERVER} test/spaces/migration test/spaces/restore-v10`,
+      'pnpm exec playwright test -c e2e/acceptance.config.ts',
     ]);
   });
 });
@@ -245,6 +299,10 @@ describe('renderReport', () => {
     expect(result('3')).toBe('fail');
     expect(result('3b')).toBe('fail');
     expect(result('2')).toBe('pass');
+    for (const id of ['1.1-2', '1.1-3', '1.1-5', '1.1-9']) expect(result(id), id).toBe('fail');
+    for (const id of ['1.1-1', '1.1-4', '1.1-6', '1.1-7', '1.1-8']) {
+      expect(result(id), id).toBe('pass');
+    }
   });
 
   test('a command that did not run leaves its items "not run"', () => {

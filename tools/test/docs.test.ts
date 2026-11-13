@@ -104,6 +104,7 @@ const NOT_SERVER_SETTINGS = new Set([
   // Variables of the acceptance run (pnpm test:acceptance), described in docs/acceptance.md.
   'PINWALL_ACCEPTANCE_IMAGE',
   'PINWALL_ACCEPTANCE_PORT',
+  'PINWALL_ACCEPTANCE_UPGRADE_FROM',
 ]);
 
 /**

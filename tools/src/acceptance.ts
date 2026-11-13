@@ -1,5 +1,6 @@
 /*
- * The v1 acceptance run: every item of the design's §9 checklist, automated where it can be.
+ * The acceptance run: every item of the 1.0 design's §9 checklist and of the 1.1 spaces design's
+ * §11 list, automated where it can be.
  *
  *   tsx src/acceptance.ts
  *
@@ -21,7 +22,28 @@ export const IMAGE = 'pinwall:acceptance';
 /** Where the run leaves its report, relative to the repository root (git-ignored). */
 export const REPORT_PATH = 'e2e/acceptance-report.md';
 
-export type ItemId = '1' | '2' | '3' | '3a' | '3b' | '4' | '5' | '6' | '7' | '8' | '9' | '10';
+export type ItemId =
+  | '1'
+  | '2'
+  | '3'
+  | '3a'
+  | '3b'
+  | '4'
+  | '5'
+  | '6'
+  | '7'
+  | '8'
+  | '9'
+  | '10'
+  | '1.1-1'
+  | '1.1-2'
+  | '1.1-3'
+  | '1.1-4'
+  | '1.1-5'
+  | '1.1-6'
+  | '1.1-7'
+  | '1.1-8'
+  | '1.1-9';
 
 /** A suite that proves an item, run from the repository root. */
 export interface AutomatedCheck {
@@ -66,6 +88,51 @@ const SERVER_FLOWS = serverSuite(
   'review and publishing flows',
   'test/api/review-flow',
   'test/api/publishing-flow',
+);
+
+// The 1.1 suites (spec §11). Each runs in both visibility modes where the item asks for it, and on
+// Postgres too when the PINWALL_TEST_* variables of `test:integration` are set.
+const IDOR = serverSuite(
+  'IDOR suite, team and personal',
+  'test/spaces/idor-rest',
+  'test/spaces/idor-mcp',
+  'test/spaces/idor-sse',
+  'test/spaces/idor-content',
+  'test/spaces/idor-publish',
+  'test/spaces/idor-members',
+  'test/spaces/search',
+  'test/spaces/scope-guard',
+);
+const OPEN_SIGN_UP = serverSuite(
+  'open sign-up',
+  'test/auth/oidc/policy',
+  'test/spaces/warnings',
+  'test/spaces/projects',
+);
+const EXPOSURE = serverSuite(
+  'exposure approval',
+  'test/moderation/exposure',
+  'test/moderation/framed-only',
+);
+const MODERATION = serverSuite(
+  'admin tools and transfer',
+  'test/moderation/admin-users',
+  'test/moderation/admin-moderation',
+  'test/moderation/purge',
+  'test/moderation/transfer',
+  'test/moderation/transfer-cli',
+);
+const QUOTA = serverSuite('quotas', 'test/moderation/quota');
+const UPGRADE = serverSuite('1.0 data in 1.1', 'test/spaces/migration', 'test/spaces/restore-v10');
+const GUARD = serverSuite(
+  'visibility guard',
+  'test/spaces/visibility',
+  'test/spaces/visibility-cli',
+);
+const MEMBERS = serverSuite(
+  'project members',
+  'test/spaces/members-acceptance',
+  'test/spaces/members-removal',
 );
 
 export const ITEMS: readonly AcceptanceItem[] = [
@@ -141,6 +208,64 @@ export const ITEMS: readonly AcceptanceItem[] = [
     title: 'switching the isolation mode and restarting keeps every link working',
     automated: [ACCEPTANCE_SPECS],
     manual: [],
+  },
+  {
+    id: '1.1-1',
+    title: 'the IDOR suite passes in both modes on every surface',
+    automated: [IDOR],
+    manual: [],
+  },
+  {
+    id: '1.1-2',
+    title: 'a first Google sign-in gets an empty space and sees only its own work',
+    automated: [OPEN_SIGN_UP, IDOR, KEYCLOAK],
+    manual: ['open-sign-up'],
+  },
+  {
+    id: '1.1-3',
+    title:
+      'without approval no link, no raw link, no top-level content; links gone when approval goes',
+    automated: [EXPOSURE, MODERATION, KEYCLOAK],
+    manual: [],
+  },
+  {
+    id: '1.1-4',
+    title: 'a publish over the quota is refused on every path, leaving nothing',
+    automated: [QUOTA],
+    manual: [],
+  },
+  {
+    id: '1.1-5',
+    title:
+      'usage, transfer, delete all content, share-link list and look-up; no admin route reads or moves a space',
+    automated: [MODERATION, KEYCLOAK],
+    manual: [],
+  },
+  {
+    id: '1.1-6',
+    title:
+      'a 1.0 database and a 1.0 backup behave as 1.0 in team mode, and get owners in personal mode',
+    automated: [UPGRADE, ACCEPTANCE_SPECS],
+    manual: [],
+  },
+  {
+    id: '1.1-7',
+    title: 'personal to team is refused until `pinwall visibility team --confirm`',
+    automated: [GUARD],
+    manual: [],
+  },
+  {
+    id: '1.1-8',
+    title:
+      'on pinwall.happybooth.vn, after the transfer, the owner sees all 4 artifacts and a second account none',
+    automated: [MODERATION],
+    manual: ['owner-instance'],
+  },
+  {
+    id: '1.1-9',
+    title: 'project members as viewer, editor and after removal, and nothing beyond that project',
+    automated: [MEMBERS, KEYCLOAK],
+    manual: ['members-live'],
   },
 ];
 

@@ -1,8 +1,32 @@
 # Acceptance checklist
 
-Pinwall 1.0 is done when every item of the design's acceptance list (§9 of the design spec) is
-either proven by an automated suite that passes or by a manual check recorded below. This page
-holds the record, the steps of each manual check, and how the automated part runs.
+A Pinwall release is done when every item of its acceptance list is either proven by an automated
+suite that passes or by a manual check recorded below. Pinwall 1.0 has the items `1` to `10` of §9
+of [the design spec](superpowers/specs/2026-11-10-pinwall-design.md). Pinwall 1.1 adds the items
+`1.1-1` to `1.1-9` of §11 of
+[the personal spaces design](superpowers/specs/2026-11-13-pinwall-personal-spaces-design.md), and
+every 1.0 item still holds. This page holds the record, the steps of each manual check, and how the
+automated part runs.
+
+## Before tagging 1.1.0
+
+Nothing below counts until it is run against the commit that will be tagged, and recorded on this
+page. Where the 1.1.0 candidate stands:
+
+1. **Every automated suite, at the tag candidate:** `pnpm lint`, `pnpm typecheck`,
+   `pnpm test:integration`, `pnpm test:e2e`, `pnpm test:e2e:keycloak` and `pnpm test:acceptance`,
+   recorded in [Automated runs](#automated-runs). Not run yet: it is part of the final review of the
+   candidate.
+2. **[claude-code](#claude-code) on a 1.1.0 image in `personal` mode,** with
+   `-e PINWALL_VISIBILITY=personal` added to the `docker run` of its first step. Not run yet: it is
+   part of the final review too.
+3. **The manual parts of 1.1-2, 1.1-8 and 1.1-9:** [open-sign-up](#open-sign-up),
+   [owner-instance](#owner-instance) and [members-live](#members-live). They need real Google
+   accounts and the owner's own instance, so they run on `pinwall.happybooth.vn` after the release,
+   in the order of §13 of the personal spaces design: deploy 1.1.0 with the member rule still set,
+   transfer the owner's content and check owner-instance, and only then remove the member rule and
+   check open-sign-up and members-live. The automated suites prove these items before the tag;
+   these checks confirm them on the live instance.
 
 ## Before tagging 1.0.0
 
@@ -54,6 +78,9 @@ outcome. Keep older rows; add new ones below them.
 | [cloudflare-tunnel](#cloudflare-tunnel) | 8 | 2026-11-12 | same run as review-loop, cloudflared 2026.10.7 | controller | pass |
 | [fresh-install](#fresh-install) | 1 | 2026-11-12 | `ghcr.io/dungnguyenv/pinwall:1.0.0-rc.1` (`sha256:40eca17a…`), pulled from GHCR on a home connection | controller | pass, 49 s |
 | [two-machines](#two-machines) (optional) | 6 | | | | not run yet |
+| [open-sign-up](#open-sign-up) | 1.1-2 | | | | not run yet |
+| [owner-instance](#owner-instance) | 1.1-8 | | | | not run yet |
+| [members-live](#members-live) | 1.1-9 | | | | not run yet |
 
 The `claude-code` run above was the M6 live check: `claude mcp add --transport http pinwall
 http://localhost:8080/mcp` showed "Needs authentication", the browser sign-in registered the
@@ -100,8 +127,31 @@ running, and Chromium installed for Playwright (`pnpm exec playwright install ch
 | 9 | `e2e/acceptance/install.spec.ts`: links of a deleted version answer 410 at once; its files leave the volume unless another version uses them | none |
 | 10 | `e2e/acceptance/install.spec.ts`: single-domain, content-domain and back on one volume, every raw and share link serving the same bytes | none |
 
+The 1.1 items run in the same command. Their server suites run every case in `team` and in
+`personal` mode, and also on Postgres and S3 when the test database and bucket variables of
+`pnpm test:integration` are set, with the test stack up: set them for a run that counts.
+`e2e/acceptance/upgrade.spec.ts` starts the published 1.0.0 image, by the digest of its
+multi-platform index, and pulls it first when it is not on the machine.
+`PINWALL_ACCEPTANCE_UPGRADE_FROM` names another 1.0 image to upgrade from.
+
+| Item | Automated by | Manual check |
+| --- | --- | --- |
+| 1.1-1 | `apps/server/test/spaces/idor-rest`, `idor-mcp`, `idor-sse`, `idor-content`, `idor-publish`, `idor-members` and `search`: the owner, an editor, a viewer and a stranger on REST, MCP, live streams, search, Recent, raw links, content grants, upload targets and share management, in both modes. `scope-guard`: only the allow-list acts without a viewer | none |
+| 1.1-2 | `apps/server/test/auth/oidc/policy`, `spaces/warnings` and `spaces/projects`: with no member rule everyone who signs in is a member, with a default project of their own. The 1.1-1 suites. `e2e/keycloak/spaces.spec.ts` (`pnpm test:e2e:keycloak`), walk "acceptance 2": a first sign-in through a real Keycloak lands on an empty space, and search and `/a/<id>` show nothing of another person's | [open-sign-up](#open-sign-up) |
+| 1.1-3 | `apps/server/test/moderation/exposure` and `framed-only`: without approval no share link on REST or MCP, no raw link, and content only inside Pinwall's viewer; links stop when approval goes. The 1.1-5 suites. `e2e/keycloak/spaces.spec.ts`, walk "acceptance 3": the same through the web, and the link gone once the admin takes approval back | none |
+| 1.1-4 | `apps/server/test/moderation/quota`: an upload URL, an inline publish over REST and MCP, a web upload and a version restore over the quota each answer `quota_exceeded` (413) and leave no version and no blob; admins are exempt; a per-person override applies | none |
+| 1.1-5 | `apps/server/test/moderation/admin-users`, `admin-moderation`, `purge`, `transfer` and `transfer-cli`: usage, the transfer and the grants it ends, Delete all content, the share-link list and the look-up; no admin route returns private content or moves a space. `e2e/keycloak/spaces.spec.ts`, walk "acceptance 3": the admin pages | none |
+| 1.1-6 | `apps/server/test/spaces/migration` and `restore-v10`: a 1.0 database and a 1.0 archive get their owners as §8.1 says. `e2e/acceptance/upgrade.spec.ts`: the published 1.0.0 image, upgraded in place to the image under test, answers every read the same as before in `team` mode, its 1.0.0 backup restored into an empty 1.1 answers the same, and in `personal` mode each project is its owner's | none |
+| 1.1-7 | `apps/server/test/spaces/visibility` and `visibility-cli`: `serve` refuses `team` after `personal` while more than one person owns projects, until `pinwall visibility team --confirm` | none |
+| 1.1-8 | `apps/server/test/moderation/transfer` and `transfer-cli`: the transfer moves every project to the account it names, which then sees all of it, and in `personal` mode the account it came from no longer does | [owner-instance](#owner-instance) |
+| 1.1-9 | `apps/server/test/spaces/members-acceptance` and `members-removal`: a viewer, an editor, a removal, and nothing in the owner's other projects. `e2e/keycloak/spaces.spec.ts`, walk "acceptance 9": the same through the web | [members-live](#members-live) |
+
+CI completes 1.1-6: it runs every 1.0 test unchanged against 1.1 in the default `team` mode, and
+those tests compare whole response bodies.
+
 The manual checks cover what a test runner cannot reach: real identity providers with their own
-accounts, the real Claude clients, and Cloudflare in front of a public https address.
+accounts, the real Claude clients, Cloudflare in front of a public https address, and the owner's
+own instance.
 
 ## fresh-install
 
@@ -265,3 +315,73 @@ Postgres + S3 install on one host.
 Expected: the restore logs `restore complete`; the owner signs in with the same password; the
 artifacts, their versions, comments and share links are all there; and the pages show the same
 content as on the first host.
+
+## open-sign-up
+
+Acceptance 1.1-2 with a real Google account, on an instance with open sign-up: `personal` mode and
+no member rule, as in [Open sign-up](sign-in.md#open-sign-up). On `pinwall.happybooth.vn` it runs
+once the member rule is removed. `<origin>` below is the instance's address.
+
+1. In a private window, sign in with a Google account that has no Pinwall role.
+
+   Expected: the empty library, "Your space is empty", with its three ways to start: connect an
+   agent, drop a file or a folder, or create a project.
+2. In a scratch folder, run `claude mcp add --transport http pinwall-acceptance <origin>/mcp`. Start
+   `claude`, type `/mcp`, choose **pinwall-acceptance**, then **Authenticate**, and sign in as that
+   account. The consent page says whom it signs in as: if that is not the new account, choose
+   **Not you?** first.
+3. Have Claude Code publish a one-page site.
+
+   Expected: a review link.
+4. Check what the account can see.
+
+   Expected:
+   - "All artifacts" lists only that page;
+   - searching for words of the owner's artifacts finds nothing;
+   - `/a/<owner artifact id>` shows the not-found page, "Artifact not available";
+   - asked through Claude Code, the MCP tools `list_artifacts` and `search_artifacts` return only
+     its own page.
+5. Clean up: run `claude mcp remove pinwall-acceptance`, and as that account choose **Delete all my
+   content** in **Settings → Usage**.
+
+## owner-instance
+
+Acceptance 1.1-8 on `pinwall.happybooth.vn`, right after `pinwall transfer` has moved the local
+Owner's content to the owner's OIDC account. The second Google account must be able to sign in:
+give it the member role at the identity provider, or run that part once the member rule is removed.
+
+Expected:
+
+- the owner's OIDC account sees the 4 artifacts, in two projects: in the web, in search, and
+  through its Claude Code `list_artifacts`;
+- the local Owner account sees an empty library;
+- a second Google account sees none of them in lists, search or MCP, and `/a/<id>` of each answers
+  not found.
+
+## members-live
+
+Acceptance 1.1-9 on `pinwall.happybooth.vn`, with the owner's OIDC account and the second Google
+account of [open-sign-up](#open-sign-up). Connect Claude Code as the second account as in its step
+2, and keep it connected until the end.
+
+1. The owner creates the project "Acceptance 1.1" and publishes a page in it.
+2. The owner opens the project, chooses **Members**, types the second account's email, chooses
+   **Viewer** and **Add**.
+
+   Expected: the second account sees only that project of the owner's, under **Shared with me**. It
+   can comment, but it has no **Upload**, and a publish into the project through MCP is refused with
+   the reason `role` (ask Claude Code to quote the tool's answer).
+3. The owner makes it **Editor**, and it publishes a page into the project.
+
+   Expected: the owner's **Settings → Usage** grows by that version's size, and the second
+   account's does not.
+4. An admin approves the second account with the **may expose content** switch in **Admin,
+   Users**. The second account makes a share link of its page, and keeps the artifact open in
+   review. Then the owner removes it in **Members**.
+
+   Expected: within 25 seconds its open tab shows "Artifact not available", and the share link,
+   opened in a private window, shows "Link no longer available".
+5. At every step, the owner's other projects stay not found for the second account: in its lists,
+   in search, through MCP and at `/a/<id>`.
+6. Clean up: take the approval back, delete the project's artifacts, and **Archive** the project
+   (Pinwall has no way to delete a project, other than Delete all my content).
