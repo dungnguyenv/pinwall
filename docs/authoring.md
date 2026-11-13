@@ -70,6 +70,14 @@ do on the raw link. In single-domain mode, and always inside the review viewer, 
 has an origin of its own that matches nothing, so frames cannot read each other's DOM. Let them talk
 with `postMessage`.
 
+**Where an admin has to approve sharing.** On a Pinwall that sets `PINWALL_SHARE_LINKS=approved`, a
+person an admin has not approved yet sees their pages only inside the review viewer: they do not
+open as a page of their own, and there is no raw link. In that state the nested frames of such a
+page do not load, in either isolation mode. The page itself loads and the frame shows the browser's
+error page, because the browser refuses to frame it from the viewer's sandbox. Approval lifts it.
+Until then, put what people must see on the page itself and not in a frame. See
+[Sharing outside Pinwall](spaces.md#sharing-outside-pinwall).
+
 **Anchors.** A link such as `#pricing` scrolls the page to the element with that id, and
 `other.html#pricing` opens the other page at that element, in review and on the raw link alike.
 Nothing rewrites your links. Headings in a Markdown file get ids too, see [Markdown](#markdown).
@@ -137,6 +145,12 @@ Pinwall for the values in force with `whoami`, and the upload dialog of the web 
 | `PINWALL_MAX_VERSION_BYTES` | 500 MB | A version, unpacked |
 | `PINWALL_MAX_FILES` | 10000 | Files in one version |
 | `PINWALL_MAX_EXPANSION_RATIO` | 100 | How many times larger than the upload a version may unpack to |
+
+An operator can also cap what each person stores, with `PINWALL_QUOTA_BYTES` (the total size of
+their versions, each counted in full) and `PINWALL_QUOTA_ARTIFACTS` (how many artifacts they may
+have). Neither is set by default. A publish that would go over is refused as `quota_exceeded` and
+creates nothing. **Settings → Usage** shows the numbers, and `whoami` gives them to an agent. See
+[Usage and limits](spaces.md#usage-and-limits).
 
 Search reads each version once, when it is published: the entry page first, then the other HTML
 and Markdown files in path order. It reads the first 5 MB of each HTML file and the first 200 KB of

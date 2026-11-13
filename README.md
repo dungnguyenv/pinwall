@@ -96,6 +96,15 @@ sequenceDiagram
   and access re-checked against the provider. Recipes for Zitadel, Keycloak and Google.
 - 👤 **Owner account** with a passkey or a password, for a single-person install or as a way in
   while the identity provider is down.
+- 🏠 **Personal spaces.** One setting gives each person a space of their own, and in the app nobody
+  sees another person's work, admins included. The default, one shared library for the team, stays
+  as 1.0 had it. [Spaces and members](docs/spaces.md)
+- 🤝 **Project members.** An owner adds people by email as editors, who publish, or as viewers, who
+  read and comment, and the project shows up under **Shared with me** for them.
+- 🚦 **Guard rails for an open instance.** Admins approve who may share pages outside Pinwall, each
+  person has a storage and artifact quota, and admins can look up a reported link, take it down or
+  clear out an account without reading anyone's work.
+  [Running an open instance](docs/open-instance.md)
 
 **Operations**
 
@@ -196,7 +205,9 @@ else, which is the strongest isolation and the one to choose for a team. See
 | Guide | What it covers |
 | --- | --- |
 | [Install and run](docs/install.md) | Docker, content isolation, reverse proxies and Cloudflare Tunnel, Kubernetes, metrics |
-| [Sign-in](docs/sign-in.md) | The owner account, OpenID Connect, roles from groups or emails, Zitadel, Keycloak and Google |
+| [Sign-in](docs/sign-in.md) | The owner account, OpenID Connect, roles from groups or emails, Zitadel, Keycloak and Google, open sign-up |
+| [Spaces, projects and members](docs/spaces.md) | Your space, sharing a project, sharing outside Pinwall, storage limits, deleting your content |
+| [Running an open instance](docs/open-instance.md) | Personal spaces, quotas, approval, abuse reports, the moderation log, moving work between people |
 | [Connect an agent](docs/connect-an-agent.md) | Claude Code, Cursor, Codex, other MCP clients, API tokens, the Claude Code skill |
 | [Writing pages for Pinwall](docs/authoring.md) | Entry pages, links, what a page can keep, Markdown, limits |
 | [Configuration](docs/configuration.md) | Every `PINWALL_*` setting with its default |
@@ -224,9 +235,37 @@ configure.
 Only through a share link that you create, optionally with a password and an expiry. Everything
 else needs a signed-in account.
 
+**Can other people on my Pinwall see my work?**
+It depends on `PINWALL_VISIBILITY`. With `team`, the default, every member sees every project. With
+`personal`, only you do, together with the people you add to a project and anyone you give a share
+link to. See [Spaces, projects and members](docs/spaces.md#your-space).
+
+**Can I let anyone with a Google account sign up?**
+Yes, in `personal` mode, where each person gets a space of their own and sees nothing of anyone
+else's. Pair it with quotas, approval for sharing outside Pinwall and a separate content domain.
+[Running an open instance](docs/open-instance.md) gives the settings and the order to switch them
+in, and [Spaces, projects and members](docs/spaces.md) tells the people who sign up what to expect.
+
+**Can an admin read my private pages?**
+No. In `personal` mode admins manage accounts, limits, approvals and reports, and they can delete
+what an account owns, but the app does not let them open anyone's pages. The operator who runs the
+server can read its database and storage, as with any self-hosted service. See
+[Who can see your work](docs/spaces.md#who-can-see-your-work).
+
+**How do I work on a project with someone?**
+Open the project, choose **Members**, and add them by the email they signed in to Pinwall with, as an
+editor, who can publish, or a viewer, who can read and comment. The project appears for them under
+**Shared with me**. See [Project members](docs/spaces.md#project-members).
+
+**Does upgrading from 1.0 change what people see?**
+No. `PINWALL_VISIBILITY` stays `team`, so every member sees every project and every member can
+share, until the operator turns on `personal` mode. Quotas and approval for sharing are off by
+default as well.
+
 **Can several Claude Code accounts or machines share one Pinwall?**
-Yes. That is a main reason it exists: every account and every machine signs in to the same server
-and sees the same artifacts.
+Yes. That is a main reason it exists: every machine signed in to the same Pinwall account sees the
+same artifacts, and in `team` mode every member does. In `personal` mode, accounts have spaces of
+their own, so share a project between them with [Members](docs/spaces.md#project-members).
 
 **What does it run on?**
 Node.js 24 with TypeScript, Hono and React, storing data in SQLite or PostgreSQL and files on local

@@ -251,6 +251,23 @@ describe('required contents', () => {
     expect(section).not.toMatch(/^PINWALL_OIDC_MEMBER_GROUPS=/m);
   });
 
+  test('the spaces guide covers members, sharing and usage, and the README links both new guides', async () => {
+    const anchors = anchorsOf(await readFile(join(ROOT, 'docs/spaces.md'), 'utf8'));
+    for (const a of [
+      'your-space',
+      'shared-with-me',
+      'project-members',
+      'sharing-outside-pinwall',
+      'usage-and-limits',
+      'delete-all-my-content',
+    ]) {
+      expect(anchors.has(a), a).toBe(true);
+    }
+    const readme = await readFile(join(ROOT, 'README.md'), 'utf8');
+    expect(readme).toContain('](docs/spaces.md');
+    expect(readme).toContain('](docs/open-instance.md');
+  });
+
   test('the backup guide has a section on restoring a 1.0 backup into 1.1', async () => {
     const backup = await readFile(join(ROOT, 'docs/backup.md'), 'utf8');
     expect(anchorsOf(backup).has('restoring-a-10-backup-into-11')).toBe(true);

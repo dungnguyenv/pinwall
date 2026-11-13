@@ -10,6 +10,12 @@ The examples use `https://pinwall.example` as the Pinwall address. Use your own,
 `PINWALL_PUBLIC_ORIGIN` your Pinwall runs with. The **Connect an agent** page in Pinwall (in the
 account menu, at `/connect`) shows the same snippets with your address already filled in.
 
+An agent sees what you see. On a Pinwall with personal spaces, that is the projects you own and the
+ones other people shared with you, each with your role in it, and an agent publishes into a shared
+project only when you are an editor there. A publish that names no project goes into your default
+project. On other Pinwalls it sees every project. [Spaces, projects and members](spaces.md)
+explains the roles.
+
 ## Claude Code
 
 Run in a terminal:
@@ -132,6 +138,23 @@ connection you had stops working at once. Sign in again from the agent: `/mcp` i
 `codex mcp login pinwall` for Codex, Cursor's login prompt. Revoke now ends API tokens as well,
 so a client that used one needs a new token. If your access to Pinwall itself was removed, the
 sign-in page says so and shows which account you signed in with.
+
+**The agent says `quota_exceeded`.** Your space is full, and nothing was published. It holds as
+much as it may, in bytes or in artifacts, and for a project that someone else owns, it is the
+owner's space that counts. Look at **Settings → Usage**, delete versions or artifacts you no longer
+need, or ask an admin for more room. The agent should not retry until then. It can read the numbers
+with `whoami`. See [Usage and limits](spaces.md#usage-and-limits).
+
+**The agent cannot publish into a project.** You are a viewer there, which lets you read and
+comment but not publish. Pinwall's answer says to ask the project's owner to make you an editor,
+which they do in **Members**. Meanwhile the agent can publish into a project of your own. See
+[Project members](spaces.md#project-members).
+
+**The agent cannot make a share link.** There are two causes. A viewer cannot make links in a
+project, so the owner has to make you an editor, as above. On a Pinwall where an admin
+has to approve who may share outside Pinwall, Pinwall's answer says that an admin has to allow it for
+your account, and an admin does that in **Admin → Users**. People who have an account can still
+open the review link. See [Sharing outside Pinwall](spaces.md#sharing-outside-pinwall).
 
 **A web page cannot call `/mcp`.** Pinwall refuses requests to `/mcp` that come from a page in a
 browser tab, whether a published artifact or another site, and `/mcp` never reads browser
