@@ -21,18 +21,19 @@ import {
   updateUserModeration,
   userExists,
 } from '../auth/admin-users.ts';
-import { authOf, requireAdmin } from '../auth/guards.ts';
+import { authOf, requireAdmin, requireSession } from '../auth/guards.ts';
 import { revokeAllCredentials } from '../auth/revoke.ts';
 import { effectiveRole } from '../auth/roles.ts';
 import { clearSessionCookie } from '../auth/session-cookie.ts';
 import type { UserRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
-import { assertPurgeAvailable, assertPurgeConfirmed, purgeSpace } from '../domain/purge.ts';
+import { assertPurgeConfirmed, purgeSpace } from '../domain/purge.ts';
 import { SYSTEM_SCOPE } from '../domain/spaces.ts';
 import { usageSummaries } from '../domain/usage.ts';
 import { notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { jsonBodyLimit } from './body-limit.ts';
+import { personalOnly } from './personal-only.ts';
 
 const error = (description: string) => ({
   description,
@@ -121,9 +122,14 @@ const purgeUser = createRoute({
   tags: ['admin'],
   summary: "Delete all of a user's content",
   description:
-    'Only in `personal` mode (in `team` mode the route does not exist: `not_found`). Deletes every project the user owns, with all that is in them, as deleting each artifact does: their share links answer "gone" and the files are removed. Projects the user only belongs to stay, and so does the user. Send the user\'s email address (their id, when they have none) as `confirm_email`. This destroys work but shows none of it.',
-  middleware: [requireAdmin, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
-  security,
+    'Only in `personal` mode (in `team` mode the route does not exist: `not_found`, whoever asks), and only from a browser session, never with a token. Deletes every project the user owns, with all that is in them, as deleting each artifact does: their share links answer "gone" and the files are removed. Projects the user only belongs to stay, and so does the user. Send the user\'s email address (their id, when they have none) as `confirm_email`. This destroys work but shows none of it.',
+  middleware: [
+    personalOnly,
+    requireAdmin,
+    requireSession,
+    jsonBodyLimit,
+  ] as MiddlewareHandler<AppEnv>[],
+  security: [{ session: [] }],
   request: {
     params: UserId,
     body: { required: true, content: { 'application/json': { schema: PurgeRequest } } },
@@ -135,6 +141,9 @@ const purgeUser = createRoute({
     },
     400: error("`confirm_email` is not the user's email address"),
     ...adminErrors,
+    403: error(
+      'Not an admin, or signed in with a token rather than a browser session (`forbidden`)',
+    ),
     404: error('No such user, or the instance is in `team` mode (`not_found`)'),
     409: error('New artifacts kept arriving; try again (`conflict`)'),
   },
@@ -255,7 +264,6 @@ export function registerAdminUserRoutes(api: OpenAPIHono<AppEnv>): void {
     const { deps } = c.var;
     const { id } = c.req.valid('param');
     const { confirm_email } = c.req.valid('json');
-    assertPurgeAvailable(deps);
     const purged = await moderated(
       deps,
       authOf(c).user.id,

@@ -5,7 +5,7 @@ import type { Database, UserRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import { badRequest, conflict, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
-import { lockProject } from './spaces.ts';
+import { lockProject, type SystemScope } from './spaces.ts';
 
 /** What `transferContent` moved, and what it changed on the way. */
 export interface TransferResult {
@@ -67,7 +67,8 @@ export async function findUserByRef(db: Db, ref: string): Promise<UserRow> {
 
 /**
  * Moves every project `from` owns to `to`, in one transaction, in either visibility mode (spec
- * §8.2). Quotas are not checked: the operator chose to move the space.
+ * §8.2). Quotas are not checked: the operator chose to move the space. Only the system moves a
+ * space (`pinwall transfer`, never a route), so the caller hands over the system scope.
  * - Each project is held with `lockProject`, in id order, as a membership change holds one; no
  *   artifact row is locked, so writes, deletions and membership changes take turns with it there.
  * - `from`'s default becomes "Default (from <name>)" when `to` has one already.
@@ -79,6 +80,7 @@ export async function findUserByRef(db: Db, ref: string): Promise<UserRow> {
  */
 export async function transferContent(
   deps: AppDeps,
+  _scope: SystemScope,
   from: UserRow,
   to: UserRow,
 ): Promise<TransferResult> {

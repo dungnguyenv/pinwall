@@ -225,6 +225,37 @@ export function systemDeleteArtifact(
   return deleteArtifactAs(deps, scope, artifactId, allowed);
 }
 
+/** Thrown by a purge's `Authorize` when the artifact's project no longer belongs to the person. */
+class NotInSpace extends Error {}
+
+/**
+ * `systemDeleteArtifact` for a purge of `ownerId`'s space: the artifact goes only if its project
+ * still belongs to `ownerId` once the project is held, so one whose project a transfer moved to
+ * someone else meanwhile stays where it is. Returns whether it was deleted.
+ */
+export async function purgeArtifactOf(
+  deps: AppDeps,
+  scope: SystemScope,
+  artifactId: string,
+  ownerId: string,
+): Promise<boolean> {
+  try {
+    await deleteArtifactAs(deps, scope, artifactId, async (db, projectId) => {
+      const owned = await db
+        .selectFrom('projects')
+        .select('id')
+        .where('id', '=', projectId)
+        .where('owner_id', '=', ownerId)
+        .executeTakeFirst();
+      if (owned === undefined) throw new NotInSpace();
+    });
+    return true;
+  } catch (err) {
+    if (err instanceof NotInSpace) return false;
+    throw err;
+  }
+}
+
 async function deleteArtifactAs(
   deps: AppDeps,
   scope: Scope,

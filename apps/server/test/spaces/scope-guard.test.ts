@@ -1,5 +1,5 @@
 import { readdir, readFile } from 'node:fs/promises';
-import { join, sep } from 'node:path';
+import { join, posix, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 
@@ -23,10 +23,12 @@ const SYSTEM_SCOPE_ALLOWED = [
   'publish/startup.ts',
   // An admin deletes everything one person owns (the purge in personal mode).
   'api/admin-users.ts',
-  // A person deletes everything they own themselves (their purge in personal mode).
-  'api/me.ts',
+  // Purge: an admin's of anyone's space, and a person's of their own (`purgeOwnSpace`).
+  'domain/purge.ts',
   // admin moderation: metadata, revoke and delete by id, never content
   'api/admin-moderation.ts',
+  // `pinwall transfer`: an operator moves one person's projects to another (never a route).
+  'main.ts',
 ];
 
 const allowed = (path: string) =>
@@ -54,6 +56,20 @@ test('only the allow-list imports SYSTEM_SCOPE', async () => {
   // The guard reads the right tree: the scope's own module names it.
   expect(users).toContain('domain/spaces.ts');
   expect(users.filter((path) => !allowed(path))).toEqual([]);
+});
+
+/** The source files `text` (the file at `path`) imports by a relative path, as paths under `src/`. */
+function importsOf(path: string, text: string): string[] {
+  const specifiers = text.matchAll(/(?:\bfrom\s+|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g);
+  return [...specifiers].map((match) => posix.join(posix.dirname(path), match[1] ?? ''));
+}
+
+test('only the transfer command imports the transfer', async () => {
+  // Moving a space is the CLI's alone: no route or tool may reach it.
+  const importers = (await sources())
+    .filter((file) => importsOf(file.path, file.text).includes('domain/transfer.ts'))
+    .map((file) => file.path);
+  expect(importers).toEqual(['main.ts']);
 });
 
 test('nobody but spaces.ts builds a scope by hand', async () => {
