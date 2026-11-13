@@ -5,9 +5,13 @@ import { useAdminConfig } from '../../api/admin.ts';
 import { errorMessage } from '../../api/client.ts';
 import { type ConfigEntry, ConfigSection } from '../../api/dto.ts';
 import { IsolationExplainer } from '../../app/isolation-explainer.tsx';
+import { SpacesExplainer } from '../../app/spaces-explainer.tsx';
 import { formatBytes } from '../../lib/format.ts';
 import { usePageTitle } from '../../lib/page-title.ts';
 import { ErrorState, LoadingRegion, Skeleton } from '../../ui/index.ts';
+
+/** The settings where 0 means no limit. */
+const QUOTAS: ReadonlySet<string> = new Set(['PINWALL_QUOTA_BYTES', 'PINWALL_QUOTA_ARTIFACTS']);
 
 /** The sections in the order the server lists them, each with its entries; empty ones are left out. */
 function groupBySection(
@@ -34,6 +38,9 @@ export function ConfigPage() {
     );
   }
   const { isolation, content_origin, entries, warnings } = config.data;
+  const settingOf = (env: string) => entries.find((entry) => entry.env === env)?.value ?? null;
+  const visibility = settingOf('PINWALL_VISIBILITY');
+  const shareLinks = settingOf('PINWALL_SHARE_LINKS');
 
   return (
     <div className="flex flex-col gap-8">
@@ -64,6 +71,11 @@ export function ConfigPage() {
           </p>
         ) : null}
       </div>
+
+      {/* A server without these settings (before 1.1) has nothing to explain. */}
+      {visibility !== null || shareLinks !== null ? (
+        <SpacesExplainer visibility={visibility} shareLinks={shareLinks} />
+      ) : null}
 
       {groupBySection(entries).map((group) => (
         <ConfigGroup key={group.section} section={group.section} entries={group.entries} />
@@ -134,6 +146,10 @@ function ConfigValue({ entry }: { entry: ConfigEntry }) {
     );
   }
   if (entry.value === null) return notSet;
+  // For a quota, 0 is a choice (no limit), not a size of zero bytes.
+  if (QUOTAS.has(entry.env) && entry.value === '0') {
+    return <span className="text-fg">{t('web.config.noLimit')}</span>;
+  }
 
   const bytes = entry.env.endsWith('_BYTES') ? Number(entry.value) : Number.NaN;
   return (

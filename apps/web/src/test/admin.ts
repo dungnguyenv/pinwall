@@ -1,9 +1,13 @@
 import { HttpResponse, http } from 'msw';
 import {
   AdminConfig,
+  AdminLookup,
+  AdminPerson,
+  AdminShareLink,
   AdminUsage,
   AdminUser,
   ConfigEntry,
+  type EndGrantsResult,
   type PurgeResult,
   type RevokeResult,
   type UpdateAdminUserRequest,
@@ -224,4 +228,141 @@ export function fxAdminConfig(o: Partial<AdminConfig> = {}): AdminConfig {
 
 export function serveAdminConfig(config: AdminConfig = fxAdminConfig()): void {
   server.use(http.get(`${API}/admin/config`, () => HttpResponse.json(config)));
+}
+
+/** A person as moderation names them: the name, else the email. Bob unless the test says. */
+export function fxAdminPerson(o: Partial<AdminPerson> = {}): AdminPerson {
+  return AdminPerson.parse({
+    id: 'usr_b',
+    name: 'Bob Example',
+    email: 'bob@example.test',
+    ...o,
+  });
+}
+
+/**
+ * A share link as an admin sees it: Bob's, on the latest version, with no password, no comments
+ * and no expiry, made by the owner himself, never used.
+ */
+export function fxAdminShareLink(o: Partial<AdminShareLink> = {}): AdminShareLink {
+  const bob = fxAdminPerson();
+  return AdminShareLink.parse({
+    id: 'shr_1',
+    artifact: { id: 'art_1', name: 'Pricing' },
+    owner: bob,
+    created_by: bob,
+    version: null,
+    has_password: false,
+    allow_comments: false,
+    created_at: CREATED,
+    expires_at: null,
+    last_used_at: null,
+    ...o,
+  });
+}
+
+/**
+ * What looking up `https://pinwall.test/s/abc` answers: Bob's share link, shown at version 2 of
+ * Pricing in the project Website. A test changes `kind`, `share_link` and `grant` to look up
+ * other addresses.
+ */
+export function fxLookup(o: Partial<AdminLookup> = {}): AdminLookup {
+  const bob = fxAdminPerson();
+  return AdminLookup.parse({
+    kind: 'share_link',
+    artifact: {
+      id: 'art_1',
+      name: 'Pricing',
+      project: { id: 'prj_1', name: 'Website' },
+      owner: bob,
+    },
+    version: { id: 'ver_2', number: 2, published_by: bob },
+    share_link: fxAdminShareLink(),
+    grant: null,
+    ...o,
+  });
+}
+
+export interface ModerationState {
+  links: AdminShareLink[];
+}
+
+/**
+ * Serves the moderation routes. The link list is paged by `pageSize` with an index as the
+ * cursor, and a revoke or a deletion takes the links it ends out of it, as the server does.
+ * `lookup` answers `POST /admin/lookup` with whatever response it builds from the pasted address
+ * (default: `fxLookup()`); a test that wants a different answer the second time keeps its own
+ * count. `grants` is how many grants "end open pages" ended (default 3). `requests` holds the
+ * query string of each list request, `calls` every write and look-up, in order.
+ */
+export function serveModeration(
+  o: {
+    links?: AdminShareLink[];
+    lookup?: (url: string) => Response;
+    pageSize?: number;
+    grants?: number;
+  } = {},
+): { state: ModerationState; calls: Call[]; requests: string[] } {
+  const state: ModerationState = { links: o.links ?? [] };
+  const calls: Call[] = [];
+  const requests: string[] = [];
+  const ended: EndGrantsResult = { grants: o.grants ?? 3 };
+
+  server.use(
+    http.get(`${API}/admin/share-links`, ({ request }) => {
+      const url = new URL(request.url);
+      requests.push(url.search);
+      const start = Number(url.searchParams.get('cursor') ?? 0);
+      const size = o.pageSize ?? Number(url.searchParams.get('limit') ?? 50);
+      const items = state.links.slice(start, start + size);
+      const next = start + size < state.links.length ? String(start + size) : null;
+      return HttpResponse.json(fx.page(items, next));
+    }),
+    http.delete(`${API}/admin/share-links/:id`, ({ params }) => {
+      calls.push({
+        method: 'DELETE',
+        path: `/admin/share-links/${String(params.id)}`,
+        body: undefined,
+      });
+      if (!state.links.some((l) => l.id === params.id)) {
+        return apiError(404, 'not_found', 'This share link does not exist.');
+      }
+      state.links = state.links.filter((l) => l.id !== params.id);
+      return new HttpResponse(null, { status: 204 });
+    }),
+    http.post(`${API}/admin/lookup`, async ({ request }) => {
+      const body = (await request.json()) as { url: string };
+      calls.push({ method: 'POST', path: '/admin/lookup', body });
+      return o.lookup ? o.lookup(body.url) : HttpResponse.json(fxLookup());
+    }),
+    http.delete(`${API}/admin/artifacts/:id`, ({ params }) => {
+      calls.push({
+        method: 'DELETE',
+        path: `/admin/artifacts/${String(params.id)}`,
+        body: undefined,
+      });
+      state.links = state.links.filter((l) => l.artifact.id !== params.id);
+      return new HttpResponse(null, { status: 204 });
+    }),
+    http.delete(`${API}/admin/artifacts/:id/versions/:n`, ({ params }) => {
+      calls.push({
+        method: 'DELETE',
+        path: `/admin/artifacts/${String(params.id)}/versions/${String(params.n)}`,
+        body: undefined,
+      });
+      state.links = state.links.filter(
+        (l) => l.artifact.id !== params.id || l.version?.number !== Number(params.n),
+      );
+      return new HttpResponse(null, { status: 204 });
+    }),
+    http.post(`${API}/admin/versions/:id/end-grants`, ({ params }) => {
+      calls.push({
+        method: 'POST',
+        path: `/admin/versions/${String(params.id)}/end-grants`,
+        body: undefined,
+      });
+      return HttpResponse.json(ended);
+    }),
+  );
+  return { state, calls, requests };
 }

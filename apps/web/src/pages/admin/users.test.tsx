@@ -138,7 +138,7 @@ test('the page opens the user list and names itself', async () => {
     within(nav)
       .getAllByRole('link')
       .map((link) => link.textContent),
-  ).toEqual(['Users', 'Configuration']);
+  ).toEqual(['Users', 'Share links', 'Look up a link', 'Configuration']);
   expect(within(nav).getByRole('link', { name: 'Users' })).toHaveAttribute('aria-current', 'page');
 });
 

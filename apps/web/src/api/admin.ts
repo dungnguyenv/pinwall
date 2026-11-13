@@ -12,8 +12,12 @@ import {
 import { type ApiError, api } from './client.ts';
 import {
   AdminConfig,
+  AdminLookup,
+  AdminShareLinkList,
   AdminUser,
   AdminUserList,
+  EndGrantsResult,
+  type LookupRequest,
   type PurgeRequest,
   PurgeResult,
   RevokeResult,
@@ -21,6 +25,7 @@ import {
   type UpdateAdminUserRequest,
 } from './dto.ts';
 import { qk } from './keys.ts';
+import { refreshVersions } from './versions.ts';
 
 /*
  * Admin only: the people who can use this Pinwall, and the configuration it
@@ -81,6 +86,56 @@ export function purgeUser(id: string, confirm_email: string): Promise<PurgeResul
     method: 'POST',
     body,
     schema: PurgeResult,
+  });
+}
+
+/** Share links per page of the admin list. */
+export const ADMIN_LINKS_PAGE_SIZE = 50;
+
+/**
+ * The share links that still open, newest first, a page at a time; pass `next_cursor` back as
+ * `cursor` for the next page. Metadata only: a link's address cannot be rebuilt from it.
+ */
+export function listAdminShareLinks(p: {
+  cursor?: string | null;
+  limit?: number;
+}): Promise<AdminShareLinkList> {
+  return api('/admin/share-links', {
+    query: { cursor: p.cursor, limit: p.limit },
+    schema: AdminShareLinkList,
+  });
+}
+
+/** Revokes a link, whoever made it. It stops working at once, and so do the pages it opened. */
+export function adminRevokeShareLink(id: string): Promise<void> {
+  return api(`/admin/share-links/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+/**
+ * Says what a reported address belongs to: the artifact, its owner, the version, and the link or
+ * grant. Nothing of the content comes back. The server refuses what is not an address (400),
+ * what belongs to nothing here (404) and what was removed already (410), each with its message.
+ */
+export function lookupUrl(url: string): Promise<AdminLookup> {
+  const body: LookupRequest = { url };
+  return api('/admin/lookup', { method: 'POST', body, schema: AdminLookup });
+}
+
+/** Deletes any artifact for good, as its publisher would. */
+export function adminDeleteArtifact(id: string): Promise<void> {
+  return api(`/admin/artifacts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+/** Deletes version `n` of any artifact for good; the only version takes the artifact with it. */
+export function adminDeleteVersion(id: string, n: number): Promise<void> {
+  return api(`/admin/artifacts/${encodeURIComponent(id)}/versions/${n}`, { method: 'DELETE' });
+}
+
+/** Ends every open page of a version, those of people and those of share-link visitors. */
+export function endVersionGrants(versionId: string): Promise<EndGrantsResult> {
+  return api(`/admin/versions/${encodeURIComponent(versionId)}/end-grants`, {
+    method: 'POST',
+    schema: EndGrantsResult,
   });
 }
 
@@ -222,4 +277,85 @@ export function useRevokeUser(): UseMutationResult<RevokeResult, ApiError, strin
 
 export function useAdminConfig(): UseQueryResult<AdminConfig, ApiError> {
   return useQuery<AdminConfig, ApiError>({ queryKey: qk.adminConfig, queryFn: getAdminConfig });
+}
+
+type AdminLinksData = InfiniteData<AdminShareLinkList>;
+
+export function useAdminShareLinks(): UseInfiniteQueryResult<AdminLinksData, ApiError> {
+  return useInfiniteQuery<
+    AdminShareLinkList,
+    ApiError,
+    AdminLinksData,
+    typeof qk.adminShareLinks,
+    string | null
+  >({
+    queryKey: qk.adminShareLinks,
+    queryFn: ({ pageParam }) =>
+      listAdminShareLinks({ cursor: pageParam, limit: ADMIN_LINKS_PAGE_SIZE }),
+    initialPageParam: null,
+    getNextPageParam: (last) => last.next_cursor,
+  });
+}
+
+/** Revokes a link and takes it out of the list at once, without loading every page again. */
+export function useAdminRevokeShareLink(): UseMutationResult<void, ApiError, string> {
+  const queryClient = useQueryClient();
+  return useMutation<void, ApiError, string>({
+    mutationFn: adminRevokeShareLink,
+    onSuccess: (_none, id) => {
+      queryClient.setQueryData<AdminLinksData>(qk.adminShareLinks, (data) =>
+        data
+          ? {
+              ...data,
+              pages: data.pages.map((page) => ({
+                ...page,
+                items: page.items.filter((link) => link.id !== id),
+              })),
+            }
+          : data,
+      );
+    },
+  });
+}
+
+/**
+ * Deletes an artifact, then loads again what it changed: every link it had leaves the admin list,
+ * and the artifact lists and project counts of the people who saw it change too.
+ */
+export function useAdminDeleteArtifact(): UseMutationResult<void, ApiError, string> {
+  const queryClient = useQueryClient();
+  return useMutation<void, ApiError, string>({
+    mutationFn: adminDeleteArtifact,
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: qk.adminShareLinks }),
+        queryClient.invalidateQueries({ queryKey: qk.artifactLists }),
+        queryClient.invalidateQueries({ queryKey: qk.projectLists }),
+      ]),
+  });
+}
+
+/** Deletes a version, then loads again what it changed: the links to it, and the artifact's own data. */
+export function useAdminDeleteVersion(): UseMutationResult<
+  void,
+  ApiError,
+  { id: string; number: number }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<void, ApiError, { id: string; number: number }>({
+    mutationFn: ({ id, number }) => adminDeleteVersion(id, number),
+    onSuccess: (_none, { id }) =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: qk.adminShareLinks }),
+        refreshVersions(queryClient, id),
+      ]),
+  });
+}
+
+export function useEndVersionGrants(): UseMutationResult<EndGrantsResult, ApiError, string> {
+  return useMutation<EndGrantsResult, ApiError, string>({ mutationFn: endVersionGrants });
+}
+
+export function useLookup(): UseMutationResult<AdminLookup, ApiError, string> {
+  return useMutation<AdminLookup, ApiError, string>({ mutationFn: lookupUrl });
 }

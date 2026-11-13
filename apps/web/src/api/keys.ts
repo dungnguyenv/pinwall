@@ -37,6 +37,8 @@ export const qk = {
   tokens: ['tokens'] as const,
   /** The admin user list, every page of it. */
   adminUsers: ['admin', 'users'] as const,
+  /** The active share links of every person, every page of it, for Admin → Share links. */
+  adminShareLinks: ['admin', 'share-links'] as const,
   /** The effective configuration, for the admin Configuration page. */
   adminConfig: ['admin', 'config'] as const,
   /** An OAuth authorization request waiting on the consent page. */

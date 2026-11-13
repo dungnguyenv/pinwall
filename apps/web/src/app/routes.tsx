@@ -57,6 +57,12 @@ const AdminLayout = lazy(() =>
 const UsersPage = lazy(() =>
   import('../pages/admin/users-page.tsx').then((m) => ({ default: m.UsersPage })),
 );
+const ShareLinksPage = lazy(() =>
+  import('../pages/admin/share-links-page.tsx').then((m) => ({ default: m.ShareLinksPage })),
+);
+const LookupPage = lazy(() =>
+  import('../pages/admin/lookup-page.tsx').then((m) => ({ default: m.LookupPage })),
+);
 const ConfigPage = lazy(() =>
   import('../pages/admin/config-page.tsx').then((m) => ({ default: m.ConfigPage })),
 );
@@ -161,6 +167,8 @@ export function buildRoutes(): RouteObject[] {
           children: [
             { index: true, element: <Navigate to="users" replace /> },
             { path: 'users', element: <UsersPage /> },
+            { path: 'share-links', element: <ShareLinksPage /> },
+            { path: 'lookup', element: <LookupPage /> },
             { path: 'config', element: <ConfigPage /> },
           ],
         },
