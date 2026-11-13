@@ -63,6 +63,8 @@ export {
   PublishResult,
   PublishTargetInput,
   PublishWarning,
+  PurgeRequest,
+  PurgeResult,
   page,
   RenamePasskeyRequest,
   ResolveRequest,

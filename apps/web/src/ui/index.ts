@@ -36,3 +36,4 @@ export { Textarea } from './textarea.tsx';
 export { Toaster, toast } from './toast.tsx';
 export { ToggleGroup } from './toggle-group.tsx';
 export { Tooltip, TooltipProvider } from './tooltip.tsx';
+export { TypedConfirmDialog } from './typed-confirm-dialog.tsx';

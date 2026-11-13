@@ -39,6 +39,9 @@ const SecurityPage = lazy(() =>
 const TokensPage = lazy(() =>
   import('../pages/settings/tokens-page.tsx').then((m) => ({ default: m.TokensPage })),
 );
+const UsagePage = lazy(() =>
+  import('../pages/settings/usage-page.tsx').then((m) => ({ default: m.UsagePage })),
+);
 const SignInPage = lazy(() =>
   import('../pages/auth/sign-in-page.tsx').then((m) => ({ default: m.SignInPage })),
 );
@@ -142,6 +145,8 @@ export function buildRoutes(): RouteObject[] {
               ),
             },
             { path: 'tokens', element: <TokensPage /> },
+            // Without a quota to show, the page sends people back to the profile.
+            { path: 'usage', element: <UsagePage /> },
           ],
         },
         { path: 'connect', element: <ConnectPage /> },
