@@ -26,12 +26,19 @@ export function withVisibility(deps: AppDeps, visibility: Visibility): AppDeps {
 /** The time a `spacesContext` clock starts at. */
 export const T = Date.UTC(2026, 10, 13);
 
-/** An app in `visibility` mode whose clock stands at `T` until a test moves it. */
-export function spacesContext(dialect: DbDialect, visibility: Visibility): Promise<TestContext> {
+/**
+ * An app in `visibility` mode whose clock stands at `T` until a test moves it, with `env` on top
+ * of the test defaults.
+ */
+export function spacesContext(
+  dialect: DbDialect,
+  visibility: Visibility,
+  env: Record<string, string> = {},
+): Promise<TestContext> {
   return createTestContext({
     dialect,
     clock: new FixedClock(T),
-    env: { PINWALL_VISIBILITY: visibility },
+    env: { ...env, PINWALL_VISIBILITY: visibility },
   });
 }
 

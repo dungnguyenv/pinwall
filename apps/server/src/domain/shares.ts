@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { Db } from '../auth/passkeys.ts';
 import { normalizePassword } from '../auth/password.ts';
 import { effectiveRole } from '../auth/roles.ts';
-import type { Config } from '../config/types.ts';
+import type { Config, Visibility } from '../config/types.ts';
 import type { DbDialect } from '../db/connect.ts';
 import type { ArtifactRow, Database, ShareLinkRow, UserRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
@@ -20,6 +20,7 @@ import {
   assertCan,
   can,
   forbiddenRole,
+  holdProject,
   holdRoleIn,
   type ProjectRole,
   type Scope,
@@ -260,15 +261,18 @@ export async function revokeShareLink(
  * Revokes, in `trx`, every share link `userId` made that is not revoked yet, as part of ending
  * that person's access: "Revoke now", a block, or the IdP no longer admitting them. Each link
  * ends as `revokeShareLink` ends one, with the content grants made from it, and takes its locks
- * in the same order: the artifact first (in id order, one artifact at a time), then its links.
- * Call it before `trx` touches any content grant or tombstone, so a deletion waiting on one of
- * those artifacts cannot be waiting on this transaction too. A link whose artifact a deletion
- * took meanwhile is skipped. Returns the ids of the links revoked: once `trx` has committed,
- * end their live streams with `endShareLinkStreams`.
+ * in the same order as every write: the artifact first (in id order, one artifact at a time),
+ * then its project (`holdProject`), then its links. A membership change holds the project
+ * before it touches links, so it and this transaction take turns at the project. Call it before
+ * `trx` touches any content grant or tombstone, so a deletion waiting on one of those artifacts
+ * cannot be waiting on this transaction too. A link whose artifact a deletion took meanwhile is
+ * skipped. Returns the ids of the links revoked: once `trx` has committed, end their live
+ * streams with `endShareLinkStreams`.
  */
 export async function revokeShareLinksOf(
   trx: Transaction<Database>,
   dialect: DbDialect,
+  visibility: Visibility,
   userId: string,
   now: number,
 ): Promise<string[]> {
@@ -281,7 +285,7 @@ export async function revokeShareLinksOf(
     .execute();
   const revoked: string[] = [];
   for (const artifactId of open.map((row) => row.artifact_id).sort()) {
-    if (!(await holdIfPresent(trx, dialect, artifactId))) continue;
+    if (!(await holdIfPresent(trx, dialect, visibility, artifactId))) continue;
     // Read under the hold: a deletion the hold waited for has taken its links along.
     revoked.push(...(await revokeLinksOn(trx, userId, artifactId, now)));
   }
@@ -347,19 +351,25 @@ async function revokeLinksOn(
   return ids;
 }
 
-/** Holds the artifact `id` as `holdArtifact` does; false when it no longer exists. */
+/**
+ * Holds the artifact `id` as `holdArtifact` does, then its project as a write does
+ * (`holdProject`); false when the artifact no longer exists.
+ */
 async function holdIfPresent(
   trx: Transaction<Database>,
   dialect: DbDialect,
+  visibility: Visibility,
   id: string,
 ): Promise<boolean> {
   const row = await trx
     .selectFrom('artifacts')
-    .select('id')
+    .select(['id', 'project_id'])
     .where('id', '=', id)
     .$if(dialect === 'postgres', (qb) => qb.forShare())
     .executeTakeFirst();
-  return row !== undefined;
+  if (row === undefined) return false;
+  await holdProject(trx, dialect, visibility, row.project_id);
+  return true;
 }
 
 /** `revoked` once revoked, else `expired` from `expires_at` on, else `active`. */

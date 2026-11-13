@@ -1,5 +1,6 @@
 import type { Transaction } from 'kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { revokeAllCredentials } from '../../src/auth/revoke.ts';
 import { createGrant, revokeProjectGrants } from '../../src/content/grants.ts';
 import type { Database, UserRow } from '../../src/db/schema.ts';
 import { lockArtifact } from '../../src/domain/artifacts.ts';
@@ -47,11 +48,35 @@ function gate(): { opened: Promise<void>; open: () => void } {
   return { opened, open };
 }
 
+/** `work` as it runs: whether it has settled yet, and what it returned or threw. */
+function running(work: Promise<unknown>): { settled: boolean; outcome: Promise<unknown> } {
+  const run = {
+    settled: false,
+    outcome: work.then(
+      (value) => value,
+      (err: unknown) => err,
+    ),
+  };
+  void run.outcome.then(() => {
+    run.settled = true;
+  });
+  return run;
+}
+
+/** 'ok', or the message of what `work` threw, so that several outcomes compare at once. */
+function outcomeOf(work: Promise<unknown>): Promise<string> {
+  return work.then(
+    () => 'ok',
+    (err: unknown) => (err instanceof Error ? err.message : String(err)),
+  );
+}
+
 describe.runIf(dialects.includes('postgres'))('membership changes on Postgres', () => {
   let ctx: TestContext;
   let fx: SpacesFixture;
   beforeAll(async () => {
-    ctx = await spacesContext('postgres', 'personal');
+    // Up to four transactions at once, and the query that watches them wait.
+    ctx = await spacesContext('postgres', 'personal', { PINWALL_DATABASE_POOL_SIZE: '6' });
   });
   // Tests take E out of P, so each gets its own fixture, in the shared context.
   beforeEach(async () => {
@@ -99,6 +124,92 @@ describe.runIf(dialects.includes('postgres'))('membership changes on Postgres', 
     } finally {
       release.open();
     }
+  }
+
+  /** What `holding` keeps open: each commits at the latest once its test is over. */
+  const held: (() => Promise<void>)[] = [];
+  afterEach(async () => {
+    for (const commit of held.splice(0)) await commit().catch(() => {});
+  });
+
+  /**
+   * Runs `hold` in a transaction of its own and keeps it open, so that another transaction
+   * needing what it locked pauses there. Resolves once `hold` is done, with what goes on: run
+   * `then` in the same transaction, and commit.
+   */
+  async function holding(
+    hold: (trx: Transaction<Database>) => Promise<unknown>,
+    then: (trx: Transaction<Database>) => Promise<unknown> = async () => {},
+  ): Promise<() => Promise<void>> {
+    const locked = gate();
+    const release = gate();
+    const transaction = ctx.deps.db.db.transaction().execute(async (trx) => {
+      await hold(trx);
+      locked.open();
+      await release.opened;
+      await then(trx);
+    });
+    await Promise.race([locked.opened, transaction]);
+    const commit = async () => {
+      release.open();
+      await transaction;
+    };
+    held.push(commit);
+    return commit;
+  }
+
+  /** E's membership of P held: a removal of E pauses there, once it has locked P. */
+  const holdingMembershipOfE = () =>
+    holding((trx) =>
+      trx
+        .selectFrom('project_members')
+        .select('user_id')
+        .where('project_id', '=', fx.ids.P)
+        .where('user_id', '=', fx.people.E.user.id)
+        .forShare()
+        .execute(),
+    );
+
+  /** E's sessions held: a Revoke now of E pauses there, once it has revoked E's links. */
+  const holdingSessionsOfE = () =>
+    holding((trx) =>
+      trx
+        .selectFrom('sessions')
+        .select('id_hash')
+        .where('user_id', '=', fx.people.E.user.id)
+        .forShare()
+        .execute(),
+    );
+
+  /** A link by E on `artifactId`, following its current version. */
+  async function linkByE(artifactId: string): Promise<string> {
+    const { row } = await createShareLink(ctx.deps, fx.people.E.user, artifactId, {
+      versionId: null,
+      password: null,
+      expiresAt: null,
+      allowComments: true,
+    });
+    return row.id;
+  }
+
+  /** E's share links that still open (not revoked), and E's memberships of P. */
+  async function leftOfE() {
+    const { db } = ctx.deps.db;
+    const E = fx.people.E.user.id;
+    return {
+      openLinks: await db
+        .selectFrom('share_links')
+        .select('id')
+        .where('created_by', '=', E)
+        .where('revoked_at', 'is', null)
+        .execute(),
+      memberships: await db
+        .selectFrom('project_members')
+        .select('role')
+        .where('project_id', '=', fx.ids.P)
+        .where('user_id', '=', E)
+        .execute(),
+    };
   }
 
   /** A membership change taking E out of P, up to its commit: the project, then the row. */
@@ -332,4 +443,131 @@ describe.runIf(dialects.includes('postgres'))('membership changes on Postgres', 
       expect(versions).toEqual([]);
     },
   );
+
+  test('a Revoke now of E waits for a removal of E, then finds their access in P gone', async () => {
+    const { db } = ctx.deps.db;
+    const { E } = fx.people;
+    await linkByE(fx.ids.p);
+    const grant = await createGrant(ctx.deps, {
+      versionId: fx.ids.pV2,
+      mode: 'review',
+      user: E.user,
+    });
+    const resume = await holdingMembershipOfE();
+    // The removal locks P, then pauses before E's membership row.
+    const removal = running(removeMember(ctx.deps, ownerScope(), fx.ids.P, E.user.id));
+    await untilWaitingOnALock(db, removal.outcome);
+    const revoke = running(revokeAllCredentials(ctx.deps, E.user.id));
+    await untilWaitingOnALock(db, revoke.outcome, 2);
+    expect(revoke.settled, 'Revoke now waited for the project').toBe(false);
+    await resume();
+    expect(await removal.outcome).toBeUndefined();
+    // The removal ended E's links on p and e and E's grant on p; Revoke now, what is left.
+    expect(await revoke.outcome).toMatchObject({ shareLinks: 0, contentGrants: 0, sessions: 1 });
+    expect(await tombstoned('content_grant', grant.token)).toBe(true);
+    expect(await leftOfE()).toEqual({ openLinks: [], memberships: [] });
+  });
+
+  test('a removal of E waits for a Revoke now of E, then finds their access in P gone', async () => {
+    const { db } = ctx.deps.db;
+    const { E } = fx.people;
+    await linkByE(fx.ids.p);
+    const grant = await createGrant(ctx.deps, {
+      versionId: fx.ids.pV2,
+      mode: 'review',
+      user: E.user,
+    });
+    const resume = await holdingSessionsOfE();
+    // Revoke now revokes E's links on p and e, then pauses before E's sessions.
+    const revoke = running(revokeAllCredentials(ctx.deps, E.user.id));
+    await untilWaitingOnALock(db, revoke.outcome);
+    const removal = running(removeMember(ctx.deps, ownerScope(), fx.ids.P, E.user.id));
+    await untilWaitingOnALock(db, removal.outcome, 2);
+    expect(removal.settled, 'the removal waited for Revoke now').toBe(false);
+    await resume();
+    expect(await revoke.outcome).toMatchObject({ shareLinks: 2, contentGrants: 1, sessions: 1 });
+    expect(await removal.outcome).toBeUndefined();
+    expect(await tombstoned('content_grant', grant.token)).toBe(true);
+    expect(await leftOfE()).toEqual({ openLinks: [], memberships: [] });
+  });
+
+  /** The current version of `artifactId`. */
+  async function currentVersionOf(artifactId: string): Promise<string> {
+    const row = await ctx.deps.db.db
+      .selectFrom('artifacts')
+      .select('current_version_id')
+      .where('id', '=', artifactId)
+      .executeTakeFirstOrThrow();
+    if (row.current_version_id === null) throw new Error(`${artifactId} has no version`);
+    return row.current_version_id;
+  }
+
+  // Three parties, each pair of which takes turns: Revoke now holds an artifact before its
+  // project, a write holds an artifact before its project, and a removal holds the project only.
+  test.each<[string, (artifactId: string) => Promise<unknown>]>([
+    [
+      'publishes a version of',
+      async (artifactId) =>
+        publishFiles(
+          ctx,
+          fx.people.A.user,
+          { 'index.html': '<!doctype html><h1>Next</h1>' },
+          {
+            kind: 'new_version',
+            artifactId,
+            expectedVersionId: await currentVersionOf(artifactId),
+          },
+        ),
+    ],
+    [
+      'deletes',
+      (artifactId) =>
+        deleteArtifact(ctx.deps, { user: fx.people.A.user, via: 'session' }, artifactId),
+    ],
+  ])(
+    'A %s an artifact of P while A removes E and a Revoke now of E runs, without a deadlock',
+    async (_name, write) => {
+      const { db } = ctx.deps.db;
+      const { E } = fx.people;
+      // E has links on two artifacts of P (the fixture's on e, and this one on p): b, then a.
+      await linkByE(fx.ids.p);
+      const a = [fx.ids.p, fx.ids.e].sort()[1] as string;
+      const resume = await holdingMembershipOfE();
+      // The removal locks P, then pauses before E's membership row.
+      const removal = outcomeOf(removeMember(ctx.deps, ownerScope(), fx.ids.P, E.user.id));
+      await untilWaitingOnALock(db, removal);
+      // The write locks a, then waits for P.
+      const writing = outcomeOf(write(a));
+      await untilWaitingOnALock(db, writing, 2);
+      // Revoke now holds b, then waits for P before it touches E's link on b.
+      const revoking = outcomeOf(revokeAllCredentials(ctx.deps, E.user.id));
+      await untilWaitingOnALock(db, revoking, 3);
+      // The removal goes on to E's links, b's first.
+      await resume();
+      expect(await Promise.all([removal, writing, revoking])).toEqual(['ok', 'ok', 'ok']);
+      expect(await leftOfE()).toEqual({ openLinks: [], memberships: [] });
+    },
+  );
+
+  test('Revoke now sharing P, a removal waiting for P and a write asking for P: no deadlock', async () => {
+    const { db } = ctx.deps.db;
+    const { E } = fx.people;
+    await linkByE(fx.ids.p);
+    const a = [fx.ids.p, fx.ids.e].sort()[1] as string;
+    // A write of a as it starts: a, then (once let go) P.
+    const write = await holding(
+      (trx) => lockArtifact(trx, 'postgres', SYSTEM_SCOPE, a),
+      (trx) => holdProject(trx, 'postgres', 'personal', fx.ids.P),
+    );
+    // Revoke now holds b and P, revokes E's link on b, then waits for a.
+    const revoking = outcomeOf(revokeAllCredentials(ctx.deps, E.user.id));
+    await untilWaitingOnALock(db, revoking);
+    // The removal waits for P, which Revoke now shares.
+    const removal = outcomeOf(removeMember(ctx.deps, ownerScope(), fx.ids.P, E.user.id));
+    await untilWaitingOnALock(db, removal, 2);
+    // The write's share of P joins Revoke now's, ahead of the removal.
+    const writing = outcomeOf(write());
+    expect(await Promise.all([removal, writing, revoking])).toEqual(['ok', 'ok', 'ok']);
+    expect(await leftOfE()).toEqual({ openLinks: [], memberships: [] });
+  });
 });

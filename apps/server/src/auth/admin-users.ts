@@ -62,9 +62,12 @@ export async function setRoleOverride(
   if (!user) throw notFound(t('auth.userNotFound'));
   if (user.kind === 'owner') throw forbidden(t('auth.ownerRole'));
   const linkIds = await db.transaction().execute(async (trx) => {
-    // The links' artifacts are held before the user row is written, as every revoke takes them.
+    // The links' artifacts and projects are held before the user row is written, as every revoke
+    // takes them.
     const revoked =
-      role === 'blocked' ? await revokeShareLinksOf(trx, dialect, userId, deps.clock.now()) : [];
+      role === 'blocked'
+        ? await revokeShareLinksOf(trx, dialect, deps.config.visibility, userId, deps.clock.now())
+        : [];
     await trx.updateTable('users').set({ role_override: role }).where('id', '=', userId).execute();
     return revoked;
   });

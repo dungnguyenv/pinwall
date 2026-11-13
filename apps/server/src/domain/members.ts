@@ -150,9 +150,12 @@ export interface EndedAccess {
 
 /**
  * Spec §4.3 removal, in the transaction that holds the project (lockProject): the person's links
- * on its artifacts, then their grants on its versions. Locks no artifact row. The links go
- * first, one artifact at a time in id order, as in `revokeAllCredentials`, so a "Revoke now" of
- * the same person cannot wait on this transaction while it waits on that one.
+ * on its artifacts, one artifact at a time in id order, then their grants on its versions. Locks
+ * no artifact row. A write, and a "Revoke now", block or IdP drop of the same person
+ * (`revokeShareLinksOf`), hold an artifact and then its project before they touch that
+ * artifact's links, so each takes turns with this transaction at the project. The person's
+ * grants, which "Revoke now" ends whether or not it held the project, go in token order on both
+ * sides.
  */
 export async function endProjectAccess(
   trx: Transaction<Database>,

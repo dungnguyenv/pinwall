@@ -84,12 +84,18 @@ SQLite transactions already run one at a time (`BEGIN IMMEDIATE`). Team mode has
   2. opens a transaction and takes `lockProject` (`FOR UPDATE`);
   3. changes the membership, then runs its effects.
 
-  After the lock it never locks an artifact row. Links go first, one artifact at a time in id order, then grants: the same order as `revokeAllCredentials`. A "Revoke now" of the same person therefore cannot wait on it in a cycle.
+  After the lock it never locks an artifact row. Links go first, one artifact at a time in id order, then grants in token order.
 - **A write in a project** takes its artifact lock (if it has one), then `holdRoleIn`, before writing anything. `holdRoleIn` is the project `FOR SHARE` and then `roleIn` as a separate statement. The role read gets a fresh READ COMMITTED snapshot, so it sees a membership change that committed while the hold waited. A role read in the same statement as the lock would use the snapshot from before the wait.
   - Applies to: `createShareLink`, `revokeShareLink`, `insertArtifact`, `lockCurrent`, `updateArtifact` (both role reads), and the comment writes (`createThread`, `addReply`, `resolveThread`, `reopenThread`, `deleteComment`).
 - **Deletions** (`deleteArtifact`, `deleteVersion`) call `holdProject(trx, dialect, deps.config.visibility, projectId)` right after `lockArtifact`, for every scope. A system deletion (M12's admin deletes) and a membership change then take turns on the same link, grant and tombstone rows.
+- **Ending a person's access** (`revokeShareLinksOf`: "Revoke now", a block, the IdP dropping the person, and M12's moderation) is a system write too. For each artifact, in id order, it holds the artifact (`FOR SHARE`), then `holdProject`, then revokes the person's links on it. `revokeAllCredentials` ends the person's grants after that, in token order (`revokeUserGrants`).
 - **`updateProject` is exempt.** It is owner-only, and a membership change never changes the owner. A `FOR SHARE` before its own `UPDATE` of the same row would deadlock two renames.
-- **Why this cannot deadlock:** writes go artifact → project. A membership change takes the project and then only link, grant, tombstone and membership rows, which those writes touch only after they hold the project.
+- **Why this cannot deadlock:** every transaction that touches the rows of a project's artifacts goes artifact → project → rows: writes, deletions and the ending of a person's access alike. A membership change takes the project and then only link, grant, tombstone and membership rows, never an artifact.
+  - Whoever holds such a row holds its project too, so a membership change, which holds the project `FOR UPDATE`, never waits for one.
+  - Whoever waits for a membership change waits at the project, before touching any of its rows.
+  - Two transactions that hold artifacts never wait for each other at the project: both ask for it `FOR SHARE`, and on Postgres a `FOR SHARE` request joins the holders even while a membership change's `FOR UPDATE` waits.
+  - The exception is the grants that `revokeUserGrants` ends without holding their project (the person has no link there). A removal ends them in token order too, so the two take turns at the first grant they share.
+  - Every pair being acyclic is not enough. An earlier `revokeShareLinksOf` went artifact → links. With a write (artifact → project) and a removal (project → links), those three formed a cycle: Revoke now held artifact b and E's link on b and waited for artifact a, the write held a and waited for the project, and the removal held the project and waited for the link on b. `members-race.test.ts` keeps that case.
 
 ## Interface handed to M12–M13
 

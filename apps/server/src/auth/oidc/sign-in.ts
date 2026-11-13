@@ -245,7 +245,9 @@ async function revokeSharesOfDenied(deps: AppDeps, userId: string): Promise<void
   const { db, dialect } = deps.db;
   const linkIds = await db
     .transaction()
-    .execute((trx) => revokeShareLinksOf(trx, dialect, userId, deps.clock.now()));
+    .execute((trx) =>
+      revokeShareLinksOf(trx, dialect, deps.config.visibility, userId, deps.clock.now()),
+    );
   for (const linkId of linkIds) endShareLinkStreams(deps, linkId);
   if (linkIds.length > 0) {
     deps.logger.info({ user_id: userId, share_links: linkIds.length }, 'share links revoked');
