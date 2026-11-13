@@ -192,9 +192,11 @@ export async function untilWaitingOnALock(
   waiting = 1,
 ): Promise<void> {
   let done = false;
-  void settled.then(() => {
+  const stop = () => {
     done = true;
-  });
+  };
+  // A rejection is the caller's to report; watching it here must not leave it unhandled.
+  void settled.then(stop, stop);
   const deadline = Date.now() + 5000;
   while (!done && Date.now() < deadline) {
     const { rows } = await sql<{ n: number }>`

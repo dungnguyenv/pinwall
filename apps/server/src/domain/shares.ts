@@ -293,13 +293,16 @@ async function markRevoked(trx: Transaction<Database>, linkId: string, now: numb
  * Revokes, in `trx`, every share link `userId` made that is not revoked yet, as part of ending
  * that person's access: "Revoke now", a block, or the IdP no longer admitting them. Each link
  * ends as `revokeShareLink` ends one, with the content grants made from it, and takes its locks
- * in the same order as every write: the artifact first (in id order, one artifact at a time),
- * then its project (`holdProject`), then its links. A membership change holds the project
- * before it touches links, so it and this transaction take turns at the project. Call it before
- * `trx` touches any content grant or tombstone, so a deletion waiting on one of those artifacts
- * cannot be waiting on this transaction too. A link whose artifact a deletion took meanwhile is
- * skipped. Returns the ids of the links revoked: once `trx` has committed, end their live
- * streams with `endShareLinkStreams`.
+ * in the same order as every write: the artifact first (one artifact at a time), then its
+ * project (`holdProject`), then its links. A membership change holds the project before it
+ * touches links, so it and this transaction take turns at the project. The artifacts go in
+ * project id order, then artifact id order: a transfer locks the projects it moves in id order,
+ * so the two climb the projects the same way and take turns at the first one they share, where
+ * an order by artifact id alone could hold a later project while asking for an earlier one the
+ * transfer holds. Call it before `trx` touches any content grant or tombstone, so a deletion
+ * waiting on one of those artifacts cannot be waiting on this transaction too. A link whose
+ * artifact a deletion took meanwhile is skipped. Returns the ids of the links revoked: once
+ * `trx` has committed, end their live streams with `endShareLinkStreams`.
  */
 export async function revokeShareLinksOf(
   trx: Transaction<Database>,
@@ -310,13 +313,18 @@ export async function revokeShareLinksOf(
 ): Promise<string[]> {
   const open = await trx
     .selectFrom('share_links')
-    .select('artifact_id')
+    .innerJoin('artifacts', 'artifacts.id', 'share_links.artifact_id')
+    .select(['artifacts.project_id', 'share_links.artifact_id'])
     .distinct()
-    .where('created_by', '=', userId)
-    .where('revoked_at', 'is', null)
+    .where('share_links.created_by', '=', userId)
+    .where('share_links.revoked_at', 'is', null)
     .execute();
+  // Ids are lowercase base32 behind one prefix, so code-point order is the database's order too.
+  open.sort(
+    (a, b) => compareIds(a.project_id, b.project_id) || compareIds(a.artifact_id, b.artifact_id),
+  );
   const revoked: string[] = [];
-  for (const artifactId of open.map((row) => row.artifact_id).sort()) {
+  for (const { artifact_id: artifactId } of open) {
     if (!(await holdIfPresent(trx, dialect, visibility, artifactId))) continue;
     // Read under the hold: a deletion the hold waited for has taken its links along.
     revoked.push(...(await revokeLinksOn(trx, userId, artifactId, now)));
@@ -381,6 +389,11 @@ async function revokeLinksOn(
     .execute();
   await endGrantsOf(trx, ids, now);
   return ids;
+}
+
+/** Code-point order, as `Array.prototype.sort` sorts strings by default. */
+function compareIds(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 /**
