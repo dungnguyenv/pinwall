@@ -300,7 +300,8 @@ export type RestApi = ReturnType<typeof spacesClient>;
 export interface Case {
   name: string;
   who: Who;
-  send: (api: RestApi, ids: CaseIds) => Promise<Reply>;
+  /** The request, built from the fixture's ids and, for routes that name a person, its people. */
+  send: (api: RestApi, ids: CaseIds, people: Record<Who, Person>) => Promise<Reply>;
   team: number;
   personal: number;
   /** details.reason of a personal-mode 403: 'role' unless given; null for a 1.0 refusal (editing someone else's comment). */
@@ -338,9 +339,9 @@ export async function expectCase(
   const api = spacesClient(ctx, fx.people[who].cookie);
   const expected = mode === 'team' ? testCase.team : testCase.personal;
   const label = `${who}: ${name}, in ${mode} mode`;
-  const r = await send(api, fx.ids);
+  const r = await send(api, fx.ids, fx.people);
   expect(r.status, `${label}, answered ${JSON.stringify(r.body)}`).toBe(expected);
-  if (expected === 404) sameAnswer(r, await send(api, UNKNOWN_IDS));
+  if (expected === 404) sameAnswer(r, await send(api, UNKNOWN_IDS, fx.people));
   if (expected === 403) {
     const given = testCase.reason;
     const reason = mode === 'team' ? undefined : given === undefined ? 'role' : given;
