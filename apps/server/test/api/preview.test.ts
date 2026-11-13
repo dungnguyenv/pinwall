@@ -5,6 +5,7 @@ import { annotatorTag } from '../../src/content/annotator-inject.ts';
 import { THUMBNAIL_CSP } from '../../src/content/raw-links.ts';
 import type { UserRow } from '../../src/db/schema.ts';
 import { listRecent } from '../../src/domain/artifacts.ts';
+import { scopeForUser } from '../../src/domain/spaces.ts';
 import { addTombstones } from '../../src/domain/tombstones.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
@@ -103,11 +104,11 @@ describe.each(cases)('previews and thumbnails on %s in %s mode', (dialect, mode,
   test('a review preview records a view; a raw one does not', async () => {
     const { artifact } = await publishFiles(ctx, member.user, { 'index.html': '<p>seen</p>' });
     expect((await preview(artifact.id, 1, '?mode=raw')).status).toBe(200);
-    expect(await listRecent(ctx.deps, member.user.id, 20)).toEqual([]);
+    expect(await listRecent(ctx.deps, scopeForUser(ctx.deps, member.user), 20)).toEqual([]);
     expect((await preview(artifact.id, 1)).status).toBe(200);
-    expect((await listRecent(ctx.deps, member.user.id, 20)).map((a) => a.id)).toEqual([
-      artifact.id,
-    ]);
+    expect(
+      (await listRecent(ctx.deps, scopeForUser(ctx.deps, member.user), 20)).map((a) => a.id),
+    ).toEqual([artifact.id]);
   });
 
   test('thumbnails are raster only, with locked-down headers', async () => {

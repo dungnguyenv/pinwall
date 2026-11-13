@@ -16,6 +16,7 @@ import { t } from '../lib/i18n.ts';
 import { hashSecret, newId, newSecret } from '../lib/ids.ts';
 import { getArtifact, holdArtifact } from './artifacts.ts';
 import { endShareLinkStreams } from './live.ts';
+import { type Scope, scopeForUser, whereVisible } from './spaces.ts';
 import { addTombstones } from './tombstones.ts';
 import { versionOf } from './versions.ts';
 
@@ -77,8 +78,8 @@ export function checkSharePassword(pw: string): string {
  * Makes a share link of the artifact: to version `versionId`, or following the current version
  * when null; open to anyone with it, or behind `password`; until `expiresAt` (which must be in
  * the future) or until revoked. Returns the row and the token, which is stored only as its hash
- * and cannot be shown again. A version of another artifact answers 400; a missing artifact 404,
- * a deleted one 410.
+ * and cannot be shown again. A version of another artifact answers 400; a missing artifact, or
+ * one `actor` does not see, 404, a deleted one 410.
  */
 export async function createShareLink(
   deps: AppDeps,
@@ -100,9 +101,10 @@ export async function createShareLink(
     p.password === null ? null : await hashPassword(checkSharePassword(p.password));
   const token = newSecret();
   const { db, dialect } = deps.db;
+  const scope = scopeForUser(deps, actor);
   const row = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
-    const artifact = await holdArtifact(trx, dialect, artifactId, now);
+    const artifact = await holdArtifact(trx, dialect, scope, artifactId, now);
     const version = p.versionId === null ? null : await versionOf(trx, artifact, p.versionId);
     const link: ShareLinkRow = {
       id: newId('shr'),
@@ -126,15 +128,17 @@ export async function createShareLink(
 /**
  * One page of the artifact's share links, newest first (ties by id). Revoked links are left out
  * unless `includeRevoked`; expired ones are listed with status `expired`. The same queries
- * whatever the page size. A missing artifact answers as `getArtifact` does (404, or 410).
+ * whatever the page size. A missing artifact, or one `scope` does not see, answers as
+ * `getArtifact` does (404, or 410).
  */
 export async function listShareLinks(
   deps: AppDeps,
+  scope: Scope,
   artifactId: string,
   p: { includeRevoked: boolean; limit: number; cursor: string | null },
 ): Promise<{ items: ShareLink[]; nextCursor: string | null }> {
   const { db } = deps.db;
-  const artifact = await getArtifact(db, artifactId, deps.clock.now());
+  const artifact = await getArtifact(db, scope, artifactId, deps.clock.now());
   let query = db.selectFrom('share_links').selectAll().where('artifact_id', '=', artifact.id);
   if (!p.includeRevoked) query = query.where('revoked_at', 'is', null);
   if (p.cursor !== null) {
@@ -205,7 +209,8 @@ export async function toShareLinks(
  * Revokes the share link `linkId`; its creator, the artifact's publisher or an admin may. In one
  * transaction it marks the link revoked and ends the content grants made from it, so what it
  * opened stops being served at once (those grants answer 410); once that has committed, the
- * link's live streams end too. Revoking a revoked link changes nothing.
+ * link's live streams end too. Revoking a revoked link changes nothing. A link on an artifact
+ * `actor` does not see answers 404, as a missing one does.
  */
 export async function revokeShareLink(
   deps: AppDeps,
@@ -213,14 +218,15 @@ export async function revokeShareLink(
   linkId: string,
 ): Promise<void> {
   const { db, dialect } = deps.db;
+  const scope = scopeForUser(deps, actor);
   await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
-    const seen = await getShareLink(trx, linkId);
+    const seen = await getShareLink(trx, scope, linkId);
     // The artifact is held before anything else, as deletions lock it first, so a deletion and
     // this revoke take turns on the link's grants and their tombstones instead of deadlocking.
-    const artifact = await holdArtifact(trx, dialect, seen.artifact_id, now);
+    const artifact = await holdArtifact(trx, dialect, scope, seen.artifact_id, now);
     // A deletion the hold waited for may have taken the link along.
-    const link = dialect === 'postgres' ? await getShareLink(trx, linkId) : seen;
+    const link = dialect === 'postgres' ? await getShareLink(trx, scope, linkId) : seen;
     if (!canRevoke(actor, link, artifact)) throw forbidden(t('share.revokeForbidden'));
     await trx
       .updateTable('share_links')
@@ -312,12 +318,17 @@ function canRevoke(user: UserRow, link: ShareLinkRow, artifact: ArtifactRow): bo
   );
 }
 
-async function getShareLink(db: Db, id: string): Promise<ShareLinkRow> {
-  const row = await db
-    .selectFrom('share_links')
-    .selectAll()
-    .where('id', '=', id)
-    .executeTakeFirst();
+/** The share link `id`; 404 when there is none or `scope` does not see its artifact. */
+async function getShareLink(db: Db, scope: Scope, id: string): Promise<ShareLinkRow> {
+  const row = await whereVisible(
+    db
+      .selectFrom('share_links')
+      .innerJoin('artifacts', 'artifacts.id', 'share_links.artifact_id')
+      .selectAll('share_links')
+      .where('share_links.id', '=', id),
+    scope,
+    'artifacts.project_id',
+  ).executeTakeFirst();
   if (row === undefined) throw notFound(t('share.unknown'));
   return row;
 }

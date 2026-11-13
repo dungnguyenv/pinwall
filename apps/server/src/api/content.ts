@@ -11,6 +11,7 @@ import { noneMatch } from '../content/serve.ts';
 import type { VersionFileRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import { getArtifact, recordView } from '../domain/artifacts.ts';
+import { type Scope, scopeOf } from '../domain/spaces.ts';
 import { getCurrentVersion, getVersionByNumber } from '../domain/versions.ts';
 import { AppError, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
@@ -81,13 +82,19 @@ const thumbnailRoute = createRoute({
 });
 
 /**
- * The thumbnail file of the current version, when it can be served from the app origin: a raster
- * type by its name, and bytes that start the way that type does. A file named `.png` that holds
- * HTML or SVG is never served under an image type here, where it would share the app's origin.
+ * The thumbnail file of the current version of an artifact `scope` sees, when it can be served
+ * from the app origin: a raster type by its name, and bytes that start the way that type does. A
+ * file named `.png` that holds HTML or SVG is never served under an image type here, where it
+ * would share the app's origin.
  */
-async function thumbnailFile(deps: AppDeps, artifactId: string): Promise<VersionFileRow> {
+async function thumbnailFile(
+  deps: AppDeps,
+  scope: Scope,
+  artifactId: string,
+): Promise<VersionFileRow> {
   const { db } = deps.db;
-  const version = await getCurrentVersion(db, await getArtifact(db, artifactId, deps.clock.now()));
+  const artifact = await getArtifact(db, scope, artifactId, deps.clock.now());
+  const version = await getCurrentVersion(db, artifact);
   const file =
     version.thumbnail_path === null
       ? undefined
@@ -138,7 +145,7 @@ export function registerContentRoutes(api: OpenAPIHono<AppEnv>): void {
     const { user } = authOf(c);
     const { id, n } = c.req.valid('param');
     const { mode } = c.req.valid('query');
-    const artifact = await getArtifact(deps.db.db, id, deps.clock.now());
+    const artifact = await getArtifact(deps.db.db, scopeOf(c), id, deps.clock.now());
     const version = await getVersionByNumber(deps.db.db, artifact, n);
     const grant = await createGrant(deps, { versionId: version.id, mode, user });
     if (mode === 'review') await recordView(deps, user.id, artifact.id);
@@ -153,7 +160,7 @@ export function registerContentRoutes(api: OpenAPIHono<AppEnv>): void {
 
   api.openapi(thumbnailRoute, async (c) => {
     const { deps } = c.var;
-    const file = await thumbnailFile(deps, c.req.valid('param').id);
+    const file = await thumbnailFile(deps, scopeOf(c), c.req.valid('param').id);
     const etag = `"${file.sha256}"`;
     const headers = {
       'Content-Security-Policy': THUMBNAIL_CSP,

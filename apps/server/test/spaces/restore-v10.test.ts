@@ -1,6 +1,7 @@
 import { Readable } from 'node:stream';
 import { afterAll, beforeAll, describe, expect, onTestFinished, test } from 'vitest';
 import { DEFAULT_PROJECT_ID, ensureDefaultProject, getProject } from '../../src/domain/projects.ts';
+import { SYSTEM_SCOPE } from '../../src/domain/spaces.ts';
 import { RestoreError, restoreBackup } from '../../src/ops/backup/restore.ts';
 import {
   backupToBuffer,
@@ -147,7 +148,7 @@ describe.each(dialects)('restore with spaces on %s', (dialect) => {
       // Everything else is the archive's too, owners as they were: an archive made since
       // 0003_spaces is not backfilled again, so the unowned default project stays unowned.
       expect(await dumpLogical(dst.deps)).toEqual(await dumpLogical(src.deps));
-      expect(await getProject(dst.deps.db.db, DEFAULT_PROJECT_ID)).toMatchObject({
+      expect(await getProject(dst.deps.db.db, SYSTEM_SCOPE, DEFAULT_PROJECT_ID)).toMatchObject({
         owner_id: null,
       });
     },

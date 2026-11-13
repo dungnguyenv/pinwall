@@ -10,6 +10,7 @@ import { badRequest, gone, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { foldForSearch } from '../lib/search-fold.ts';
 import { getProject } from './projects.ts';
+import { type Scope, type ViewerScope, whereVisible } from './spaces.ts';
 import { isTombstoned } from './tombstones.ts';
 
 /** An artifact carries at most this many tags. */
@@ -31,34 +32,44 @@ export const RECENT_MAX = 20;
 /** Whitespace and control characters; a run of them inside a tag becomes one space. */
 const BLANKS = /[\s\p{Cc}]+/gu;
 
+/** The query for the artifact `id`, when `scope` sees it. */
+function selectArtifact(db: Db, scope: Scope, id: string) {
+  return whereVisible(
+    db.selectFrom('artifacts').selectAll().where('id', '=', id),
+    scope,
+    'artifacts.project_id',
+  );
+}
+
 /**
- * The artifact `id`. A missing one answers 410 when it was deleted (its tombstone is in force at
- * `now`), else 404. Pass the transaction when one is open.
+ * The artifact `id`, if `scope` sees it. One that is missing or that `scope` does not see
+ * answers 404, or 410 when it was deleted (its tombstone is in force at `now`). Pass the
+ * transaction when one is open.
  */
-export async function getArtifact(db: Db, id: string, now: number): Promise<ArtifactRow> {
-  const artifact = await db
-    .selectFrom('artifacts')
-    .selectAll()
-    .where('id', '=', id)
-    .executeTakeFirst();
+export async function getArtifact(
+  db: Db,
+  scope: Scope,
+  id: string,
+  now: number,
+): Promise<ArtifactRow> {
+  const artifact = await selectArtifact(db, scope, id).executeTakeFirst();
   if (artifact !== undefined) return artifact;
   if (await isTombstoned(db, 'artifact', id, now)) throw gone(t('artifact.gone'));
   throw notFound(t('artifact.notFound'));
 }
 
 /**
- * Reads the artifact `id` and holds it until `trx` ends, so writers of one artifact take turns:
- * `FOR UPDATE` on Postgres; on SQLite a transaction already has the database to itself.
+ * Reads the artifact `id`, if `scope` sees it, and holds it until `trx` ends, so writers of one
+ * artifact take turns: `FOR UPDATE` on Postgres; on SQLite a transaction already has the database
+ * to itself.
  */
 export function lockArtifact(
   trx: Transaction<Database>,
   dialect: DbDialect,
+  scope: Scope,
   id: string,
 ): Promise<ArtifactRow | undefined> {
-  return trx
-    .selectFrom('artifacts')
-    .selectAll()
-    .where('id', '=', id)
+  return selectArtifact(trx, scope, id)
     .$if(dialect === 'postgres', (qb) => qb.forUpdate())
     .executeTakeFirst();
 }
@@ -67,21 +78,20 @@ export function lockArtifact(
  * The artifact `id`, held until `trx` ends: share-locked on Postgres, so a version or artifact
  * deletion (which locks it for update) and a write that points at one of its versions (a
  * comment, a share link) take turns instead of racing on that version. On SQLite a transaction
- * has the database to itself. A missing artifact answers as `getArtifact` does.
+ * has the database to itself. A missing artifact, or one `scope` does not see, answers as
+ * `getArtifact` does.
  */
 export async function holdArtifact(
   trx: Transaction<Database>,
   dialect: DbDialect,
+  scope: Scope,
   id: string,
   now: number,
 ): Promise<ArtifactRow> {
-  const row = await trx
-    .selectFrom('artifacts')
-    .selectAll()
-    .where('id', '=', id)
+  const row = await selectArtifact(trx, scope, id)
     .$if(dialect === 'postgres', (qb) => qb.forShare())
     .executeTakeFirst();
-  return row ?? getArtifact(trx, id, now);
+  return row ?? getArtifact(trx, scope, id, now);
 }
 
 /**
@@ -157,22 +167,28 @@ function inActiveProjects(db: Db) {
 }
 
 /**
- * One page of artifacts, narrowed by project, tag and a search. Without `q` they come by last
- * update, newest first, with ties broken by id so a page boundary never repeats or skips one.
- * With `q`, best match first; only the best 1,000 matches can be paged through. Without
- * `projectId`, artifacts of archived projects are left out; with one that does not exist, 404.
- * `q` is folded and cut to `SEARCH_MAX_WORDS` words; a blank `q` is no search.
+ * One page of the artifacts `scope` sees, narrowed by project, tag and a search. Without `q` they
+ * come by last update, newest first, with ties broken by id so a page boundary never repeats or
+ * skips one. With `q`, best match first; only the best 1,000 matches can be paged through.
+ * Without `projectId`, artifacts of archived projects are left out; with one that does not exist
+ * or that `scope` does not see, 404. `q` is folded and cut to `SEARCH_MAX_WORDS` words; a blank
+ * `q` is no search.
  */
 export async function listArtifacts(
   deps: AppDeps,
+  scope: Scope,
   p: { projectId?: string; tag?: string; q?: string; limit: number; cursor: string | null },
 ): Promise<{ items: ArtifactRow[]; nextCursor: string | null }> {
   const { db, dialect } = deps.db;
-  if (p.projectId !== undefined) await getProject(db, p.projectId);
+  if (p.projectId !== undefined) await getProject(db, scope, p.projectId);
   const tag = p.tag === undefined ? undefined : (normalizeTags([p.tag])[0] ?? '');
 
   const filtered = () => {
-    let query = db.selectFrom('artifacts').selectAll('artifacts');
+    let query = whereVisible(
+      db.selectFrom('artifacts').selectAll('artifacts'),
+      scope,
+      'artifacts.project_id',
+    );
     query =
       p.projectId === undefined
         ? query.where('artifacts.project_id', 'in', inActiveProjects(db))
@@ -237,20 +253,22 @@ export async function recordView(deps: AppDeps, userId: string, artifactId: stri
 }
 
 /**
- * The artifacts `userId` opened last, the latest first: at most `limit`, never more than
- * `RECENT_MAX`. Those of archived projects are left out, as in the default list.
+ * The artifacts the viewer of `scope` opened last and still sees, the latest first: at most
+ * `limit`, never more than `RECENT_MAX`. Those of archived projects are left out, as in the
+ * default list.
  */
 export async function listRecent(
   deps: AppDeps,
-  userId: string,
+  scope: ViewerScope,
   limit: number,
 ): Promise<ArtifactRow[]> {
   const { db } = deps.db;
-  return db
+  const viewed = db
     .selectFrom('artifact_views')
     .innerJoin('artifacts', 'artifacts.id', 'artifact_views.artifact_id')
     .selectAll('artifacts')
-    .where('artifact_views.user_id', '=', userId)
+    .where('artifact_views.user_id', '=', scope.user.id);
+  return whereVisible(viewed, scope, 'artifacts.project_id')
     .where('artifacts.project_id', 'in', inActiveProjects(db))
     .orderBy('artifact_views.viewed_at', 'desc')
     .orderBy('artifact_views.artifact_id', 'desc')

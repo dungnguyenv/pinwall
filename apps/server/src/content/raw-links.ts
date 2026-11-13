@@ -4,6 +4,7 @@ import { safeReturnTo } from '../auth/oidc/return-to.ts';
 import { resolveAuth } from '../auth/resolve.ts';
 import { bearerResolvers } from '../auth/resolvers.ts';
 import { getArtifact } from '../domain/artifacts.ts';
+import { scopeForUser } from '../domain/spaces.ts';
 import { getCurrentVersion, getVersionByNumber } from '../domain/versions.ts';
 import { wantsHtml } from '../http/errors.ts';
 import { publicUrl } from '../http/public-url.ts';
@@ -54,7 +55,8 @@ async function redirectToRaw(c: Context<AppEnv>, n: string | null): Promise<Resp
   }
 
   const { db } = deps.db;
-  const artifact = await getArtifact(db, c.req.param('artifactId') ?? '', deps.clock.now());
+  const scope = scopeForUser(deps, auth.user);
+  const artifact = await getArtifact(db, scope, c.req.param('artifactId') ?? '', deps.clock.now());
   const version =
     n === null
       ? await getCurrentVersion(db, artifact)

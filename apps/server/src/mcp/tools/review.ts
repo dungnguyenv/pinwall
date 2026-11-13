@@ -16,6 +16,7 @@ import {
   shareUrl,
   toShareLinks,
 } from '../../domain/shares.ts';
+import { scopeForUser } from '../../domain/spaces.ts';
 import { getVersionsById } from '../../domain/versions.ts';
 import { gone } from '../../lib/errors.ts';
 import { t } from '../../lib/i18n.ts';
@@ -197,6 +198,8 @@ function shareDetails(link: ShareOut): string {
 export const reviewTools: ToolModule = (server, ctx) => {
   const { deps, auth } = ctx;
   const { user } = auth;
+  /** The caller's scope, for each call to pass to the services it reads through. */
+  const scope = () => scopeForUser(deps, user);
 
   server.registerTool(
     'list_comments',
@@ -207,9 +210,11 @@ export const reviewTools: ToolModule = (server, ctx) => {
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof ListCommentsIn>) => {
-      // Answers 404 or 410 for an artifact that is missing or deleted, before any thread is read.
-      const artifact = await getArtifact(deps.db.db, a.artifact_id, deps.clock.now());
-      const { items, nextCursor } = await listThreads(deps, artifact.id, {
+      // Answers 404 or 410 for an artifact that is missing or deleted, or that the caller does
+      // not see, before any thread is read.
+      const viewer = scope();
+      const artifact = await getArtifact(deps.db.db, viewer, a.artifact_id, deps.clock.now());
+      const { items, nextCursor } = await listThreads(deps, viewer, artifact.id, {
         status: a.status,
         ...(a.version === undefined ? {} : { versionNumber: a.version }),
         limit: a.limit,
@@ -340,7 +345,7 @@ export const reviewTools: ToolModule = (server, ctx) => {
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof ListShareLinksIn>) => {
-      const { items, nextCursor } = await listShareLinks(deps, a.artifact_id, {
+      const { items, nextCursor } = await listShareLinks(deps, scope(), a.artifact_id, {
         includeRevoked: a.include_revoked,
         limit: SHARE_LIST_LIMIT,
         cursor: null,

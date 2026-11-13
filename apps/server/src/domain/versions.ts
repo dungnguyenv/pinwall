@@ -23,6 +23,7 @@ import type { StagedFile } from '../publish/stage.ts';
 import { getArtifact, getTags, lockArtifact, normalizeTags } from './artifacts.ts';
 import { DEFAULT_PROJECT_ID, ensureDefaultProject, getProject } from './projects.ts';
 import { ARTIFACT_TOPIC, indexArtifact } from './search.ts';
+import { type Scope, scopeForUser } from './spaces.ts';
 
 /** Where a publish goes: a new artifact, or a new version on top of the one the publisher saw. */
 export type PublishTarget =
@@ -66,19 +67,26 @@ export function versionConflict(current: { id: string; number: number }): AppErr
 
 /**
  * Runs the checks of `commitVersion` without writing anything, so an upload can be refused
- * before its body is read: the project exists and is not archived, the tags are valid, the
- * artifact exists and its current version is the expected one. The commit checks again.
+ * before its body is read: the project exists, `scope` sees it and it is not archived, the tags
+ * are valid, the artifact exists, `scope` sees it and its current version is the expected one.
+ * The commit checks again.
  */
-export async function checkTarget(deps: AppDeps, target: PublishTarget): Promise<void> {
+export async function checkTarget(
+  deps: AppDeps,
+  scope: Scope,
+  target: PublishTarget,
+): Promise<void> {
   const { db } = deps.db;
   if (target.kind === 'new_artifact') {
     normalizeTags(target.tags);
     const projectId = target.projectId ?? DEFAULT_PROJECT_ID;
     // The commit creates the default project when it is missing, and it is never archived.
-    if (projectId !== DEFAULT_PROJECT_ID) assertNotArchived(await getProject(db, projectId));
+    if (projectId !== DEFAULT_PROJECT_ID) {
+      assertNotArchived(await getProject(db, scope, projectId));
+    }
     return;
   }
-  const artifact = await getArtifact(db, target.artifactId, deps.clock.now());
+  const artifact = await getArtifact(db, scope, target.artifactId, deps.clock.now());
   await assertCurrent(db, artifact, target.expectedVersionId);
 }
 
@@ -97,6 +105,7 @@ export async function commitVersion(
   input: VersionInput,
 ): Promise<CommitResult> {
   const { dialect } = deps.db;
+  const scope = scopeForUser(deps, actor);
   const plan: Plan =
     target.kind === 'new_artifact' ? await planNewArtifact(deps, target, input) : target;
 
@@ -105,7 +114,7 @@ export async function commitVersion(
     const { artifact, tags } =
       plan.kind === 'new_artifact'
         ? await insertArtifact(trx, dialect, plan, actor, input.kind, now)
-        : await lockCurrent(trx, dialect, plan.artifactId, plan.expectedVersionId, now);
+        : await lockCurrent(trx, dialect, scope, plan.artifactId, plan.expectedVersionId, now);
 
     const version: VersionRow = {
       id: newId('ver'),
@@ -157,15 +166,23 @@ export async function restoreVersion(
   expectedVersionId: string,
 ): Promise<CommitResult> {
   const { db, dialect } = deps.db;
+  const scope = scopeForUser(deps, actor);
   // Settle what can fail cheaply before reading the old version's files for its search text;
   // that read cannot run inside the transaction (on SQLite it holds the only connection).
-  const seen = await getArtifact(db, artifactId, deps.clock.now());
+  const seen = await getArtifact(db, scope, artifactId, deps.clock.now());
   await assertCurrent(db, seen, expectedVersionId);
   const text = await extractVersionText(deps, (await getVersionByNumber(db, seen, n)).id);
 
   const result = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
-    const { artifact, tags } = await lockCurrent(trx, dialect, artifactId, expectedVersionId, now);
+    const { artifact, tags } = await lockCurrent(
+      trx,
+      dialect,
+      scope,
+      artifactId,
+      expectedVersionId,
+      now,
+    );
     // Deleted since it was read: 410.
     const old = await getVersionByNumber(trx, artifact, n);
     const version: VersionRow = {
@@ -352,18 +369,20 @@ function assertNotArchived(project: ProjectRow): void {
 }
 
 /**
- * Locks the artifact, checks that `expectedVersionId` is still its current version, and reads
- * its tags.
+ * Locks the artifact, which `scope` must see, checks that `expectedVersionId` is still its
+ * current version, and reads its tags.
  */
 async function lockCurrent(
   trx: Transaction<Database>,
   dialect: DbDialect,
+  scope: Scope,
   artifactId: string,
   expectedVersionId: string,
   now: number,
 ): Promise<{ artifact: ArtifactRow; tags: string[] }> {
   const artifact =
-    (await lockArtifact(trx, dialect, artifactId)) ?? (await getArtifact(trx, artifactId, now));
+    (await lockArtifact(trx, dialect, scope, artifactId)) ??
+    (await getArtifact(trx, scope, artifactId, now));
   await assertCurrent(trx, artifact, expectedVersionId);
   return { artifact, tags: await getTags(trx, artifact.id) };
 }
@@ -424,15 +443,16 @@ function announce(deps: AppDeps, { artifact, version }: CommitResult): void {
 
 /**
  * One page of the artifact's versions, the newest first, and which of them is current. A missing
- * artifact answers as `getArtifact` does (404, or 410 when deleted).
+ * artifact, or one `scope` does not see, answers as `getArtifact` does (404, or 410 when deleted).
  */
 export async function listVersions(
   deps: AppDeps,
+  scope: Scope,
   artifactId: string,
   p: { limit: number; cursor: string | null },
 ): Promise<{ items: VersionRow[]; nextCursor: string | null; currentVersionId: string | null }> {
   const { db } = deps.db;
-  const artifact = await getArtifact(db, artifactId, deps.clock.now());
+  const artifact = await getArtifact(db, scope, artifactId, deps.clock.now());
   let query = db.selectFrom('versions').selectAll().where('artifact_id', '=', artifact.id);
   if (p.cursor !== null)
     query = query.where('number', '<', decodeCursor(p.cursor, VersionCursor).n);

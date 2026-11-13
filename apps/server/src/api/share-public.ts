@@ -42,6 +42,7 @@ import {
   shareInfo,
   unlockShare,
 } from '../domain/share-access.ts';
+import { SYSTEM_SCOPE } from '../domain/spaces.ts';
 import { clientIp } from '../http/client-ip.ts';
 import { LIVE_STREAM_LIMITS, type LiveStreamOptions, liveStream } from '../http/sse.ts';
 import { hashSecret } from '../lib/ids.ts';
@@ -376,7 +377,8 @@ export function registerSharePublicRoutes(api: OpenAPIHono<AppEnv>): void {
   api.openapi(listCommentsRoute, async (c) => {
     const s = await commentShare(c, c.req.valid('param').token);
     const { status, limit, cursor } = c.req.valid('query');
-    const { items, nextCursor } = await listThreads(c.var.deps, s.artifact.id, {
+    // The resolved link is what lets its viewers in: it reaches only its own artifact.
+    const { items, nextCursor } = await listThreads(c.var.deps, SYSTEM_SCOPE, s.artifact.id, {
       status,
       maxVersionNumber: s.version.number,
       limit,

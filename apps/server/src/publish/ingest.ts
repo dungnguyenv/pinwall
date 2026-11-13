@@ -4,6 +4,7 @@ import { extractMetadata, type MetadataFile, type PublishWarning } from '../cont
 import { contentTypeFor, isTextType } from '../content/mime.ts';
 import type { ArtifactRow, UserRow, VersionRow, VersionSource } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
+import { scopeForUser } from '../domain/spaces.ts';
 import { checkTarget, commitVersion, type PublishTarget } from '../domain/versions.ts';
 import { publicUrl } from '../http/public-url.ts';
 import { AppError, badRequest, unsupportedMediaType } from '../lib/errors.ts';
@@ -82,7 +83,7 @@ async function publishUpload(
   const { body } = input;
   const maxUpload = deps.config.limits.maxUploadBytes;
   try {
-    await checkTarget(deps, target);
+    await checkTarget(deps, scopeForUser(deps, opts.actor), target);
     if (input.contentLength !== null && input.contentLength > maxUpload) {
       throw limitExceeded('max_upload_bytes', maxUpload);
     }
@@ -136,7 +137,7 @@ async function publishFileSet(
   files: readonly { path: string; data: Buffer }[],
   opts: PublishOptions,
 ): Promise<PublishOutcome> {
-  await checkTarget(deps, target);
+  await checkTarget(deps, scopeForUser(deps, opts.actor), target);
   const budget = new IngestBudget(deps.config.limits);
   return ingest(deps, target, opts, budget, null, async (stager) => {
     const paths = new Set<string>();
@@ -194,7 +195,7 @@ async function publishStreamed(
   readFiles: (sink: FileSink) => Promise<void>,
 ): Promise<PublishOutcome> {
   try {
-    await checkTarget(deps, target);
+    await checkTarget(deps, scopeForUser(deps, opts.actor), target);
   } catch (error) {
     destroyInput();
     throw error;

@@ -11,6 +11,7 @@ import type { AppDeps } from '../deps.ts';
 import { AppError, badRequest, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { getArtifact } from './artifacts.ts';
+import type { Scope } from './spaces.ts';
 import { getVersionByNumber } from './versions.ts';
 
 /** A side of a text diff is at most this many bytes; a bigger file is not read. */
@@ -49,16 +50,18 @@ type StoredFile = FileSide & { path: string };
 /**
  * The files that differ between versions `from` and `to` of an artifact, compared by content
  * hash and sorted by path; files that are the same in both are left out. An artifact or a version
- * that is missing answers as `getArtifact` and `getVersionByNumber` do.
+ * that is missing, or an artifact `scope` does not see, answers as `getArtifact` and
+ * `getVersionByNumber` do.
  */
 export async function diffVersionFiles(
   deps: AppDeps,
+  scope: Scope,
   artifactId: string,
   from: number,
   to: number,
 ): Promise<FileChange[]> {
   const { db } = deps.db;
-  const { oldVersion, newVersion } = await versionPair(deps, artifactId, from, to);
+  const { oldVersion, newVersion } = await versionPair(deps, scope, artifactId, from, to);
   const before = new Map((await filesOf(db, oldVersion.id)).map((file) => [file.path, file]));
   const after = new Map((await filesOf(db, newVersion.id)).map((file) => [file.path, file]));
 
@@ -97,12 +100,13 @@ export interface TextFileDiff {
  */
 export async function diffTextFile(
   deps: AppDeps,
+  scope: Scope,
   artifactId: string,
   from: number,
   to: number,
   path: string,
 ): Promise<TextFileDiff> {
-  const versions = await versionPair(deps, artifactId, from, to);
+  const versions = await versionPair(deps, scope, artifactId, from, to);
   const { oldFile, newFile, path: stored } = await filesAt(deps, versions, path);
   const sides = { old: oldFile ? sideOf(oldFile) : null, new: newFile ? sideOf(newFile) : null };
   const result = (rest: Pick<TextFileDiff, 'binary' | 'too_large' | 'patch'>): TextFileDiff => ({
@@ -262,12 +266,13 @@ export interface MarkdownFileDiff {
  */
 export async function diffMarkdownFile(
   deps: AppDeps,
+  scope: Scope,
   artifactId: string,
   from: number,
   to: number,
   path?: string,
 ): Promise<MarkdownFileDiff> {
-  const versions = await versionPair(deps, artifactId, from, to);
+  const versions = await versionPair(deps, scope, artifactId, from, to);
   const {
     oldFile,
     newFile,
@@ -295,15 +300,16 @@ function sideOf(file: StoredFile): FileSide {
   return { sha256: file.sha256, size: file.size, content_type: file.content_type };
 }
 
-/** Versions `from` and `to` of the artifact, which must both exist. */
+/** Versions `from` and `to` of the artifact, which `scope` must see; both must exist. */
 async function versionPair(
   deps: AppDeps,
+  scope: Scope,
   artifactId: string,
   from: number,
   to: number,
 ): Promise<{ oldVersion: VersionRow; newVersion: VersionRow }> {
   const { db } = deps.db;
-  const artifact = await getArtifact(db, artifactId, deps.clock.now());
+  const artifact = await getArtifact(db, scope, artifactId, deps.clock.now());
   const oldVersion = await getVersionByNumber(db, artifact, from);
   const newVersion = await getVersionByNumber(db, artifact, to);
   return { oldVersion, newVersion };

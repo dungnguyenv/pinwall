@@ -15,6 +15,7 @@ import { authOf, requireAuth } from '../auth/guards.ts';
 import type { VersionFileRow, VersionRow } from '../db/schema.ts';
 import { getArtifact } from '../domain/artifacts.ts';
 import { deleteVersion } from '../domain/deletion.ts';
+import { scopeOf } from '../domain/spaces.ts';
 import {
   getVersionByNumber,
   listVersionFiles,
@@ -194,7 +195,7 @@ export function registerVersionRoutes(api: OpenAPIHono<AppEnv>): void {
   api.openapi(listRoute, async (c) => {
     const { id } = c.req.valid('param');
     const { limit, cursor } = c.req.valid('query');
-    const { items, nextCursor, currentVersionId } = await listVersions(c.var.deps, id, {
+    const { items, nextCursor, currentVersionId } = await listVersions(c.var.deps, scopeOf(c), id, {
       limit,
       cursor: cursor ?? null,
     });
@@ -211,7 +212,7 @@ export function registerVersionRoutes(api: OpenAPIHono<AppEnv>): void {
   api.openapi(getRoute, async (c) => {
     const { deps } = c.var;
     const { id, n } = c.req.valid('param');
-    const artifact = await getArtifact(deps.db.db, id, deps.clock.now());
+    const artifact = await getArtifact(deps.db.db, scopeOf(c), id, deps.clock.now());
     const version = await getVersionByNumber(deps.db.db, artifact, n);
     return c.json(toVersionSummary(version, artifact.current_version_id), 200, noStore);
   });
@@ -220,7 +221,7 @@ export function registerVersionRoutes(api: OpenAPIHono<AppEnv>): void {
     const { deps } = c.var;
     const { id, n } = c.req.valid('param');
     const { limit, cursor } = c.req.valid('query');
-    const artifact = await getArtifact(deps.db.db, id, deps.clock.now());
+    const artifact = await getArtifact(deps.db.db, scopeOf(c), id, deps.clock.now());
     const version = await getVersionByNumber(deps.db.db, artifact, n);
     const { items, nextCursor } = await listVersionFiles(deps, version.id, {
       limit,

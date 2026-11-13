@@ -7,6 +7,7 @@ import {
   getProject,
   updateProject,
 } from '../../src/domain/projects.ts';
+import { SYSTEM_SCOPE } from '../../src/domain/spaces.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { createSignedInUser } from '../helpers/auth.ts';
@@ -50,7 +51,7 @@ describe.each(dialects)('projects on %s', (dialect) => {
     expect(await projectRows()).toEqual([expected]);
 
     // Later calls return the row as it is, renamed or not.
-    await updateProject(ctx.deps, DEFAULT_PROJECT_ID, { name: 'Inbox' });
+    await updateProject(ctx.deps, SYSTEM_SCOPE, DEFAULT_PROJECT_ID, { name: 'Inbox' });
     expect(await ensureDefaultProject(ctx.deps)).toMatchObject({ name: 'Inbox' });
     expect(await projectRows()).toHaveLength(1);
   });
@@ -58,18 +59,18 @@ describe.each(dialects)('projects on %s', (dialect) => {
   test('the default project cannot be archived', async () => {
     await ensureDefaultProject(ctx.deps);
     await expect(
-      updateProject(ctx.deps, DEFAULT_PROJECT_ID, { archived: true }),
+      updateProject(ctx.deps, SYSTEM_SCOPE, DEFAULT_PROJECT_ID, { archived: true }),
     ).rejects.toMatchObject({
       code: 'conflict',
       status: 409,
       message: t('project.defaultArchive'),
     });
-    expect(await getProject(ctx.deps.db.db, DEFAULT_PROJECT_ID)).toMatchObject({
+    expect(await getProject(ctx.deps.db.db, SYSTEM_SCOPE, DEFAULT_PROJECT_ID)).toMatchObject({
       archived_at: null,
     });
 
     clock.advance(1000);
-    const renamed = await updateProject(ctx.deps, DEFAULT_PROJECT_ID, {
+    const renamed = await updateProject(ctx.deps, SYSTEM_SCOPE, DEFAULT_PROJECT_ID, {
       name: 'Inbox',
       instructions: 'Write in Vietnamese.',
       archived: false,
@@ -80,7 +81,7 @@ describe.each(dialects)('projects on %s', (dialect) => {
       archived_at: null,
       updated_at: T + 1000,
     });
-    expect(await getProject(ctx.deps.db.db, DEFAULT_PROJECT_ID)).toEqual(renamed);
+    expect(await getProject(ctx.deps.db.db, SYSTEM_SCOPE, DEFAULT_PROJECT_ID)).toEqual(renamed);
   });
 
   test('projects are created, renamed, archived and unarchived', async () => {
@@ -96,20 +97,22 @@ describe.each(dialects)('projects on %s', (dialect) => {
       updated_at: T,
       owner_id: actor.id,
     });
-    expect(await getProject(ctx.deps.db.db, project.id)).toEqual(project);
+    expect(await getProject(ctx.deps.db.db, SYSTEM_SCOPE, project.id)).toEqual(project);
 
     clock.advance(1000);
-    const archived = await updateProject(ctx.deps, project.id, { archived: true });
+    const archived = await updateProject(ctx.deps, SYSTEM_SCOPE, project.id, { archived: true });
     expect(archived).toMatchObject({ archived_at: T + 1000, updated_at: T + 1000 });
 
     // Archiving again keeps the time it was first archived.
     clock.advance(1000);
-    expect(await updateProject(ctx.deps, project.id, { archived: true })).toMatchObject({
+    expect(
+      await updateProject(ctx.deps, SYSTEM_SCOPE, project.id, { archived: true }),
+    ).toMatchObject({
       archived_at: T + 1000,
       updated_at: T + 2000,
     });
 
-    const back = await updateProject(ctx.deps, project.id, {
+    const back = await updateProject(ctx.deps, SYSTEM_SCOPE, project.id, {
       archived: false,
       instructions: 'Use the brand colors.',
     });
@@ -118,14 +121,16 @@ describe.each(dialects)('projects on %s', (dialect) => {
       instructions: 'Use the brand colors.',
       archived_at: null,
     });
-    expect(await getProject(ctx.deps.db.db, project.id)).toEqual(back);
+    expect(await getProject(ctx.deps.db.db, SYSTEM_SCOPE, project.id)).toEqual(back);
   });
 
   test('an unknown project is not found', async () => {
     const notFound = { code: 'not_found', status: 404, message: t('project.notFound') };
-    await expect(getProject(ctx.deps.db.db, 'prj_nope')).rejects.toMatchObject(notFound);
-    await expect(updateProject(ctx.deps, 'prj_nope', { name: 'x' })).rejects.toMatchObject(
+    await expect(getProject(ctx.deps.db.db, SYSTEM_SCOPE, 'prj_nope')).rejects.toMatchObject(
       notFound,
     );
+    await expect(
+      updateProject(ctx.deps, SYSTEM_SCOPE, 'prj_nope', { name: 'x' }),
+    ).rejects.toMatchObject(notFound);
   });
 });

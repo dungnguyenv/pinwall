@@ -3,6 +3,7 @@ import { type DbScope, searchDelete, searchUpsert } from '../db/dialect.ts';
 import type { ArtifactRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import { getTags, lockArtifact } from './artifacts.ts';
+import { SYSTEM_SCOPE } from './spaces.ts';
 
 /** The event topic of one artifact: new versions, deletions and (from M5) comments. */
 export const ARTIFACT_TOPIC = (artifactId: string) => `artifact:${artifactId}`;
@@ -44,7 +45,8 @@ export async function reindexArtifact(deps: AppDeps, artifactId: string): Promis
 
   await db.transaction().execute(async (trx) => {
     const scope = { db: trx, dialect };
-    const artifact = await lockArtifact(trx, dialect, artifactId);
+    // Index maintenance serves every viewer: the index follows the artifact whoever sees it.
+    const artifact = await lockArtifact(trx, dialect, SYSTEM_SCOPE, artifactId);
     if (artifact === undefined || artifact.current_version_id === null) {
       await searchDelete(scope, artifactId);
       return;

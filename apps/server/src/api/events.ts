@@ -9,6 +9,7 @@ import { hasAccess } from '../auth/roles.ts';
 import type { AppDeps } from '../deps.ts';
 import { getArtifact } from '../domain/artifacts.ts';
 import { ARTIFACT_TOPIC } from '../domain/search.ts';
+import { scopeOf } from '../domain/spaces.ts';
 import { LIVE_STREAM_LIMITS, liveStream } from '../http/sse.ts';
 import { IdParam } from './pagination.ts';
 
@@ -91,7 +92,8 @@ export function registerEventRoutes(api: OpenAPIHono<AppEnv>): void {
   api.openapi(eventsRoute, async (c) => {
     const { deps } = c.var;
     const auth = authOf(c);
-    const artifact = await getArtifact(deps.db.db, c.req.valid('param').id, deps.clock.now());
+    const { id } = c.req.valid('param');
+    const artifact = await getArtifact(deps.db.db, scopeOf(c), id, deps.clock.now());
     const { sessionId } = auth;
     return liveStream(c, {
       topic: ARTIFACT_TOPIC(artifact.id),

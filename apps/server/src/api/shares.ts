@@ -16,6 +16,7 @@ import {
   shareUrl,
   toShareLinks,
 } from '../domain/shares.ts';
+import { scopeOf } from '../domain/spaces.ts';
 import { gone } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { jsonBodyLimit } from './body-limit.ts';
@@ -109,7 +110,7 @@ export function registerShareRoutes(api: OpenAPIHono<AppEnv>): void {
   api.openapi(listRoute, async (c) => {
     const { id } = c.req.valid('param');
     const { include_revoked, limit, cursor } = c.req.valid('query');
-    const { items, nextCursor } = await listShareLinks(c.var.deps, id, {
+    const { items, nextCursor } = await listShareLinks(c.var.deps, scopeOf(c), id, {
       includeRevoked: include_revoked,
       limit,
       cursor: cursor ?? null,

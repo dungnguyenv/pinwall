@@ -5,6 +5,7 @@ import { conflict, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { getArtifact, getTags, lockArtifact, normalizeTags } from './artifacts.ts';
 import { reindexArtifact } from './search.ts';
+import { type Scope, whereVisible } from './spaces.ts';
 
 /**
  * Renames an artifact, moves it to another project, or replaces its tags; only what is given,
@@ -12,11 +13,13 @@ import { reindexArtifact } from './search.ts';
  * the rest unapplied. A change counts as an update: `updated_at` moves, unless nothing differs
  * from what is stored. A rename or new tags then reach the search index.
  *
- * The target project must exist and not be archived (404, 409); on Postgres its row stays
- * share-locked until the commit, so archiving it waits for a move that has already checked it.
+ * The artifact and the target project must be ones `scope` sees (else 404, as for missing ones).
+ * The target project must not be archived (409); on Postgres its row stays share-locked until
+ * the commit, so archiving it waits for a move that has already checked it.
  */
 export async function updateArtifact(
   deps: AppDeps,
+  scope: Scope,
   id: string,
   p: { name?: string; projectId?: string; tags?: readonly string[] },
 ): Promise<ArtifactRow> {
@@ -25,16 +28,18 @@ export async function updateArtifact(
 
   const { artifact, reindex } = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
-    const current = (await lockArtifact(trx, dialect, id)) ?? (await getArtifact(trx, id, now));
+    const current =
+      (await lockArtifact(trx, dialect, scope, id)) ?? (await getArtifact(trx, scope, id, now));
     const patch: Updateable<ArtifactsTable> = {};
 
     if (p.name !== undefined && p.name !== current.name) patch.name = p.name;
 
     if (p.projectId !== undefined && p.projectId !== current.project_id) {
-      const project = await trx
-        .selectFrom('projects')
-        .select(['id', 'archived_at'])
-        .where('id', '=', p.projectId)
+      const project = await whereVisible(
+        trx.selectFrom('projects').select(['id', 'archived_at']).where('id', '=', p.projectId),
+        scope,
+        'projects.id',
+      )
         .$if(dialect === 'postgres', (qb) => qb.forShare())
         .executeTakeFirst();
       if (project === undefined) throw notFound(t('project.notFound'));

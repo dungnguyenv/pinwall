@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { createGrant } from '../../src/content/grants.ts';
 import type { UserRow, VersionRow } from '../../src/db/schema.ts';
 import { listShareLinks } from '../../src/domain/shares.ts';
+import { SYSTEM_SCOPE } from '../../src/domain/spaces.ts';
 import { addTombstones, isTombstoned } from '../../src/domain/tombstones.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
@@ -347,7 +348,7 @@ describe.each(dialects)('share links on %s', (dialect) => {
         transformResult: async ({ result }) => result,
       });
       const deps = { ...ctx.deps, db: { ...ctx.deps.db, db: counting } };
-      const { items } = await listShareLinks(deps, id, {
+      const { items } = await listShareLinks(deps, SYSTEM_SCOPE, id, {
         includeRevoked: false,
         limit,
         cursor: null,

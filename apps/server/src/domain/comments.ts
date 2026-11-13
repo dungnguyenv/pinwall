@@ -14,6 +14,7 @@ import { hashSecret, newId, newSecret } from '../lib/ids.ts';
 import { getArtifact, holdArtifact } from './artifacts.ts';
 import { publishLive } from './live.ts';
 import { holdCommentLink, sharedVersion } from './share-access.ts';
+import { type Scope, SYSTEM_SCOPE, scopeForUser, whereVisible } from './spaces.ts';
 import { getCurrentVersion, versionOf } from './versions.ts';
 
 /** How long after writing it a guest may still edit or delete a comment. */
@@ -30,6 +31,15 @@ export type CommentActor =
   | { kind: 'guest'; shareLinkId: string; name: string | null; guestToken: string | null };
 
 type GuestActor = Extract<CommentActor, { kind: 'guest' }>;
+
+/**
+ * Whose view a comment write acts in: a member's own. A guest's share link is what lets them
+ * in, so a guest acts under `SYSTEM_SCOPE`, bound to that link (`holdGuestLink` checks it again
+ * in the write's transaction).
+ */
+function actorScope(deps: AppDeps, actor: CommentActor): Scope {
+  return actor.kind === 'member' ? scopeForUser(deps, actor.user) : SYSTEM_SCOPE;
+}
 
 /** What a guest edit token stands for, kept under the token's hash. */
 interface GuestTokenEntry {
@@ -176,15 +186,17 @@ function selectComments(db: Db) {
 /**
  * One page of the artifact's threads, in the order they were written (ties by id), each with
  * its replies. Two queries whatever the page size: one for the threads, one for their replies.
- * A missing artifact answers as `getArtifact` does (404, or 410 when deleted).
+ * A missing artifact, or one `scope` does not see, answers as `getArtifact` does (404, or 410
+ * when deleted).
  */
 export async function listThreads(
   deps: AppDeps,
+  scope: Scope,
   artifactId: string,
   f: ThreadFilter,
 ): Promise<{ items: CommentThread[]; nextCursor: string | null }> {
   const { db } = deps.db;
-  const artifact = await getArtifact(db, artifactId, deps.clock.now());
+  const artifact = await getArtifact(db, scope, artifactId, deps.clock.now());
   let query = selectComments(db)
     .where('comments.artifact_id', '=', artifact.id)
     .where('comments.parent_id', 'is', null);
@@ -214,14 +226,34 @@ export async function listThreads(
   return { items: await withReplies(db, roots), nextCursor };
 }
 
-/** The thread whose first comment is `threadId`; 404 when there is none. */
-export async function getThread(deps: AppDeps, threadId: string): Promise<CommentThread> {
-  return readThread(deps.db.db, threadId);
+/**
+ * The thread whose first comment is `threadId`; 404 when there is none or `scope` does not see
+ * its artifact.
+ */
+export async function getThread(
+  deps: AppDeps,
+  scope: Scope,
+  threadId: string,
+): Promise<CommentThread> {
+  const { db } = deps.db;
+  await getComment(db, scope, threadId);
+  return readThread(db, threadId);
 }
 
-/** The comment `id`, a thread's first comment or a reply; 404 when there is none. */
-export async function getComment(db: Db, id: string): Promise<CommentRow> {
-  const row = await db.selectFrom('comments').selectAll().where('id', '=', id).executeTakeFirst();
+/**
+ * The comment `id`, a thread's first comment or a reply; 404 when there is none or `scope` does
+ * not see its artifact.
+ */
+export async function getComment(db: Db, scope: Scope, id: string): Promise<CommentRow> {
+  const row = await whereVisible(
+    db
+      .selectFrom('comments')
+      .innerJoin('artifacts', 'artifacts.id', 'comments.artifact_id')
+      .selectAll('comments')
+      .where('comments.id', '=', id),
+    scope,
+    'artifacts.project_id',
+  ).executeTakeFirst();
   if (row === undefined) throw notFound(t('comment.notFound'));
   return row;
 }
@@ -240,9 +272,10 @@ export async function createThread(
   p: { body: string; anchor: Anchor; versionId: string | null },
 ): Promise<CommentThread> {
   const { db, dialect } = deps.db;
+  const scope = actorScope(deps, actor);
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
-    const artifact = await holdArtifact(trx, dialect, artifactId, now);
+    const artifact = await holdArtifact(trx, dialect, scope, artifactId, now);
     const link = await holdGuestLink(trx, deps, actor, now);
     const version =
       p.versionId === null
@@ -280,12 +313,14 @@ export async function addReply(
   body: string,
 ): Promise<{ thread: CommentThread; comment: Comment }> {
   const { db, dialect } = deps.db;
+  const scope = actorScope(deps, actor);
   const id = newId('cmt');
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
-    const { comment: target } = await holdComment(trx, dialect, commentId, now);
+    const { comment: target } = await holdComment(trx, dialect, scope, commentId, now);
     await holdGuestLink(trx, deps, actor, now);
-    const root = target.parent_id === null ? target : await getComment(trx, target.parent_id);
+    const root =
+      target.parent_id === null ? target : await getComment(trx, scope, target.parent_id);
     await trx
       .insertInto('comments')
       .values({
@@ -314,9 +349,10 @@ export async function editComment(
   body: string,
 ): Promise<{ thread: CommentThread; comment: Comment }> {
   const { db, dialect } = deps.db;
+  const scope = actorScope(deps, actor);
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
-    const { comment } = await holdComment(trx, dialect, commentId, now);
+    const { comment } = await holdComment(trx, dialect, scope, commentId, now);
     await holdGuestLink(trx, deps, actor, now);
     if (actor.kind === 'guest') {
       if (!(await guestMayChange(deps, actor, comment))) throw forbidden(t('comment.guestWindow'));
@@ -346,9 +382,10 @@ export async function deleteComment(
   commentId: string,
 ): Promise<void> {
   const { db, dialect } = deps.db;
+  const scope = actorScope(deps, actor);
   const outcome = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
-    const { comment, artifact } = await holdComment(trx, dialect, commentId, now);
+    const { comment, artifact } = await holdComment(trx, dialect, scope, commentId, now);
     await holdGuestLink(trx, deps, actor, now);
     if (actor.kind === 'guest') {
       if (!(await guestMayChange(deps, actor, comment))) throw forbidden(t('comment.guestWindow'));
@@ -390,9 +427,10 @@ export async function resolveThread(
   versionId: string | null,
 ): Promise<CommentThread> {
   const { db, dialect } = deps.db;
+  const scope = scopeForUser(deps, user);
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
-    const { comment, artifact } = await holdComment(trx, dialect, commentId, now);
+    const { comment, artifact } = await holdComment(trx, dialect, scope, commentId, now);
     assertThread(comment);
     const version =
       versionId === null
@@ -418,13 +456,14 @@ export async function resolveThread(
 /** Opens the thread of first comment `commentId` again. Any member may. */
 export async function reopenThread(
   deps: AppDeps,
-  _user: UserRow,
+  user: UserRow,
   commentId: string,
 ): Promise<CommentThread> {
   const { db, dialect } = deps.db;
+  const scope = scopeForUser(deps, user);
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
-    const { comment } = await holdComment(trx, dialect, commentId, now);
+    const { comment } = await holdComment(trx, dialect, scope, commentId, now);
     assertThread(comment);
     await trx
       .updateTable('comments')
@@ -505,17 +544,18 @@ function newComment(
   };
 }
 
-/** The comment `id` and its artifact, held as `holdArtifact` holds it. */
+/** The comment `id` and its artifact, which `scope` must see, held as `holdArtifact` holds it. */
 async function holdComment(
   trx: Transaction<Database>,
   dialect: DbDialect,
+  scope: Scope,
   id: string,
   now: number,
 ): Promise<{ comment: CommentRow; artifact: ArtifactRow }> {
-  const seen = await getComment(trx, id);
-  const artifact = await holdArtifact(trx, dialect, seen.artifact_id, now);
+  const seen = await getComment(trx, scope, id);
+  const artifact = await holdArtifact(trx, dialect, scope, seen.artifact_id, now);
   // A deletion the lock waited for may have taken the comment along.
-  const comment = dialect === 'postgres' ? await getComment(trx, id) : seen;
+  const comment = dialect === 'postgres' ? await getComment(trx, scope, id) : seen;
   return { comment, artifact };
 }
 

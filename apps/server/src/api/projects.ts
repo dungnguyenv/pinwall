@@ -22,6 +22,7 @@ import {
   updateProject,
   withArtifactCounts,
 } from '../domain/projects.ts';
+import { scopeOf } from '../domain/spaces.ts';
 import { jsonBodyLimit } from './body-limit.ts';
 import { IdParam, ListQuery } from './pagination.ts';
 
@@ -144,7 +145,7 @@ export function registerProjectRoutes(api: OpenAPIHono<AppEnv>): void {
     const { archived, limit, cursor } = c.req.valid('query');
     // Created with the first publish; a library that lists it before then still shows it.
     if (archived === 'false') await ensureDefaultProject(deps);
-    const { items, nextCursor } = await listProjects(deps, {
+    const { items, nextCursor } = await listProjects(deps, scopeOf(c), {
       archived: archived === 'true',
       limit,
       cursor: cursor ?? null,
@@ -165,7 +166,8 @@ export function registerProjectRoutes(api: OpenAPIHono<AppEnv>): void {
     const { deps } = c.var;
     const { id } = c.req.valid('param');
     if (id === DEFAULT_PROJECT_ID) await ensureDefaultProject(deps);
-    return c.json(await projectOf(deps, await getProject(deps.db.db, id)), 200, noStore);
+    const row = await getProject(deps.db.db, scopeOf(c), id);
+    return c.json(await projectOf(deps, row), 200, noStore);
   });
 
   api.openapi(patchProjectRoute, async (c) => {
@@ -173,7 +175,7 @@ export function registerProjectRoutes(api: OpenAPIHono<AppEnv>): void {
     const { id } = c.req.valid('param');
     const body = c.req.valid('json');
     if (id === DEFAULT_PROJECT_ID) await ensureDefaultProject(deps);
-    const row = await updateProject(deps, id, {
+    const row = await updateProject(deps, scopeOf(c), id, {
       ...(body.name === undefined ? {} : { name: body.name }),
       ...(body.instructions === undefined ? {} : { instructions: body.instructions }),
       ...(body.archived === undefined ? {} : { archived: body.archived }),

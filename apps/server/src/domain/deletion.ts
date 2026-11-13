@@ -12,6 +12,7 @@ import { entryKind } from '../publish/paths.ts';
 import { getArtifact, getTags, lockArtifact } from './artifacts.ts';
 import { collectBlobs } from './blobs.ts';
 import { ARTIFACT_TOPIC, indexArtifact, reindexArtifact } from './search.ts';
+import { scopeForUser } from './spaces.ts';
 import { addTombstones, type NewTombstone } from './tombstones.ts';
 import { getVersionByNumber } from './versions.ts';
 
@@ -30,8 +31,8 @@ export function canDelete(auth: AuthContext, artifact: ArtifactRow): boolean {
  *
  * Once committed, its files that no remaining version uses are removed from storage (deferred
  * to the sweep while a backup runs), and `version.deleted` (or `artifact.deleted`) goes out on
- * `ARTIFACT_TOPIC`. A missing artifact or version answers 404, a deleted one 410, and a caller
- * that `canDelete` refuses 403.
+ * `ARTIFACT_TOPIC`. A missing artifact or version answers 404 (as does an artifact the caller
+ * does not see), a deleted one 410, and a caller that `canDelete` refuses 403.
  */
 export async function deleteVersion(
   deps: AppDeps,
@@ -40,7 +41,8 @@ export async function deleteVersion(
   n: number,
 ): Promise<{ artifactDeleted: boolean; currentVersionId: string | null }> {
   const { db, dialect } = deps.db;
-  const seen = await getArtifact(db, artifactId, deps.clock.now());
+  const scope = scopeForUser(deps, auth.user);
+  const seen = await getArtifact(db, scope, artifactId, deps.clock.now());
   assertCanDelete(auth, seen);
   // Read before the transaction: it reads blobs, and on SQLite the transaction holds the only
   // connection.
@@ -49,11 +51,12 @@ export async function deleteVersion(
   const outcome = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const artifact =
-      (await lockArtifact(trx, dialect, artifactId)) ?? (await getArtifact(trx, artifactId, now));
+      (await lockArtifact(trx, dialect, scope, artifactId)) ??
+      (await getArtifact(trx, scope, artifactId, now));
     const version = await getVersionByNumber(trx, artifact, n);
-    const scope: Scope = { versionId: version.id };
+    const target: DeletionTarget = { versionId: version.id };
 
-    const shas = await blobsOf(trx, scope);
+    const shas = await blobsOf(trx, target);
     const perVersionLinks = await trx
       .selectFrom('share_links')
       .select('token_hash')
@@ -61,7 +64,7 @@ export async function deleteVersion(
       .execute();
     await addTombstones(
       trx,
-      [...(await grantTombstones(trx, scope, now)), ...perVersionLinks.map(shareLinkTombstone)],
+      [...(await grantTombstones(trx, target, now)), ...perVersionLinks.map(shareLinkTombstone)],
       now,
     );
     await trx.deleteFrom('versions').where('id', '=', version.id).execute();
@@ -123,8 +126,8 @@ export async function deleteVersion(
  * one, its tags, views, share links and comments, its search entry, and the artifact row, with
  * a tombstone for the artifact and for each live grant and share link. Once committed, files no
  * other artifact uses are removed from storage (deferred to the sweep while a backup runs), and
- * `artifact.deleted` goes out on `ARTIFACT_TOPIC`. A missing artifact answers 404, a deleted one
- * 410, and a caller that `canDelete` refuses 403.
+ * `artifact.deleted` goes out on `ARTIFACT_TOPIC`. A missing artifact answers 404 (as does one
+ * the caller does not see), a deleted one 410, and a caller that `canDelete` refuses 403.
  */
 export async function deleteArtifact(
   deps: AppDeps,
@@ -132,15 +135,17 @@ export async function deleteArtifact(
   artifactId: string,
 ): Promise<void> {
   const { db, dialect } = deps.db;
-  assertCanDelete(auth, await getArtifact(db, artifactId, deps.clock.now()));
+  const scope = scopeForUser(deps, auth.user);
+  assertCanDelete(auth, await getArtifact(db, scope, artifactId, deps.clock.now()));
 
   const shas = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const artifact =
-      (await lockArtifact(trx, dialect, artifactId)) ?? (await getArtifact(trx, artifactId, now));
-    const scope: Scope = { artifactId: artifact.id };
-    const shas = await blobsOf(trx, scope);
-    await addTombstones(trx, await grantTombstones(trx, scope, now), now);
+      (await lockArtifact(trx, dialect, scope, artifactId)) ??
+      (await getArtifact(trx, scope, artifactId, now));
+    const target: DeletionTarget = { artifactId: artifact.id };
+    const shas = await blobsOf(trx, target);
+    await addTombstones(trx, await grantTombstones(trx, target, now), now);
     await removeArtifact(trx, dialect, artifact.id, now);
     return shas;
   });
@@ -186,39 +191,39 @@ async function readSuccessor(
 }
 
 /** The versions a deletion covers: one, or all of an artifact's. */
-type Scope = { versionId: string } | { artifactId: string };
+type DeletionTarget = { versionId: string } | { artifactId: string };
 
-function versionIdsIn(trx: Transaction<Database>, scope: Scope) {
+function versionIdsIn(trx: Transaction<Database>, target: DeletionTarget) {
   const versions = trx.selectFrom('versions').select('id');
-  return 'versionId' in scope
-    ? versions.where('id', '=', scope.versionId)
-    : versions.where('artifact_id', '=', scope.artifactId);
+  return 'versionId' in target
+    ? versions.where('id', '=', target.versionId)
+    : versions.where('artifact_id', '=', target.artifactId);
 }
 
-/** Every blob the versions in `scope` use, once each. */
-async function blobsOf(trx: Transaction<Database>, scope: Scope): Promise<string[]> {
+/** Every blob the versions in `target` use, once each. */
+async function blobsOf(trx: Transaction<Database>, target: DeletionTarget): Promise<string[]> {
   const rows = await trx
     .selectFrom('version_files')
     .select('sha256')
     .distinct()
-    .where('version_id', 'in', versionIdsIn(trx, scope))
+    .where('version_id', 'in', versionIdsIn(trx, target))
     .execute();
   return rows.map((row) => row.sha256);
 }
 
 /**
- * Tombstones for the grants of the versions in `scope` that have not expired, each kept until
+ * Tombstones for the grants of the versions in `target` that have not expired, each kept until
  * its grant would have expired. An expired grant needs none: it no longer serves anything.
  */
 async function grantTombstones(
   trx: Transaction<Database>,
-  scope: Scope,
+  target: DeletionTarget,
   now: number,
 ): Promise<NewTombstone[]> {
   const grants = await trx
     .selectFrom('content_grants')
     .select(['token', 'expires_at'])
-    .where('version_id', 'in', versionIdsIn(trx, scope))
+    .where('version_id', 'in', versionIdsIn(trx, target))
     .where('expires_at', '>', now)
     .execute();
   return grants.map((grant) => ({

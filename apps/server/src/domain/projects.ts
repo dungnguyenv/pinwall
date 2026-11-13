@@ -7,6 +7,7 @@ import { decodeCursor, encodeCursor } from '../lib/cursor.ts';
 import { conflict, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { newId } from '../lib/ids.ts';
+import { type Scope, whereVisible } from './spaces.ts';
 
 /** The project new artifacts land in when the publisher names none. Fixed, so it exists once. */
 export const DEFAULT_PROJECT_ID = 'prj_00000000000000000000';
@@ -33,15 +34,20 @@ export async function ensureDefaultProject(deps: AppDeps): Promise<ProjectRow> {
     })
     .onConflict((oc) => oc.column('id').doNothing())
     .execute();
-  return getProject(deps.db.db, DEFAULT_PROJECT_ID);
-}
-
-export async function getProject(db: Db, id: string): Promise<ProjectRow> {
-  const project = await db
+  return deps.db.db
     .selectFrom('projects')
     .selectAll()
-    .where('id', '=', id)
-    .executeTakeFirst();
+    .where('id', '=', DEFAULT_PROJECT_ID)
+    .executeTakeFirstOrThrow();
+}
+
+/** The project `id`, if `scope` sees it; 404 for a missing one and one it does not see alike. */
+export async function getProject(db: Db, scope: Scope, id: string): Promise<ProjectRow> {
+  const project = await whereVisible(
+    db.selectFrom('projects').selectAll().where('id', '=', id),
+    scope,
+    'projects.id',
+  ).executeTakeFirst();
   if (project === undefined) throw notFound(t('project.notFound'));
   return project;
 }
@@ -70,15 +76,17 @@ export async function createProject(
 /**
  * Renames a project, replaces its instructions, or archives or unarchives it. Archiving one that
  * is already archived keeps the time it was first archived. The default project cannot be
- * archived: it is where publishes without a project go.
+ * archived: it is where publishes without a project go. A project `scope` does not see answers
+ * 404, as a missing one does.
  */
 export function updateProject(
   deps: AppDeps,
+  scope: Scope,
   id: string,
   p: { name?: string; instructions?: string; archived?: boolean },
 ): Promise<ProjectRow> {
   return deps.db.db.transaction().execute(async (trx) => {
-    const project = await getProject(trx, id);
+    const project = await getProject(trx, scope, id);
     if (p.archived === true && project.is_default === 1) {
       throw conflict(t('project.defaultArchive'));
     }
@@ -106,19 +114,21 @@ const ProjectCursor = z.object({
 });
 
 /**
- * One page of the archived or the active projects: the default project first, then by creation
- * time, then by id, so a page boundary between two projects made in the same millisecond neither
- * repeats nor skips one.
+ * One page of the archived or the active projects `scope` sees: the default project first, then
+ * by creation time, then by id, so a page boundary between two projects made in the same
+ * millisecond neither repeats nor skips one.
  */
 export async function listProjects(
   deps: AppDeps,
+  scope: Scope,
   p: { archived: boolean; limit: number; cursor: string | null },
 ): Promise<{ items: ProjectWithCount[]; nextCursor: string | null }> {
   const { db } = deps.db;
-  let query = db
-    .selectFrom('projects')
-    .selectAll()
-    .where('archived_at', p.archived ? 'is not' : 'is', null);
+  let query = whereVisible(db.selectFrom('projects').selectAll(), scope, 'projects.id').where(
+    'archived_at',
+    p.archived ? 'is not' : 'is',
+    null,
+  );
   if (p.cursor !== null) {
     const after = decodeCursor(p.cursor, ProjectCursor);
     query = query.where((eb) =>

@@ -4,6 +4,7 @@ import type { MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../app.ts';
 import { requireAuth } from '../auth/guards.ts';
 import { diffMarkdownFile, diffTextFile, diffVersionFiles } from '../domain/diff.ts';
+import { scopeOf } from '../domain/spaces.ts';
 import { IdParam } from './pagination.ts';
 
 const error = (description: string) => ({
@@ -93,19 +94,19 @@ export function registerDiffRoutes(api: OpenAPIHono<AppEnv>): void {
   api.openapi(versionsRoute, async (c) => {
     const { id } = c.req.valid('param');
     const { from, to } = c.req.valid('query');
-    const files = await diffVersionFiles(c.var.deps, id, from, to);
+    const files = await diffVersionFiles(c.var.deps, scopeOf(c), id, from, to);
     return c.json({ from, to, files }, 200, noStore);
   });
 
   api.openapi(fileRoute, async (c) => {
     const { id } = c.req.valid('param');
     const { from, to, path } = c.req.valid('query');
-    return c.json(await diffTextFile(c.var.deps, id, from, to, path), 200, noStore);
+    return c.json(await diffTextFile(c.var.deps, scopeOf(c), id, from, to, path), 200, noStore);
   });
 
   api.openapi(markdownRoute, async (c) => {
     const { id } = c.req.valid('param');
     const { from, to, path } = c.req.valid('query');
-    return c.json(await diffMarkdownFile(c.var.deps, id, from, to, path), 200, noStore);
+    return c.json(await diffMarkdownFile(c.var.deps, scopeOf(c), id, from, to, path), 200, noStore);
   });
 }

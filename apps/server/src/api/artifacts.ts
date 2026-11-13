@@ -18,6 +18,7 @@ import {
 import { countOpenThreads } from '../domain/comments.ts';
 import { deleteArtifact } from '../domain/deletion.ts';
 import { countActiveShareLinks } from '../domain/shares.ts';
+import { type Scope, scopeOf } from '../domain/spaces.ts';
 import { getVersionsById } from '../domain/versions.ts';
 import { publicUrl } from '../http/public-url.ts';
 import { jsonBodyLimit } from './body-limit.ts';
@@ -157,10 +158,12 @@ const deleteRoute = createRoute({
 /**
  * Artifacts as the API shows them, with their tags, current versions, open thread counts and
  * active share link counts loaded for all rows at once, so a page costs the same few queries
- * whatever its size.
+ * whatever its size. The rows come from lookups in the viewer's scope, so the counts, which count
+ * inside each artifact, need no scope of their own.
  */
 export async function toArtifactSummary(
   deps: AppDeps,
+  _scope: Scope,
   rows: readonly ArtifactRow[],
 ): Promise<ArtifactSummary[]> {
   const { db } = deps.db;
@@ -199,8 +202,8 @@ export async function toArtifactSummary(
   });
 }
 
-async function summarize(deps: AppDeps, row: ArtifactRow): Promise<ArtifactSummary> {
-  const [summary] = await toArtifactSummary(deps, [row]);
+async function summarize(deps: AppDeps, scope: Scope, row: ArtifactRow): Promise<ArtifactSummary> {
+  const [summary] = await toArtifactSummary(deps, scope, [row]);
   if (summary === undefined) throw new Error(`no summary for artifact ${row.id}`);
   return summary;
 }
@@ -210,8 +213,9 @@ const noStore = { 'Cache-Control': 'no-store' };
 export function registerArtifactRoutes(api: OpenAPIHono<AppEnv>): void {
   api.openapi(listRoute, async (c) => {
     const { deps } = c.var;
+    const scope = scopeOf(c);
     const { project_id, tag, q, limit, cursor } = c.req.valid('query');
-    const { items, nextCursor } = await listArtifacts(deps, {
+    const { items, nextCursor } = await listArtifacts(deps, scope, {
       ...(project_id === undefined ? {} : { projectId: project_id }),
       ...(tag === undefined ? {} : { tag }),
       ...(q === undefined ? {} : { q }),
@@ -219,7 +223,7 @@ export function registerArtifactRoutes(api: OpenAPIHono<AppEnv>): void {
       cursor: cursor ?? null,
     });
     return c.json(
-      { items: await toArtifactSummary(deps, items), next_cursor: nextCursor },
+      { items: await toArtifactSummary(deps, scope, items), next_cursor: nextCursor },
       200,
       noStore,
     );
@@ -228,28 +232,32 @@ export function registerArtifactRoutes(api: OpenAPIHono<AppEnv>): void {
   // Registered before `/artifacts/{id}`, which would take "recent" for an id.
   api.openapi(recentRoute, async (c) => {
     const { deps } = c.var;
+    const scope = scopeOf(c);
     const { limit } = c.req.valid('query');
-    const rows = await listRecent(deps, authOf(c).user.id, limit);
-    return c.json({ items: await toArtifactSummary(deps, rows), next_cursor: null }, 200, noStore);
+    const rows = await listRecent(deps, scope, limit);
+    const items = await toArtifactSummary(deps, scope, rows);
+    return c.json({ items, next_cursor: null }, 200, noStore);
   });
 
   api.openapi(getRoute, async (c) => {
     const { deps } = c.var;
+    const scope = scopeOf(c);
     const { id } = c.req.valid('param');
-    const row = await getArtifact(deps.db.db, id, deps.clock.now());
-    return c.json(await summarize(deps, row), 200, noStore);
+    const row = await getArtifact(deps.db.db, scope, id, deps.clock.now());
+    return c.json(await summarize(deps, scope, row), 200, noStore);
   });
 
   api.openapi(patchRoute, async (c) => {
     const { deps } = c.var;
+    const scope = scopeOf(c);
     const { id } = c.req.valid('param');
     const body = c.req.valid('json');
-    const row = await updateArtifact(deps, id, {
+    const row = await updateArtifact(deps, scope, id, {
       ...(body.name === undefined ? {} : { name: body.name }),
       ...(body.project_id === undefined ? {} : { projectId: body.project_id }),
       ...(body.tags === undefined ? {} : { tags: body.tags }),
     });
-    return c.json(await summarize(deps, row), 200, noStore);
+    return c.json(await summarize(deps, scope, row), 200, noStore);
   });
 
   api.openapi(deleteRoute, async (c) => {

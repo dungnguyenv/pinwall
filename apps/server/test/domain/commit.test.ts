@@ -5,6 +5,7 @@ import type { ArtifactKind, Database, UserRow } from '../../src/db/schema.ts';
 import { getArtifact, getTags, normalizeTags } from '../../src/domain/artifacts.ts';
 import { createProject, DEFAULT_PROJECT_ID, updateProject } from '../../src/domain/projects.ts';
 import { ARTIFACT_TOPIC, reindexArtifact } from '../../src/domain/search.ts';
+import { SYSTEM_SCOPE } from '../../src/domain/spaces.ts';
 import { addTombstones } from '../../src/domain/tombstones.ts';
 import {
   type CommitResult,
@@ -116,7 +117,7 @@ describe.each(dialects)('version commit on %s', (dialect) => {
       created_by: actor.id,
       created_at: T,
     });
-    expect(await getArtifact(db(), artifact.id, T)).toEqual(artifact);
+    expect(await getArtifact(db(), SYSTEM_SCOPE, artifact.id, T)).toEqual(artifact);
     expect(await rows('versions')).toEqual([version]);
     expect(await filesOf(version.id)).toEqual([
       {
@@ -180,7 +181,7 @@ describe.each(dialects)('version commit on %s', (dialect) => {
       latest_number: 2,
       updated_at: T + 1000,
     });
-    expect(await getArtifact(db(), id, T)).toEqual(v2.artifact);
+    expect(await getArtifact(db(), SYSTEM_SCOPE, id, T)).toEqual(v2.artifact);
 
     const stale = commit(newVersion(id, v1.version.id), { 'index.html': 'three' });
     await expect(stale).rejects.toBeInstanceOf(AppError);
@@ -224,7 +225,7 @@ describe.each(dialects)('version commit on %s', (dialect) => {
         details: { current_version_id: winner?.id, current_version_number: 2 },
       });
     }
-    expect(await getArtifact(db(), v1.artifact.id, T)).toMatchObject({
+    expect(await getArtifact(db(), SYSTEM_SCOPE, v1.artifact.id, T)).toMatchObject({
       current_version_id: winner?.id,
       latest_number: 2,
     });
@@ -266,7 +267,7 @@ describe.each(dialects)('version commit on %s', (dialect) => {
 
   test('an archived or unknown project refuses new artifacts', async () => {
     const project = await createProject(ctx.deps, actor, { name: 'Old site' });
-    await updateProject(ctx.deps, project.id, { archived: true });
+    await updateProject(ctx.deps, SYSTEM_SCOPE, project.id, { archived: true });
     await expect(
       commit(newArtifact({ projectId: project.id }), { 'index.html': 'x' }),
     ).rejects.toMatchObject({ code: 'conflict', status: 409, message: t('project.archived') });
@@ -275,7 +276,7 @@ describe.each(dialects)('version commit on %s', (dialect) => {
     ).rejects.toMatchObject({ code: 'not_found', status: 404, message: t('project.notFound') });
     expect(await count('artifacts')).toBe(0);
 
-    await updateProject(ctx.deps, project.id, { archived: false });
+    await updateProject(ctx.deps, SYSTEM_SCOPE, project.id, { archived: false });
     const { artifact } = await commit(newArtifact({ projectId: project.id }), {
       'index.html': 'x',
     });
@@ -283,26 +284,30 @@ describe.each(dialects)('version commit on %s', (dialect) => {
   });
 
   test('checkTarget validates without writing', async () => {
-    await expect(checkTarget(ctx.deps, newArtifact())).resolves.toBeUndefined();
+    await expect(checkTarget(ctx.deps, SYSTEM_SCOPE, newArtifact())).resolves.toBeUndefined();
     expect(await count('projects')).toBe(0);
 
     const v1 = await commit(newArtifact(), { 'index.html': 'one' });
     const id = v1.artifact.id;
     const v2 = await commit(newVersion(id, v1.version.id), { 'index.html': 'two' });
 
-    await expect(checkTarget(ctx.deps, newVersion(id, v1.version.id))).rejects.toMatchObject({
+    await expect(
+      checkTarget(ctx.deps, SYSTEM_SCOPE, newVersion(id, v1.version.id)),
+    ).rejects.toMatchObject({
       code: 'version_conflict',
       details: { current_version_id: v2.version.id, current_version_number: 2 },
     });
-    await expect(checkTarget(ctx.deps, newVersion(id, v2.version.id))).resolves.toBeUndefined();
     await expect(
-      checkTarget(ctx.deps, newVersion('art_nope', v2.version.id)),
+      checkTarget(ctx.deps, SYSTEM_SCOPE, newVersion(id, v2.version.id)),
+    ).resolves.toBeUndefined();
+    await expect(
+      checkTarget(ctx.deps, SYSTEM_SCOPE, newVersion('art_nope', v2.version.id)),
     ).rejects.toMatchObject({ status: 404, message: t('artifact.notFound') });
     await expect(
-      checkTarget(ctx.deps, newArtifact({ projectId: 'prj_nope' })),
+      checkTarget(ctx.deps, SYSTEM_SCOPE, newArtifact({ projectId: 'prj_nope' })),
     ).rejects.toMatchObject({ status: 404, message: t('project.notFound') });
     await expect(
-      checkTarget(ctx.deps, newArtifact({ tags: ['x'.repeat(41)] })),
+      checkTarget(ctx.deps, SYSTEM_SCOPE, newArtifact({ tags: ['x'.repeat(41)] })),
     ).rejects.toMatchObject({ status: 400, details: { field: 'tags' } });
 
     expect(await count('artifacts')).toBe(1);
@@ -406,7 +411,7 @@ describe.each(dialects)('version commit on %s', (dialect) => {
       latest_number: 3,
       updated_at: T + 1000,
     });
-    expect(await getArtifact(db(), id, T)).toEqual(artifact);
+    expect(await getArtifact(db(), SYSTEM_SCOPE, id, T)).toEqual(artifact);
     expect(await filesOf(version.id)).toEqual([
       {
         version_id: version.id,
@@ -455,7 +460,7 @@ describe.each(dialects)('version commit on %s', (dialect) => {
     const id = v1.artifact.id;
     const v2 = await commit(newVersion(id, v1.version.id), { 'index.html': 'two' });
     await db().deleteFrom('versions').where('id', '=', v1.version.id).execute();
-    const artifact = await getArtifact(db(), id, T);
+    const artifact = await getArtifact(db(), SYSTEM_SCOPE, id, T);
 
     const gone = { code: 'gone', status: 410, message: t('version.gone') };
     const notFound = { code: 'not_found', status: 404, message: t('version.notFound') };
@@ -473,8 +478,8 @@ describe.each(dialects)('version commit on %s', (dialect) => {
     await addTombstones(db(), [{ kind: 'artifact', key: 'art_deleted', expiresAt: null }], T);
     const gone = { code: 'gone', status: 410, message: t('artifact.gone') };
     const notFound = { code: 'not_found', status: 404, message: t('artifact.notFound') };
-    await expect(getArtifact(db(), 'art_deleted', T)).rejects.toMatchObject(gone);
-    await expect(getArtifact(db(), 'art_unknown', T)).rejects.toMatchObject(notFound);
+    await expect(getArtifact(db(), SYSTEM_SCOPE, 'art_deleted', T)).rejects.toMatchObject(gone);
+    await expect(getArtifact(db(), SYSTEM_SCOPE, 'art_unknown', T)).rejects.toMatchObject(notFound);
     await expect(
       commit(newVersion('art_deleted', 'ver_x'), { 'index.html': 'x' }),
     ).rejects.toMatchObject(gone);

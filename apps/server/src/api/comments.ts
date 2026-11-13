@@ -22,6 +22,7 @@ import {
   reopenThread,
   resolveThread,
 } from '../domain/comments.ts';
+import { scopeOf } from '../domain/spaces.ts';
 import { jsonBodyLimit } from './body-limit.ts';
 import { IdParam } from './pagination.ts';
 
@@ -205,7 +206,7 @@ export function registerCommentRoutes(api: OpenAPIHono<AppEnv>): void {
   api.openapi(listRoute, async (c) => {
     const { id } = c.req.valid('param');
     const { status, version, limit, cursor } = c.req.valid('query');
-    const { items, nextCursor } = await listThreads(c.var.deps, id, {
+    const { items, nextCursor } = await listThreads(c.var.deps, scopeOf(c), id, {
       status,
       ...(version === undefined ? {} : { versionNumber: version }),
       limit,

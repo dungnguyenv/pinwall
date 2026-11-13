@@ -11,6 +11,7 @@ import type { UserRow, VersionRow } from '../../src/db/schema.ts';
 import { listThreads } from '../../src/domain/comments.ts';
 import { deleteVersion } from '../../src/domain/deletion.ts';
 import { ARTIFACT_TOPIC } from '../../src/domain/search.ts';
+import { SYSTEM_SCOPE } from '../../src/domain/spaces.ts';
 import { addTombstones } from '../../src/domain/tombstones.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
@@ -483,7 +484,11 @@ describe.each(dialects)('comment threads on %s', (dialect) => {
         transformResult: async ({ result }) => result,
       });
       const deps = { ...ctx.deps, db: { ...ctx.deps.db, db: counting } };
-      const { items } = await listThreads(deps, id, { status: 'all', limit, cursor: null });
+      const { items } = await listThreads(deps, SYSTEM_SCOPE, id, {
+        status: 'all',
+        limit,
+        cursor: null,
+      });
       expect(items).toHaveLength(limit);
       expect(items.every((th) => th.replies.length === 2)).toBe(true);
       return seen;

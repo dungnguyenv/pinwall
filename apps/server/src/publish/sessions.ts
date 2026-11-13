@@ -4,6 +4,7 @@ import { hasAccess } from '../auth/roles.ts';
 import type { Config } from '../config/types.ts';
 import type { UserRow, VersionSource } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
+import { scopeForUser } from '../domain/spaces.ts';
 import { checkTarget, type PublishTarget } from '../domain/versions.ts';
 import { publicUrl } from '../http/public-url.ts';
 import { AppError, notFound } from '../lib/errors.ts';
@@ -69,7 +70,7 @@ export async function createPublishSession(
     file?: string;
   },
 ): Promise<PublishSession> {
-  await checkTarget(deps, p.target);
+  await checkTarget(deps, scopeForUser(deps, actor), p.target);
   const token = newSecret();
   const h = hashSecret(token);
   const ttl = deps.config.ttl.uploadSessionMs;

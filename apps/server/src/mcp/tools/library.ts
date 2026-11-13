@@ -11,6 +11,7 @@ import {
   getProject,
   listProjects,
 } from '../../domain/projects.ts';
+import { type Scope, scopeForUser } from '../../domain/spaces.ts';
 import { listVersions } from '../../domain/versions.ts';
 import { publicUrl } from '../../http/public-url.ts';
 import { t } from '../../lib/i18n.ts';
@@ -135,15 +136,23 @@ function toVersionOut(
 /** Artifacts with their tags, versions and thread counts loaded together, as the API lists them. */
 async function artifactsOf(
   deps: AppDeps,
-  rows: Parameters<typeof toArtifactSummary>[1],
+  scope: Scope,
+  rows: Parameters<typeof toArtifactSummary>[2],
 ): Promise<ArtifactOut[]> {
-  return (await toArtifactSummary(deps, rows)).map(toArtifactOut);
+  return (await toArtifactSummary(deps, scope, rows)).map(toArtifactOut);
 }
 
-/** The project `id`, or the default one (created when missing) when no id is given. */
-async function readProject(deps: AppDeps, id: string | undefined): Promise<ProjectRow> {
-  if (id === undefined || id === DEFAULT_PROJECT_ID) return ensureDefaultProject(deps);
-  return getProject(deps.db.db, id);
+/**
+ * The project `id`, or the default one (created when missing) when no id is given; 404 for one
+ * `scope` does not see.
+ */
+async function readProject(
+  deps: AppDeps,
+  scope: Scope,
+  id: string | undefined,
+): Promise<ProjectRow> {
+  if (id === undefined || id === DEFAULT_PROJECT_ID) await ensureDefaultProject(deps);
+  return getProject(deps.db.db, scope, id ?? DEFAULT_PROJECT_ID);
 }
 
 /** The line of `list_projects` for one project. */
@@ -205,6 +214,8 @@ function detailOf(row: ProjectRow): ProjectDetailOut {
  */
 export const libraryTools: ToolModule = (server, ctx) => {
   const { deps, auth } = ctx;
+  /** The caller's scope, for each call to pass to the services it reads through. */
+  const scope = () => scopeForUser(deps, auth.user);
 
   server.registerTool(
     'list_projects',
@@ -217,7 +228,7 @@ export const libraryTools: ToolModule = (server, ctx) => {
     runTool(ctx, async (a: z.output<typeof ListProjectsIn>) => {
       // The default project exists from the first publish; a library listed before that shows it.
       if (!a.archived) await ensureDefaultProject(deps);
-      const { items, nextCursor } = await listProjects(deps, {
+      const { items, nextCursor } = await listProjects(deps, scope(), {
         archived: a.archived,
         limit: a.limit,
         cursor: a.cursor ?? null,
@@ -246,7 +257,7 @@ export const libraryTools: ToolModule = (server, ctx) => {
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof GetProjectIn>) => {
-      const row = await readProject(deps, a.project_id);
+      const row = await readProject(deps, scope(), a.project_id);
       const structured = detailOf(row);
       const heading = t('mcp.project.heading', { id: row.id, name: oneLine(row.name) });
       const guidance = structured.project.has_instructions
@@ -285,13 +296,14 @@ export const libraryTools: ToolModule = (server, ctx) => {
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof ListArtifactsIn>) => {
-      const { items, nextCursor } = await listArtifacts(deps, {
+      const viewer = scope();
+      const { items, nextCursor } = await listArtifacts(deps, viewer, {
         ...(a.project_id === undefined ? {} : { projectId: a.project_id }),
         ...(a.tag === undefined ? {} : { tag: a.tag }),
         limit: a.limit,
         cursor: a.cursor ?? null,
       });
-      const artifacts = await artifactsOf(deps, items);
+      const artifacts = await artifactsOf(deps, viewer, items);
       const lines = [
         t('mcp.artifacts.summary', { count: artifacts.length }),
         ...artifacts.map(artifactLine),
@@ -312,13 +324,14 @@ export const libraryTools: ToolModule = (server, ctx) => {
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof SearchArtifactsIn>) => {
-      const { items } = await listArtifacts(deps, {
+      const viewer = scope();
+      const { items } = await listArtifacts(deps, viewer, {
         q: a.query,
         ...(a.project_id === undefined ? {} : { projectId: a.project_id }),
         limit: a.limit,
         cursor: null,
       });
-      const artifacts = await artifactsOf(deps, items);
+      const artifacts = await artifactsOf(deps, viewer, items);
       const lines = [
         t('mcp.artifacts.found', { count: artifacts.length }),
         ...artifacts.map(artifactLine),
@@ -336,10 +349,14 @@ export const libraryTools: ToolModule = (server, ctx) => {
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof GetArtifactIn>) => {
-      const row = await getArtifact(deps.db.db, a.artifact_id, deps.clock.now());
-      const [summary] = await toArtifactSummary(deps, [row]);
+      const viewer = scope();
+      const row = await getArtifact(deps.db.db, viewer, a.artifact_id, deps.clock.now());
+      const [summary] = await toArtifactSummary(deps, viewer, [row]);
       if (summary === undefined) throw new Error(`no summary for artifact ${row.id}`);
-      const page = await listVersions(deps, row.id, { limit: a.versions_limit, cursor: null });
+      const page = await listVersions(deps, viewer, row.id, {
+        limit: a.versions_limit,
+        cursor: null,
+      });
       const artifact = { ...toArtifactOut(summary), raw_url: summary.links.raw };
       const versions = page.items.map((v) => toVersionOut(deps, row.id, v, page.currentVersionId));
 

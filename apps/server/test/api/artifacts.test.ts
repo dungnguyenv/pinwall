@@ -4,6 +4,7 @@ import { toArtifactSummary } from '../../src/api/artifacts.ts';
 import type { UserRow } from '../../src/db/schema.ts';
 import { recordView } from '../../src/domain/artifacts.ts';
 import { createProject, updateProject } from '../../src/domain/projects.ts';
+import { SYSTEM_SCOPE } from '../../src/domain/spaces.ts';
 import { addTombstones } from '../../src/domain/tombstones.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
@@ -219,7 +220,7 @@ describe.each(dialects)('artifacts over REST on %s', (dialect) => {
     expect(await ids(`q=shared&project_id=${other.id}&tag=blue`)).toEqual(sorted(b));
     expect(await ids('q=shared&tag=green')).toEqual([]);
 
-    await updateProject(ctx.deps, other.id, { archived: true });
+    await updateProject(ctx.deps, SYSTEM_SCOPE, other.id, { archived: true });
     expect(await ids('q=shared')).toEqual(sorted(a, c));
     expect(await ids(`q=shared&project_id=${other.id}`)).toEqual(sorted(b));
   });
@@ -285,7 +286,7 @@ describe.each(dialects)('artifacts over REST on %s', (dialect) => {
         .sort();
 
     expect(await idsOf('/artifacts')).toEqual([inProject, inDefault].sort());
-    await updateProject(ctx.deps, project.id, { archived: true });
+    await updateProject(ctx.deps, SYSTEM_SCOPE, project.id, { archived: true });
     expect(await idsOf('/artifacts')).toEqual([inDefault]);
     expect(await idsOf(`/artifacts?project_id=${project.id}`)).toEqual([inProject]);
 
@@ -346,7 +347,7 @@ describe.each(dialects)('artifacts over REST on %s', (dialect) => {
   test('move to another project', async () => {
     const q = await createProject(ctx.deps, member.user, { name: 'Q' });
     const archived = await createProject(ctx.deps, member.user, { name: 'Old' });
-    await updateProject(ctx.deps, archived.id, { archived: true });
+    await updateProject(ctx.deps, SYSTEM_SCOPE, archived.id, { archived: true });
     const { artifact } = await publish({ 'index.html': '<p>m</p>' });
 
     const moved = await api.patch(`/artifacts/${artifact.id}`, { project_id: q.id });
@@ -441,7 +442,7 @@ describe.each(dialects)('artifacts over REST on %s', (dialect) => {
     const kept = (await publish({ 'index.html': '<p>k</p>' })).artifact.id;
     await recordView(ctx.deps, member.user.id, shelved);
     await recordView(ctx.deps, member.user.id, kept);
-    await updateProject(ctx.deps, project.id, { archived: true });
+    await updateProject(ctx.deps, SYSTEM_SCOPE, project.id, { archived: true });
     expect(
       ArtifactList.parse((await api.get('/artifacts/recent')).body).items.map((x) => x.id),
     ).toEqual([kept]);
@@ -490,7 +491,7 @@ describe.each(dialects)('artifacts over REST on %s', (dialect) => {
         .orderBy('id')
         .limit(count)
         .execute();
-      const summaries = await toArtifactSummary(deps, rows);
+      const summaries = await toArtifactSummary(deps, SYSTEM_SCOPE, rows);
       expect(summaries).toHaveLength(count);
       expect(summaries.every((s) => s.current_version !== null && s.tags.length === 2)).toBe(true);
       return seen;
