@@ -14,6 +14,11 @@ export interface OneTimeStore {
   delete(key: string): Promise<void>;
   /** Removes every value put in `group`; returns how many had not expired. */
   deleteGroup(group: string): Promise<number>;
+  /**
+   * Removes the entries of `group` that `match` accepts; returns their keys. Only entries that
+   * have not expired are offered to `match`.
+   */
+  deleteMatching(group: string, match: (key: string, value: unknown) => boolean): Promise<string[]>;
 }
 
 /** How often, at most, `put` scans for entries that expired without ever being taken. */
@@ -63,6 +68,22 @@ export class InMemoryOneTimeStore implements OneTimeStore {
       this.entries.delete(key);
     }
     return live;
+  }
+
+  /** A scan, as `deleteGroup` is. */
+  async deleteMatching(
+    group: string,
+    match: (key: string, value: unknown) => boolean,
+  ): Promise<string[]> {
+    const now = this.clock.now();
+    const removed: string[] = [];
+    for (const [key, entry] of this.entries) {
+      if (entry.group !== group || now >= entry.expiresAt) continue;
+      if (!match(key, entry.value)) continue;
+      this.entries.delete(key);
+      removed.push(key);
+    }
+    return removed;
   }
 
   /** A value is live for `ttlMs` from `put`: it is gone at `expiresAt` itself. */

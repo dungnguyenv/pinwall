@@ -32,7 +32,8 @@ export type UploadReceipt =
   | { state: 'open' | 'running'; expiresAt: number }
   | { state: 'done'; expiresAt: number; result: PublishResult };
 
-const sessionKey = (h: string) => `upload:${h}`;
+const SESSION_PREFIX = 'upload:';
+const sessionKey = (h: string) => `${SESSION_PREFIX}${h}`;
 const receiptKey = (h: string) => `upload-receipt:${h}`;
 /** Every key of a user's upload URLs is put in this group, so a revocation can drop them all. */
 const userGroup = (userId: string) => ({ group: `upload-user:${userId}` });
@@ -44,6 +45,30 @@ const userGroup = (userId: string) => ({ group: `upload-user:${userId}` });
  */
 export function revokeUploadSessions(deps: AppDeps, userId: string): Promise<number> {
   return deps.oneTime.deleteGroup(userGroup(userId).group);
+}
+
+/**
+ * Drops `userId`'s unused upload URLs (session and receipt) into `projectId`, or for a new
+ * version of one of `artifactIds`: they lost the right to publish there (they left the project,
+ * or were removed). Such a URL then answers as unknown. An upload already running is not unused:
+ * its commit checks the person's role again. Returns how many URLs were dropped.
+ */
+export async function revokeUploadSessionsFor(
+  deps: AppDeps,
+  userId: string,
+  target: { projectId: string; artifactIds: readonly string[] },
+): Promise<number> {
+  const artifactIds = new Set(target.artifactIds);
+  const into = (session: UploadSession): boolean =>
+    session.target.kind === 'new_artifact'
+      ? session.target.projectId === target.projectId
+      : artifactIds.has(session.target.artifactId);
+  const keys = await deps.oneTime.deleteMatching(
+    userGroup(userId).group,
+    (key, value) => key.startsWith(SESSION_PREFIX) && into(value as UploadSession),
+  );
+  for (const key of keys) await deps.oneTime.delete(receiptKey(key.slice(SESSION_PREFIX.length)));
+  return keys.length;
 }
 
 /**

@@ -964,5 +964,10 @@
   "pages.reportAbuse": "Report abuse:",
   "mcp.whoami.space": "Your space: {{bytes}} of {{bytesLimit}}, {{artifacts}} of {{artifactsLimit}} artifacts.",
   "mcp.whoami.noLimit": "no limit",
-  "mcp.whoami.noShareLinks": "You cannot create share links yet: an admin of this Pinwall has to allow it first."
+  "mcp.whoami.noShareLinks": "You cannot create share links yet: an admin of this Pinwall has to allow it first.",
+  "spaces.members.notMember": "This person is not a member of this project.",
+  "spaces.members.noAccount": "Nobody with this email has signed in to Pinwall yet. Ask them to sign in to Pinwall once first, then add them.",
+  "spaces.members.severalAccounts": "More than one Pinwall account uses this email. Choose the one to add.",
+  "spaces.members.self": "You own this project, so you cannot add yourself to it.",
+  "spaces.members.already": "This person is already a member of this project. Change their role instead."
 }

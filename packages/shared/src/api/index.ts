@@ -9,6 +9,7 @@ export * from './config.ts';
 export * from './content.ts';
 export * from './diff.ts';
 export * from './events.ts';
+export * from './members.ts';
 export * from './oauth-consent.ts';
 export * from './passkeys.ts';
 export * from './projects.ts';

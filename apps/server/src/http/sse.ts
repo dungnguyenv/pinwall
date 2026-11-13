@@ -48,6 +48,11 @@ export interface LiveStreamOptions {
    * reader (a share link was revoked).
    */
   endTopic?: string;
+  /**
+   * A topic whose every event runs the access check (`stillAllowed`) at once, as a heartbeat
+   * does: what its reader may see changed (they left a project).
+   */
+  checkTopic?: string;
   /** When the stream ends at the latest, in epoch milliseconds (a share link's expiry). */
   endsAt?: number | null;
   forward(e: LiveEvent): Forward;
@@ -79,11 +84,12 @@ function tooManyStreams(): AppError {
  * is refused with 429 `live.tooManyStreams` instead; an open stream holds its places until it
  * ends. It opens with `retry: 5000`; each bus event that passes `LiveEvent` and `o.forward` goes
  * out as `event: <type>` and `data: <json>`. `o.stillAllowed` is asked once the stream follows
- * its topics, so access lost while it opened is not missed, and again every `SSE_HEARTBEAT_MS`,
- * after a `: ping` comment. The stream ends, unsubscribing and stopping its timers, when an event
- * says so, an event comes on `o.endTopic`, `o.endsAt` comes, access is gone, the client goes
- * away, the server shuts down (`closeDeps`), or the reader is more than `SSE_MAX_BUFFERED_BYTES`
- * behind when a message is to go out, which also cuts its connection.
+ * its topics, so access lost while it opened is not missed, again every `SSE_HEARTBEAT_MS`,
+ * after a `: ping` comment, and at once on each event on `o.checkTopic`. The stream ends,
+ * unsubscribing and stopping its timers, when an event says so, an event comes on `o.endTopic`,
+ * `o.endsAt` comes, access is gone, the client goes away, the server shuts down (`closeDeps`),
+ * or the reader is more than `SSE_MAX_BUFFERED_BYTES` behind when a message is to go out, which
+ * also cuts its connection.
  */
 export function liveStream(c: Context<AppEnv>, o: LiveStreamOptions): Response {
   // Hono answers HEAD with the GET handler and drops the body unread, so a stream made for one
@@ -210,6 +216,9 @@ export function liveStream(c: Context<AppEnv>, o: LiveStreamOptions): Response {
         unsubscribes.push(events.subscribe(o.topic, onEvent));
         if (o.endTopic !== undefined) {
           unsubscribes.push(events.subscribe(o.endTopic, () => close('end')));
+        }
+        if (o.checkTopic !== undefined) {
+          unsubscribes.push(events.subscribe(o.checkTopic, () => void check()));
         }
         timer = setInterval(() => void heartbeat(), SSE_HEARTBEAT_MS);
         if (o.endsAt !== undefined && o.endsAt !== null) endIn(o.endsAt - clock.now());

@@ -48,6 +48,7 @@ test('the rules have the documented limits', () => {
     grant: { name: 'grant', limit: 600, windowMs: 3_600_000 },
     shareLinkCreate: { name: 'share-link-create', limit: 30, windowMs: 3_600_000 },
     projectCreate: { name: 'project-create', limit: 30, windowMs: 3_600_000 },
+    memberLookup: { name: 'member-lookup', limit: 30, windowMs: 3_600_000 },
   });
 });
 

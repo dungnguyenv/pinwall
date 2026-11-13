@@ -182,12 +182,14 @@ function withCleanup(handle: DbHandle, cleanup: () => Promise<unknown>): DbHandl
 }
 
 /**
- * Resolves once another connection of `db`'s Postgres database waits on a row lock, or once
- * `settled` has (the work did not wait, which the caller's test then reports). At most 5 s.
+ * Resolves once `waiting` other connections of `db`'s Postgres database (one by default) wait on
+ * a row lock, or once `settled` has (the work did not wait, which the caller's test then
+ * reports). At most 5 s.
  */
 export async function untilWaitingOnALock(
   db: Kysely<Database>,
   settled: Promise<unknown>,
+  waiting = 1,
 ): Promise<void> {
   let done = false;
   void settled.then(() => {
@@ -199,7 +201,7 @@ export async function untilWaitingOnALock(
       select count(*)::int as n from pg_stat_activity
       where datname = current_database() and wait_event_type = 'Lock'
     `.execute(db);
-    if ((rows[0]?.n ?? 0) > 0) return;
+    if ((rows[0]?.n ?? 0) >= waiting) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }

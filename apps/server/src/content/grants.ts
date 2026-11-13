@@ -1,8 +1,15 @@
+import type { Expression, ExpressionBuilder, SqlBool } from 'kysely';
 import { idpAccessDeadline } from '../auth/oidc/gate.ts';
 import type { Db } from '../auth/passkeys.ts';
 import { hasAccess } from '../auth/roles.ts';
 import type { Config } from '../config/types.ts';
-import type { ContentGrantMode, ContentGrantRow, UserRow, VersionRow } from '../db/schema.ts';
+import type {
+  ContentGrantMode,
+  ContentGrantRow,
+  Database,
+  UserRow,
+  VersionRow,
+} from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import { mayExpose } from '../domain/exposure.ts';
 import { scopeForUser, type ViewerScope, whereVisible } from '../domain/spaces.ts';
@@ -148,28 +155,69 @@ export async function resolveGrant(deps: AppDeps, token: string): Promise<Resolv
   return framedOnly ? { grant, version, framedOnly } : { grant, version };
 }
 
+/** Which grants a revocation ends: a condition on `content_grants`. */
+type GrantFilter = (eb: ExpressionBuilder<Database, 'content_grants'>) => Expression<SqlBool>;
+
 /**
- * Ends every grant made for `userId` ("Revoke now"): deletes them, and tombstones those still
- * live until they would have expired, so they answer 410 rather than 404. Pass the transaction
- * that revokes the rest of the user's credentials. Returns how many grants were deleted.
+ * Deletes the grants `filter` keeps, and tombstones those still live until they would have
+ * expired, so they answer 410 rather than 404. The tombstones go in token order, so two
+ * revocations that end some of the same grants insert them in one order. Returns how many grants
+ * were deleted.
  */
-export async function revokeUserGrants(db: Db, userId: string, now: number): Promise<number> {
+async function endGrants(db: Db, filter: GrantFilter, now: number): Promise<number> {
   const live = await db
     .selectFrom('content_grants')
     .select(['token', 'expires_at'])
-    .where('user_id', '=', userId)
+    .where(filter)
     .where('expires_at', '>', now)
+    .orderBy('token')
     .execute();
   await addTombstones(
     db,
     live.map((grant) => ({ kind: 'content_grant', key: grant.token, expiresAt: grant.expires_at })),
     now,
   );
-  const deleted = await db
-    .deleteFrom('content_grants')
-    .where('user_id', '=', userId)
-    .executeTakeFirst();
+  const deleted = await db.deleteFrom('content_grants').where(filter).executeTakeFirst();
   return Number(deleted.numDeletedRows);
+}
+
+/**
+ * Ends every grant made for `userId` ("Revoke now"): deletes them, and tombstones those still
+ * live until they would have expired, so they answer 410 rather than 404. Pass the transaction
+ * that revokes the rest of the user's credentials. Returns how many grants were deleted.
+ */
+export async function revokeUserGrants(db: Db, userId: string, now: number): Promise<number> {
+  return endGrants(db, (eb) => eb('user_id', '=', userId), now);
+}
+
+/**
+ * Ends the grants made for `userId` on versions of `projectId`'s artifacts: deleted, live ones
+ * tombstoned (410), so they stay gone even once the person sees the project again. Pass the
+ * transaction that takes them out of the project. Returns how many.
+ */
+export async function revokeProjectGrants(
+  db: Db,
+  userId: string,
+  projectId: string,
+  now: number,
+): Promise<number> {
+  return endGrants(
+    db,
+    (eb) =>
+      eb.and([
+        eb('user_id', '=', userId),
+        eb(
+          'version_id',
+          'in',
+          eb
+            .selectFrom('versions')
+            .innerJoin('artifacts', 'artifacts.id', 'versions.artifact_id')
+            .select('versions.id')
+            .where('artifacts.project_id', '=', projectId),
+        ),
+      ]),
+    now,
+  );
 }
 
 /** Deletes the grants that have expired; returns how many. */

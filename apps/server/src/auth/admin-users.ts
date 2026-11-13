@@ -62,9 +62,12 @@ export async function setRoleOverride(
   if (!user) throw notFound(t('auth.userNotFound'));
   if (user.kind === 'owner') throw forbidden(t('auth.ownerRole'));
   const linkIds = await db.transaction().execute(async (trx) => {
-    // The links' artifacts are held before the user row is written, as every revoke takes them.
+    // The links' artifacts and projects are held before the user row is written, as every revoke
+    // takes them.
     const revoked =
-      role === 'blocked' ? await revokeShareLinksOf(trx, dialect, userId, deps.clock.now()) : [];
+      role === 'blocked'
+        ? await revokeShareLinksOf(trx, dialect, deps.config.visibility, userId, deps.clock.now())
+        : [];
     await trx.updateTable('users').set({ role_override: role }).where('id', '=', userId).execute();
     return revoked;
   });
@@ -86,7 +89,7 @@ export interface ModerationPatch {
  * Applies `patch` to the user (404 `auth.userNotFound` for an unknown id), in one transaction.
  * Taking approval from someone who had it, while links need approval (`approved`), also revokes
  * every share link they made, unless they are an admin, whom approval never gated: the links are
- * revoked first, with their artifacts held, and the user row is written after, as
+ * revoked first, with their artifacts and projects held, and the user row is written after, as
  * `setRoleOverride` orders it. Their live streams end once the transaction commits. Returns the
  * user as changed, and how many share links were revoked.
  */
@@ -118,7 +121,7 @@ export async function updateUserModeration(
       deps.config.shareLinks === 'approved' &&
       effectiveRole(before) !== 'admin';
     const revoked = withdrawn
-      ? await revokeShareLinksOf(trx, dialect, userId, deps.clock.now())
+      ? await revokeShareLinksOf(trx, dialect, deps.config.visibility, userId, deps.clock.now())
       : [];
     if (Object.keys(changes).length > 0) {
       await trx.updateTable('users').set(changes).where('id', '=', userId).execute();

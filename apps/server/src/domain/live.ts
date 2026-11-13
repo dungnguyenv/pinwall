@@ -20,3 +20,17 @@ export const SHARE_LINK_TOPIC = (linkId: string): string => `share-link:${linkId
 export function endShareLinkStreams(deps: AppDeps, linkId: string): void {
   deps.events.publish(SHARE_LINK_TOPIC(linkId), { type: 'share-link.revoked' });
 }
+
+/**
+ * The bus topic on which the member streams of `userId` hear that what they may see changed, so
+ * they check their access at once instead of at their next heartbeat.
+ */
+export const VIEWER_ACCESS_TOPIC = (userId: string): string => `viewer-access:${userId}`;
+
+/**
+ * Makes `userId`'s open member streams check their sight now. Call it once the change has
+ * committed.
+ */
+export function recheckViewerStreams(deps: AppDeps, userId: string): void {
+  deps.events.publish(VIEWER_ACCESS_TOPIC(userId), { type: 'access.changed' });
+}

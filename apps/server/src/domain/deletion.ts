@@ -16,6 +16,7 @@ import { ARTIFACT_TOPIC, indexArtifact, reindexArtifact } from './search.ts';
 import {
   can,
   forbiddenRole,
+  holdProject,
   type ProjectRole,
   roleIn,
   type Scope,
@@ -115,6 +116,8 @@ async function deleteVersionAs(
     const artifact =
       (await lockArtifact(trx, dialect, scope, artifactId)) ??
       (await getArtifact(trx, scope, artifactId, now));
+    // A membership change and this deletion then take turns on the links, grants and tombstones.
+    await holdProject(trx, dialect, deps.config.visibility, artifact.project_id);
     const version = await getVersionByNumber(trx, artifact, n);
     if (!seesAll(scope)) {
       await authorize(trx, artifact.project_id, version.created_by);
@@ -235,6 +238,8 @@ async function deleteArtifactAs(
     const artifact =
       (await lockArtifact(trx, dialect, scope, artifactId)) ??
       (await getArtifact(trx, scope, artifactId, now));
+    // A membership change and this deletion then take turns on the links, grants and tombstones.
+    await holdProject(trx, dialect, deps.config.visibility, artifact.project_id);
     await authorize(trx, artifact.project_id, artifact.created_by);
     const target: DeletionTarget = { artifactId: artifact.id };
     const shas = await blobsOf(trx, target);
@@ -329,7 +334,9 @@ async function blobsOf(trx: Transaction<Database>, target: DeletionTarget): Prom
 
 /**
  * Tombstones for the grants of the versions in `target` that have not expired, each kept until
- * its grant would have expired. An expired grant needs none: it no longer serves anything.
+ * its grant would have expired. An expired grant needs none: it no longer serves anything. They
+ * go in token order, as every grant ending inserts them, so a revocation ending some of the same
+ * grants takes turns with this deletion instead of deadlocking.
  */
 async function grantTombstones(
   trx: Transaction<Database>,
@@ -341,6 +348,7 @@ async function grantTombstones(
     .select(['token', 'expires_at'])
     .where('version_id', 'in', versionIdsIn(trx, target))
     .where('expires_at', '>', now)
+    .orderBy('token')
     .execute();
   return grants.map((grant) => ({
     kind: 'content_grant',

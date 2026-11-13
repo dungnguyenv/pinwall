@@ -108,3 +108,16 @@ test('routes and tools query content tables only through scoped lookups or the a
     DIRECT_QUERIES_ALLOWED.map(({ file, table }) => `${file}: ${table}`).sort(),
   );
 });
+
+/**
+ * A write reads the role it acts with through `holdRoleIn`, which holds the project first, so a
+ * membership change that commits meanwhile is seen. Only `holdRoleIn` itself reads it in a
+ * transaction otherwise, and `updateProject`: owner-only, and a FOR SHARE before its own UPDATE
+ * of the project row would deadlock two renames.
+ */
+test('writes read roles with holdRoleIn', async () => {
+  const readers = (await sources())
+    .filter((file) => /\broleIn\(trx\b/.test(file.text))
+    .map((file) => file.path);
+  expect(readers).toEqual(['domain/projects.ts', 'domain/spaces.ts']);
+});

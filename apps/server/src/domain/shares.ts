@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { Db } from '../auth/passkeys.ts';
 import { normalizePassword } from '../auth/password.ts';
 import { effectiveRole } from '../auth/roles.ts';
-import type { Config } from '../config/types.ts';
+import type { Config, Visibility } from '../config/types.ts';
 import type { DbDialect } from '../db/connect.ts';
 import type { ArtifactRow, Database, ShareLinkRow, UserRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
@@ -21,8 +21,9 @@ import {
   assertCan,
   can,
   forbiddenRole,
+  holdProject,
+  holdRoleIn,
   type ProjectRole,
-  roleIn,
   type Scope,
   scopeForUser,
   seesAll,
@@ -119,7 +120,7 @@ export async function createShareLink(
   const row = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const artifact = await holdArtifact(trx, dialect, scope, artifactId, now);
-    assertCan(scope, await roleIn(trx, scope, artifact.project_id), 'createShareLink');
+    assertCan(scope, await holdRoleIn(trx, dialect, scope, artifact.project_id), 'createShareLink');
     const version = p.versionId === null ? null : await versionOf(trx, artifact, p.versionId);
     const link: ShareLinkRow = {
       id: newId('shr'),
@@ -242,7 +243,7 @@ export async function revokeShareLink(
     const artifact = await holdArtifact(trx, dialect, scope, seen.artifact_id, now);
     // A deletion the hold waited for may have taken the link along.
     const link = dialect === 'postgres' ? await getShareLink(trx, scope, linkId) : seen;
-    const role = await roleIn(trx, scope, artifact.project_id);
+    const role = await holdRoleIn(trx, dialect, scope, artifact.project_id);
     if (!canRevoke(scope, role, actor, link, artifact)) {
       throw seesAll(scope)
         ? forbidden(t('share.revokeForbidden'))
@@ -263,15 +264,18 @@ export async function revokeShareLink(
  * Revokes, in `trx`, every share link `userId` made that is not revoked yet, as part of ending
  * that person's access: "Revoke now", a block, or the IdP no longer admitting them. Each link
  * ends as `revokeShareLink` ends one, with the content grants made from it, and takes its locks
- * in the same order: the artifact first (in id order, one artifact at a time), then its links.
- * Call it before `trx` touches any content grant or tombstone, so a deletion waiting on one of
- * those artifacts cannot be waiting on this transaction too. A link whose artifact a deletion
- * took meanwhile is skipped. Returns the ids of the links revoked: once `trx` has committed,
- * end their live streams with `endShareLinkStreams`.
+ * in the same order as every write: the artifact first (in id order, one artifact at a time),
+ * then its project (`holdProject`), then its links. A membership change holds the project
+ * before it touches links, so it and this transaction take turns at the project. Call it before
+ * `trx` touches any content grant or tombstone, so a deletion waiting on one of those artifacts
+ * cannot be waiting on this transaction too. A link whose artifact a deletion took meanwhile is
+ * skipped. Returns the ids of the links revoked: once `trx` has committed, end their live
+ * streams with `endShareLinkStreams`.
  */
 export async function revokeShareLinksOf(
   trx: Transaction<Database>,
   dialect: DbDialect,
+  visibility: Visibility,
   userId: string,
   now: number,
 ): Promise<string[]> {
@@ -284,42 +288,91 @@ export async function revokeShareLinksOf(
     .execute();
   const revoked: string[] = [];
   for (const artifactId of open.map((row) => row.artifact_id).sort()) {
-    if (!(await holdIfPresent(trx, dialect, artifactId))) continue;
+    if (!(await holdIfPresent(trx, dialect, visibility, artifactId))) continue;
     // Read under the hold: a deletion the hold waited for has taken its links along.
-    const links = await trx
-      .selectFrom('share_links')
-      .select('id')
-      .where('artifact_id', '=', artifactId)
-      .where('created_by', '=', userId)
-      .where('revoked_at', 'is', null)
-      .execute();
-    if (links.length === 0) continue;
-    const ids = links.map((link) => link.id);
-    await trx
-      .updateTable('share_links')
-      .set({ revoked_at: now })
-      .where('id', 'in', ids)
-      .where('revoked_at', 'is', null)
-      .execute();
-    await endGrantsOf(trx, ids, now);
-    revoked.push(...ids);
+    revoked.push(...(await revokeLinksOn(trx, userId, artifactId, now)));
   }
   return revoked;
 }
 
-/** Holds the artifact `id` as `holdArtifact` does; false when it no longer exists. */
+/**
+ * `revokeShareLinksOf` for the artifacts of `projectId` only, as the person leaves the project
+ * or stops being one of its editors. For a transaction that holds the project (`lockProject`):
+ * the artifacts go in id order, and none is held, since a write that holds one may be waiting
+ * on the project. A link whose artifact a deletion took meanwhile is skipped. Returns the ids of
+ * the links revoked: once `trx` has committed, end their live streams with
+ * `endShareLinkStreams`.
+ */
+export async function revokeProjectShareLinksOf(
+  trx: Transaction<Database>,
+  userId: string,
+  projectId: string,
+  now: number,
+): Promise<string[]> {
+  const open = await trx
+    .selectFrom('share_links')
+    .innerJoin('artifacts', 'artifacts.id', 'share_links.artifact_id')
+    .select('share_links.artifact_id')
+    .distinct()
+    .where('artifacts.project_id', '=', projectId)
+    .where('share_links.created_by', '=', userId)
+    .where('share_links.revoked_at', 'is', null)
+    .execute();
+  const revoked: string[] = [];
+  for (const artifactId of open.map((row) => row.artifact_id).sort()) {
+    revoked.push(...(await revokeLinksOn(trx, userId, artifactId, now)));
+  }
+  return revoked;
+}
+
+/**
+ * Revokes the links `userId` made on `artifactId` that are not revoked yet, and ends the content
+ * grants made from them. Returns their ids.
+ */
+async function revokeLinksOn(
+  trx: Transaction<Database>,
+  userId: string,
+  artifactId: string,
+  now: number,
+): Promise<string[]> {
+  const links = await trx
+    .selectFrom('share_links')
+    .select('id')
+    .where('artifact_id', '=', artifactId)
+    .where('created_by', '=', userId)
+    .where('revoked_at', 'is', null)
+    .execute();
+  if (links.length === 0) return [];
+  const ids = links.map((link) => link.id);
+  await trx
+    .updateTable('share_links')
+    .set({ revoked_at: now })
+    .where('id', 'in', ids)
+    .where('revoked_at', 'is', null)
+    .execute();
+  await endGrantsOf(trx, ids, now);
+  return ids;
+}
+
+/**
+ * Holds the artifact `id` as `holdArtifact` does, then its project as a write does
+ * (`holdProject`); false when the artifact no longer exists.
+ */
 async function holdIfPresent(
   trx: Transaction<Database>,
   dialect: DbDialect,
+  visibility: Visibility,
   id: string,
 ): Promise<boolean> {
   const row = await trx
     .selectFrom('artifacts')
-    .select('id')
+    .select(['id', 'project_id'])
     .where('id', '=', id)
     .$if(dialect === 'postgres', (qb) => qb.forShare())
     .executeTakeFirst();
-  return row !== undefined;
+  if (row === undefined) return false;
+  await holdProject(trx, dialect, visibility, row.project_id);
+  return true;
 }
 
 /** `revoked` once revoked, else `expired` from `expires_at` on, else `active`. */
@@ -368,7 +421,8 @@ async function getShareLink(db: Db, scope: Scope, id: string): Promise<ShareLink
 
 /**
  * Deletes the content grants made from the links `linkIds` (of one artifact), tombstoning those
- * still live until they would have expired, so they answer 410 rather than 404.
+ * still live until they would have expired, so they answer 410 rather than 404. The tombstones
+ * go in token order, as every grant ending inserts them.
  */
 async function endGrantsOf(trx: Transaction<Database>, linkIds: readonly string[], now: number) {
   const live = await trx
@@ -376,6 +430,7 @@ async function endGrantsOf(trx: Transaction<Database>, linkIds: readonly string[
     .select(['token', 'expires_at'])
     .where('share_link_id', 'in', linkIds)
     .where('expires_at', '>', now)
+    .orderBy('token')
     .execute();
   await addTombstones(
     trx,

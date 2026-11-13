@@ -8,6 +8,7 @@ import { idpAccessCurrent } from '../auth/oidc/gate.ts';
 import { hasAccess } from '../auth/roles.ts';
 import type { AppDeps } from '../deps.ts';
 import { getArtifact } from '../domain/artifacts.ts';
+import { VIEWER_ACCESS_TOPIC } from '../domain/live.ts';
 import { ARTIFACT_TOPIC } from '../domain/search.ts';
 import { scopeForUser, scopeOf, whereVisible } from '../domain/spaces.ts';
 import { LIVE_STREAM_LIMITS, liveStream } from '../http/sse.ts';
@@ -98,6 +99,8 @@ export function registerEventRoutes(api: OpenAPIHono<AppEnv>): void {
     return liveStream(c, {
       topic: ARTIFACT_TOPIC(artifact.id),
       forward: (e) => (e.type === 'artifact.deleted' ? 'send-and-close' : 'send'),
+      // A membership change makes the stream check at once rather than at its next heartbeat.
+      checkTopic: VIEWER_ACCESS_TOPIC(auth.user.id),
       stillAllowed: () => memberStillAllowed(deps, auth, artifact.id),
       quotas:
         sessionId === undefined

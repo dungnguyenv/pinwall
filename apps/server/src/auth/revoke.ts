@@ -28,7 +28,7 @@ export async function revokeAllCredentials(deps: AppDeps, userId: string): Promi
   const { db, dialect } = deps.db;
   const { linkIds, ...result } = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
-    const linkIds = await revokeShareLinksOf(trx, dialect, userId, now);
+    const linkIds = await revokeShareLinksOf(trx, dialect, deps.config.visibility, userId, now);
     const sessions = await trx
       .deleteFrom('sessions')
       .where('user_id', '=', userId)
