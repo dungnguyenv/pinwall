@@ -4,12 +4,13 @@ import { useTranslation } from 'react-i18next';
 import { useAdminUsers, useRevokeUser } from '../../api/admin.ts';
 import { errorMessage } from '../../api/client.ts';
 import type { AdminUser } from '../../api/dto.ts';
-import { useLeaveSession, useMe } from '../../api/session.ts';
+import { useLeaveSession, useMe, usePublicConfig } from '../../api/session.ts';
 import { useMediaQuery } from '../../lib/media.ts';
 import { usePageTitle } from '../../lib/page-title.ts';
 import {
   Button,
   ConfirmDialog,
+  cn,
   EmptyState,
   ErrorState,
   LoadingRegion,
@@ -17,16 +18,19 @@ import {
   toast,
 } from '../../ui/index.ts';
 import { useRowDialog } from '../settings/use-row-dialog.ts';
-import { LastSeen, PersonCell, RoleCell, RoleSelect } from './user-parts.tsx';
+import { ApprovalSwitch, UserMenu } from './user-actions.tsx';
+import { LastSeen, PersonCell, RoleCell, RoleSelect, UsageCell } from './user-parts.tsx';
 
 /**
- * The table needs about 1100 px of content to breathe. The open sidebar
- * (264 px and its border), the page gutters (2 x 32 px) and a scrollbar take
- * roughly 350 px of the window, so a window narrower than this gets the cards.
- * The rail leaves more room, but the cards fit every case, so one number is
- * enough.
+ * The table needs the whole width the content area ever has: that area stops
+ * growing at 1136 px (`--content-library` less the page gutters), and the seven
+ * columns, with the usage and sharing ones, fill about 1120 px of it. The open
+ * sidebar (264 px and its border), a scrollbar and the content's maximum width
+ * reach 1136 px from a window of about 1480 px, so a window narrower than this
+ * gets the cards, where actions never sit off-screen. The rail leaves more room,
+ * but the cards fit every case, so one number is enough.
  */
-const TABLE_QUERY = '(min-width: 1450px)';
+const TABLE_QUERY = '(min-width: 1500px)';
 
 /** `/admin/users`: everyone who has signed in, their role, and the controls to change it. */
 export function UsersPage() {
@@ -35,6 +39,7 @@ export function UsersPage() {
   const users = useAdminUsers();
   const { data: me } = useMe();
   const roomForTable = useMediaQuery(TABLE_QUERY);
+  const approvalInForce = usePublicConfig().data?.share_links === 'approved';
   const revokeUser = useRevokeUser();
   const leaveSession = useLeaveSession();
   const revoking = useRowDialog<AdminUser>();
@@ -45,7 +50,10 @@ export function UsersPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <p className="max-w-prose text-pretty text-base text-fg-muted">{t('web.admin.users.hint')}</p>
+      <div className="flex max-w-prose flex-col gap-2 text-pretty text-base text-fg-muted">
+        <p>{t('web.admin.users.hint')}</p>
+        {approvalInForce ? null : <p>{t('web.admin.approval.inactive')}</p>}
+      </div>
 
       {items === undefined ? (
         users.isError ? (
@@ -147,8 +155,8 @@ interface UserListProps {
 
 // A heading cell and a data cell; the person is the row's header, so a screen
 // reader says whose role and last seen it is reading.
-const TH = 'whitespace-nowrap px-4 py-2.5 text-left font-medium text-fg-muted text-sm';
-const TD = 'px-4 py-3.5 align-middle';
+const TH = 'whitespace-nowrap px-3 py-2.5 text-left font-medium text-fg-muted text-sm';
+const TD = 'px-3 py-3.5 align-middle';
 
 /** Where the content area is wide: one row per user. If it still overflows (large text), the table scrolls within its box. */
 function UserTable({ users, meId, onRevoke }: UserListProps) {
@@ -170,6 +178,12 @@ function UserTable({ users, meId, onRevoke }: UserListProps) {
               {t('web.admin.col.override')}
             </th>
             <th scope="col" className={TH}>
+              {t('web.admin.col.usage')}
+            </th>
+            <th scope="col" className={TH}>
+              {t('web.admin.col.sharing')}
+            </th>
+            <th scope="col" className={TH}>
               {t('web.admin.col.lastSeen')}
             </th>
             <th scope="col" className={TH}>
@@ -182,20 +196,29 @@ function UserTable({ users, meId, onRevoke }: UserListProps) {
             const isSelf = user.id === meId;
             return (
               <tr key={user.id}>
-                <th scope="row" className={`${TD} min-w-64 text-left font-normal`}>
+                <th scope="row" className={`${TD} min-w-52 text-left font-normal`}>
                   <PersonCell user={user} isSelf={isSelf} />
                 </th>
-                <td className={`${TD} min-w-44 whitespace-nowrap`}>
+                <td className={`${TD} min-w-36`}>
                   <RoleCell user={user} />
                 </td>
-                <td className={`${TD} w-56`}>
+                <td className={`${TD} w-52`}>
                   <RoleSelect user={user} isSelf={isSelf} />
+                </td>
+                <td className={`${TD} min-w-44`}>
+                  <UsageCell user={user} />
+                </td>
+                <td className={`${TD} min-w-24`}>
+                  <ApprovalSwitch user={user} />
                 </td>
                 <td className={`${TD} whitespace-nowrap text-fg`}>
                   <LastSeen at={user.last_seen_at} />
                 </td>
-                <td className={`${TD} text-right`}>
-                  <RevokeButton user={user} onRevoke={onRevoke} />
+                <td className={`${TD} whitespace-nowrap text-right`}>
+                  <div className="flex items-center justify-end gap-1">
+                    <RevokeButton user={user} onRevoke={onRevoke} />
+                    <UserMenu user={user} />
+                  </div>
                 </td>
               </tr>
             );
@@ -226,9 +249,16 @@ function UserCards({ users, meId, onRevoke }: UserListProps) {
               <CardFact label={t('web.admin.col.lastSeen')}>
                 <LastSeen at={user.last_seen_at} />
               </CardFact>
+              <CardFact label={t('web.admin.col.usage')} wide>
+                <UsageCell user={user} />
+              </CardFact>
             </dl>
+            <ApprovalSwitch user={user} hideLabel={false} />
             <RoleSelect user={user} isSelf={isSelf} showReason hideLabel={false} />
-            <RevokeButton user={user} onRevoke={onRevoke} stacked />
+            <div className="flex items-center gap-2">
+              <RevokeButton user={user} onRevoke={onRevoke} stacked />
+              <UserMenu user={user} variant="secondary" size="md" />
+            </div>
           </li>
         );
       })}
@@ -236,9 +266,18 @@ function UserCards({ users, meId, onRevoke }: UserListProps) {
   );
 }
 
-function CardFact({ label, children }: { label: string; children: ReactNode }) {
+function CardFact({
+  label,
+  wide = false,
+  children,
+}: {
+  label: string;
+  /** Spans both columns, for a fact with several lines. */
+  wide?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <div className="flex min-w-0 flex-col items-start gap-1">
+    <div className={cn('flex min-w-0 flex-col items-start gap-1', wide && 'col-span-2')}>
       <dt className="text-fg-muted">{label}</dt>
       <dd className="text-fg">{children}</dd>
     </div>
@@ -259,7 +298,7 @@ function RevokeButton({
     <Button
       variant={stacked ? 'secondary' : 'ghost'}
       size={stacked ? 'md' : 'sm'}
-      className="text-danger"
+      className={cn('text-danger', stacked && 'flex-1')}
       aria-label={t('web.admin.revoke.buttonFor', { name: user.name })}
       onClick={() => onRevoke(user)}
     >

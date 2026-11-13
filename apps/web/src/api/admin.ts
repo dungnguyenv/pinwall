@@ -1,5 +1,6 @@
 import {
   type InfiniteData,
+  type QueryClient,
   type UseInfiniteQueryResult,
   type UseMutationResult,
   type UseQueryResult,
@@ -9,7 +10,16 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { type ApiError, api } from './client.ts';
-import { AdminConfig, AdminUser, AdminUserList, RevokeResult, type SetRoleRequest } from './dto.ts';
+import {
+  AdminConfig,
+  AdminUser,
+  AdminUserList,
+  type PurgeRequest,
+  PurgeResult,
+  RevokeResult,
+  type SetRoleRequest,
+  type UpdateAdminUserRequest,
+} from './dto.ts';
 import { qk } from './keys.ts';
 
 /*
@@ -52,6 +62,28 @@ export function revokeUser(id: string): Promise<RevokeResult> {
   });
 }
 
+/** Changes only the keys sent: whether the person may expose content, and their own limits. */
+export function updateAdminUser(id: string, body: UpdateAdminUserRequest): Promise<AdminUser> {
+  return api(`/admin/users/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body,
+    schema: AdminUser,
+  });
+}
+
+/**
+ * Deletes every project the person owns. Personal mode only. `confirm_email` is their email
+ * address, or their id when they have none.
+ */
+export function purgeUser(id: string, confirm_email: string): Promise<PurgeResult> {
+  const body: PurgeRequest = { confirm_email };
+  return api(`/admin/users/${encodeURIComponent(id)}/purge`, {
+    method: 'POST',
+    body,
+    schema: PurgeResult,
+  });
+}
+
 /** The effective settings. Secrets come as "set or not", never as values. */
 export function getAdminConfig(): Promise<AdminConfig> {
   return api('/admin/config', { schema: AdminConfig });
@@ -72,7 +104,51 @@ export function toRoleOverride(option: RoleOption): SetRoleRequest['role_overrid
   return option === 'idp' ? null : option;
 }
 
+/**
+ * A limit an admin sets on one person: the instance's own, none at all, or a number. On the wire
+ * that is `null`, `0` and the number; bytes for storage, a count for artifacts.
+ */
+export type QuotaChoice =
+  | { kind: 'instance' }
+  | { kind: 'none' }
+  | { kind: 'custom'; value: number };
+
+/** What the person's limit says now; an old server that sends none means the instance's. */
+export function fromQuota(q: number | null | undefined): QuotaChoice {
+  if (q === null || q === undefined) return { kind: 'instance' };
+  return q === 0 ? { kind: 'none' } : { kind: 'custom', value: q };
+}
+
+export function toQuota(c: QuotaChoice): number | null {
+  switch (c.kind) {
+    case 'instance':
+      return null;
+    case 'none':
+      return 0;
+    case 'custom':
+      return c.value;
+  }
+}
+
+/** The units a storage limit is typed in; decimal, as the server's limits are. */
+export const BYTE_UNITS = { MB: 1_000_000, GB: 1_000_000_000 } as const;
+
 type AdminUsersData = InfiniteData<AdminUserList>;
+
+/** Shows `saved` in the list at once, without loading every page again. */
+function writeUser(queryClient: QueryClient, saved: AdminUser): void {
+  queryClient.setQueryData<AdminUsersData>(qk.adminUsers, (data) =>
+    data
+      ? {
+          ...data,
+          pages: data.pages.map((page) => ({
+            ...page,
+            items: page.items.map((user) => (user.id === saved.id ? saved : user)),
+          })),
+        }
+      : data,
+  );
+}
 
 export function useAdminUsers(): UseInfiniteQueryResult<AdminUsersData, ApiError> {
   return useInfiniteQuery<
@@ -101,19 +177,42 @@ export function useSetUserRole(): UseMutationResult<
   const queryClient = useQueryClient();
   return useMutation<AdminUser, ApiError, { id: string; option: RoleOption }>({
     mutationFn: ({ id, option }) => setUserRole(id, toRoleOverride(option)),
-    onSuccess: (saved) => {
-      queryClient.setQueryData<AdminUsersData>(qk.adminUsers, (data) =>
-        data
-          ? {
-              ...data,
-              pages: data.pages.map((page) => ({
-                ...page,
-                items: page.items.map((user) => (user.id === saved.id ? saved : user)),
-              })),
-            }
-          : data,
-      );
-    },
+    onSuccess: (saved) => writeUser(queryClient, saved),
+  });
+}
+
+/** Saves an approval or limits change and shows the server's answer in the list at once. */
+export function useUpdateAdminUser(): UseMutationResult<
+  AdminUser,
+  ApiError,
+  { id: string; patch: UpdateAdminUserRequest }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<AdminUser, ApiError, { id: string; patch: UpdateAdminUserRequest }>({
+    mutationFn: ({ id, patch }) => updateAdminUser(id, patch),
+    onSuccess: (saved) => writeUser(queryClient, saved),
+  });
+}
+
+/**
+ * Deletes a person's content, then loads the list again: their usage fell to zero. Projects and
+ * artifacts that were shared with the signed-in admin are gone as well, so their lists load again
+ * too.
+ */
+export function usePurgeUser(): UseMutationResult<
+  PurgeResult,
+  ApiError,
+  { id: string; confirm: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<PurgeResult, ApiError, { id: string; confirm: string }>({
+    mutationFn: ({ id, confirm }) => purgeUser(id, confirm),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: qk.adminUsers }),
+        queryClient.invalidateQueries({ queryKey: qk.artifactLists }),
+        queryClient.invalidateQueries({ queryKey: qk.projectLists }),
+      ]),
   });
 }
 

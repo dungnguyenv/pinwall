@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ROLE_OPTIONS, type RoleOption, toRoleOption, useSetUserRole } from '../../api/admin.ts';
 import { errorMessage } from '../../api/client.ts';
 import type { AdminUser } from '../../api/dto.ts';
-import { formatDate, formatRelativeTime } from '../../lib/format.ts';
+import { formatBytes, formatDate, formatRelativeTime } from '../../lib/format.ts';
 import { Avatar, Badge, type BadgeTone, Select, Tooltip, toast } from '../../ui/index.ts';
 
 /*
@@ -102,6 +102,54 @@ export function LastSeen({ at }: { at: number | null }) {
     <time dateTime={new Date(at).toISOString()} title={formatDate(at)}>
       {formatRelativeTime(at)}
     </time>
+  );
+}
+
+/**
+ * What the person's space holds: artifacts and size, then projects, versions and live share
+ * links, then when they last published. The badge says an admin gave them limits of their own,
+ * which includes "no limit".
+ */
+export function UsageCell({ user }: { user: AdminUser }) {
+  const { t } = useTranslation();
+  const { usage } = user;
+  if (usage === undefined) return null;
+  const custom = (user.quota_bytes ?? null) !== null || (user.quota_artifacts ?? null) !== null;
+  return (
+    <div className="flex min-w-0 flex-col items-start gap-0.5">
+      <span className="text-fg tabular-nums">
+        {t('web.admin.usage.summary', {
+          artifacts: t('web.admin.usage.artifacts', { count: usage.artifacts }),
+          bytes: formatBytes(usage.bytes),
+        })}
+      </span>
+      <span className="text-pretty text-fg-muted text-sm tabular-nums">
+        {t('web.admin.usage.detail', {
+          projects: t('web.admin.usage.projects', { count: usage.projects }),
+          versions: t('web.admin.usage.versions', { count: usage.versions }),
+          links: t('web.admin.usage.links', { count: usage.share_links }),
+        })}
+      </span>
+      <span className="text-fg-muted text-sm">
+        {usage.last_published_at === null ? (
+          t('web.admin.usage.neverPublished')
+        ) : (
+          <time
+            dateTime={new Date(usage.last_published_at).toISOString()}
+            title={formatDate(usage.last_published_at)}
+          >
+            {t('web.admin.usage.lastPublished', {
+              time: formatRelativeTime(usage.last_published_at),
+            })}
+          </time>
+        )}
+      </span>
+      {custom ? (
+        <span className="mt-1">
+          <Badge tone="accent">{t('web.admin.quota.custom')}</Badge>
+        </span>
+      ) : null}
+    </div>
   );
 }
 
