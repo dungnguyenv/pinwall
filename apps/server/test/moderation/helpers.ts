@@ -48,3 +48,20 @@ export async function approve(ctx: TestContext, userId: string, approved = true)
     .where('id', '=', userId)
     .execute();
 }
+
+/**
+ * Sets `userId`'s own quota (`users.quota_bytes`, `users.quota_artifacts`), as an admin would: a
+ * number replaces the instance's limit for them (0: no limit), null gives the instance's back,
+ * and a count left out stays as it is.
+ */
+export async function setQuota(
+  ctx: TestContext,
+  userId: string,
+  q: { bytes?: number | null; artifacts?: number | null },
+): Promise<void> {
+  const changes: { quota_bytes?: number | null; quota_artifacts?: number | null } = {};
+  if (q.bytes !== undefined) changes.quota_bytes = q.bytes;
+  if (q.artifacts !== undefined) changes.quota_artifacts = q.artifacts;
+  if (Object.keys(changes).length === 0) return;
+  await ctx.deps.db.db.updateTable('users').set(changes).where('id', '=', userId).execute();
+}

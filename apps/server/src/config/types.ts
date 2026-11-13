@@ -66,6 +66,11 @@ export interface Config {
     maxFiles: number;
     maxExpansionRatio: number;
   };
+  /**
+   * `PINWALL_QUOTA_BYTES` and `PINWALL_QUOTA_ARTIFACTS`: what one person may store, as the total
+   * size of their versions and their number of artifacts. 0 means no limit.
+   */
+  quota: { bytes: number; artifacts: number };
   ttl: { sessionMs: number; previewMs: number; uploadSessionMs: number };
   metrics: { port: number };
   logLevel: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace';

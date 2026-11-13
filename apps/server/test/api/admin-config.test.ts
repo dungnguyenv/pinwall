@@ -177,6 +177,8 @@ describe('describeConfig', () => {
       'limits PINWALL_MAX_VERSION_BYTES',
       'limits PINWALL_MAX_FILES',
       'limits PINWALL_MAX_EXPANSION_RATIO',
+      'limits PINWALL_QUOTA_BYTES',
+      'limits PINWALL_QUOTA_ARTIFACTS',
       'lifetimes PINWALL_SESSION_TTL',
       'lifetimes PINWALL_PREVIEW_TTL',
       'lifetimes PINWALL_UPLOAD_SESSION_TTL',

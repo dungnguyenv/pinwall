@@ -1,6 +1,7 @@
 import type { Transaction } from 'kysely';
 import { z } from 'zod';
 import type { Db } from '../auth/passkeys.ts';
+import type { Config } from '../config/types.ts';
 import { extractVersionText, type VersionMetadata } from '../content/metadata.ts';
 import type { DbDialect } from '../db/connect.ts';
 import type {
@@ -31,6 +32,7 @@ import {
   scopeForUser,
   whereVisible,
 } from './spaces.ts';
+import { assertQuota, checkQuota } from './usage.ts';
 
 /** Where a publish goes: a new artifact, or a new version on top of the one the publisher saw. */
 export type PublishTarget =
@@ -77,7 +79,9 @@ export function versionConflict(current: { id: string; number: number }): AppErr
  * before its body is read: the tags are valid; the project or artifact exists and `scope` sees
  * it (else 404, as for a missing one); `scope` may publish to it (else 403 `reason: 'role'`, in
  * personal mode); the project is not archived, or the artifact's current version is the expected
- * one. The commit checks again, against the memberships of its own moment.
+ * one; and, for a viewer, the space it fills has room for one more version (and artifact), with
+ * no bytes counted yet (else 413 `quota_exceeded`). The commit checks again, against the
+ * memberships and usage of its own moment.
  */
 export async function checkTarget(
   deps: AppDeps,
@@ -93,10 +97,26 @@ export async function checkTarget(
       assertCan(scope, await roleIn(db, scope, project.id), 'publish');
       assertNotArchived(project);
     }
+    if (scope.kind === 'viewer') {
+      await checkQuota(db, deps.config, {
+        projectId: target.projectId,
+        actor: scope.user,
+        bytes: 0,
+        artifacts: 1,
+      });
+    }
     return;
   }
   const artifact = await publishableArtifact(deps, scope, target.artifactId);
   await assertCurrent(db, artifact, target.expectedVersionId);
+  if (scope.kind === 'viewer') {
+    await checkQuota(db, deps.config, {
+      projectId: artifact.project_id,
+      actor: scope.user,
+      bytes: 0,
+      artifacts: 0,
+    });
+  }
 }
 
 /** The artifact `id`, which `scope` must see (as `getArtifact`) and may publish to. */
@@ -115,8 +135,10 @@ async function publishableArtifact(deps: AppDeps, scope: Scope, id: string): Pro
  * `versionConflict`. Numbers continue from `latest_number`, so a deleted version's number is
  * never given again. Inside the transaction the actor must still see the project or artifact
  * (else 404) and may still publish to it (else 403), whatever `checkTarget` found earlier: an
- * upload URL whose publisher left the project meanwhile writes nothing. Once committed,
- * `version.published` goes out on `ARTIFACT_TOPIC`.
+ * upload URL whose publisher left the project meanwhile writes nothing. The version, counted in
+ * full, must fit in the space it fills (`assertQuota`, else 413 `quota_exceeded`), checked last,
+ * once the artifact or project is held. Once committed, `version.published` goes out on
+ * `ARTIFACT_TOPIC`.
  */
 export async function commitVersion(
   deps: AppDeps,
@@ -128,13 +150,25 @@ export async function commitVersion(
   const scope = scopeForUser(deps, actor);
   const plan: Plan =
     target.kind === 'new_artifact' ? await planNewArtifact(deps, scope, target, input) : target;
+  const totalBytes = input.files.reduce((sum, file) => sum + file.size, 0);
 
   const result = await deps.db.db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const { artifact, tags } =
       plan.kind === 'new_artifact'
-        ? await insertArtifact(trx, dialect, scope, plan, actor, input.kind, now)
+        ? await insertArtifact(trx, dialect, scope, plan, actor, input.kind, now, {
+            config: deps.config,
+            bytes: totalBytes,
+          })
         : await lockCurrent(trx, dialect, scope, plan.artifactId, plan.expectedVersionId, now);
+    if (plan.kind === 'new_version') {
+      await assertQuota(trx, dialect, deps.config, {
+        projectId: artifact.project_id,
+        actor,
+        bytes: totalBytes,
+        artifacts: 0,
+      });
+    }
 
     const version: VersionRow = {
       id: newId('ver'),
@@ -146,7 +180,7 @@ export async function commitVersion(
       theme_color: input.meta.themeColor,
       thumbnail_path: input.meta.thumbnailPath,
       file_count: input.files.length,
-      total_bytes: input.files.reduce((sum, file) => sum + file.size, 0),
+      total_bytes: totalBytes,
       message: input.message,
       source: input.source,
       restored_from_version_id: null,
@@ -175,8 +209,9 @@ export async function commitVersion(
 
 /**
  * Makes version `n` current again by copying it into a new version (`source` `restore`), on top
- * of `expectedVersionId` as `commitVersion` requires, and with its checks of the actor, before
- * and again inside the transaction. The copy shares the old version's blobs and takes its entry,
+ * of `expectedVersionId` as `commitVersion` requires, and with its checks of the actor and of the
+ * quota, before and again inside the transaction. The copy shares the old version's blobs but
+ * counts in full toward the quota, as every version does; it takes the old version's entry,
  * title, theme color, thumbnail and warnings.
  */
 export async function restoreVersion(
@@ -192,7 +227,14 @@ export async function restoreVersion(
   // that read cannot run inside the transaction (on SQLite it holds the only connection).
   const seen = await publishableArtifact(deps, scope, artifactId);
   await assertCurrent(db, seen, expectedVersionId);
-  const text = await extractVersionText(deps, (await getVersionByNumber(db, seen, n)).id);
+  const seenOld = await getVersionByNumber(db, seen, n);
+  await checkQuota(db, deps.config, {
+    projectId: seen.project_id,
+    actor,
+    bytes: seenOld.total_bytes,
+    artifacts: 0,
+  });
+  const text = await extractVersionText(deps, seenOld.id);
 
   const result = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
@@ -206,6 +248,12 @@ export async function restoreVersion(
     );
     // Deleted since it was read: 410.
     const old = await getVersionByNumber(trx, artifact, n);
+    await assertQuota(trx, dialect, deps.config, {
+      projectId: artifact.project_id,
+      actor,
+      bytes: old.total_bytes,
+      artifacts: 0,
+    });
     const version: VersionRow = {
       id: newId('ver'),
       artifact_id: artifact.id,
@@ -349,9 +397,10 @@ async function planNewArtifact(
 
 /**
  * Inserts the artifact, without a version yet, and its tags. Its project must exist, `scope`
- * must see it (else 404, as for a missing one) and may publish to it (else 403), and it must not
- * be archived; on Postgres the project row stays share-locked until the commit, so archiving the
- * project waits for a publish that has already checked it.
+ * must see it (else 404, as for a missing one) and may publish to it (else 403), it must not
+ * be archived, and the space it fills must have room for it and for its first version of
+ * `quota.bytes` (else 413); on Postgres the project row stays share-locked until the commit, so
+ * archiving the project waits for a publish that has already checked it.
  */
 async function insertArtifact(
   trx: Transaction<Database>,
@@ -361,6 +410,7 @@ async function insertArtifact(
   actor: UserRow,
   kind: ArtifactKind,
   now: number,
+  quota: { config: Config; bytes: number },
 ): Promise<{ artifact: ArtifactRow; tags: string[] }> {
   const project = await whereVisible(
     trx.selectFrom('projects').selectAll().where('id', '=', plan.projectId),
@@ -372,6 +422,12 @@ async function insertArtifact(
   if (project === undefined) throw notFound(t('project.notFound'));
   assertCan(scope, await roleIn(trx, scope, project.id), 'publish');
   assertNotArchived(project);
+  await assertQuota(trx, dialect, quota.config, {
+    projectId: project.id,
+    actor,
+    bytes: quota.bytes,
+    artifacts: 1,
+  });
 
   const artifact: ArtifactRow = {
     id: newId('art'),

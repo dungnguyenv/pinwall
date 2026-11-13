@@ -162,6 +162,8 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
   setting('limits', 'PINWALL_MAX_VERSION_BYTES', (c) => String(c.limits.maxVersionBytes)),
   setting('limits', 'PINWALL_MAX_FILES', (c) => String(c.limits.maxFiles)),
   setting('limits', 'PINWALL_MAX_EXPANSION_RATIO', (c) => String(c.limits.maxExpansionRatio)),
+  setting('limits', 'PINWALL_QUOTA_BYTES', (c) => String(c.quota.bytes)),
+  setting('limits', 'PINWALL_QUOTA_ARTIFACTS', (c) => String(c.quota.artifacts)),
 
   setting('lifetimes', 'PINWALL_SESSION_TTL', (c) => formatDuration(c.ttl.sessionMs)),
   setting('lifetimes', 'PINWALL_PREVIEW_TTL', (c) => formatDuration(c.ttl.previewMs)),

@@ -1,0 +1,186 @@
+import type { Transaction } from 'kysely';
+import { lockUser } from '../auth/account.ts';
+import type { Db } from '../auth/passkeys.ts';
+import { effectiveRole } from '../auth/roles.ts';
+import type { Config } from '../config/types.ts';
+import type { DbDialect } from '../db/connect.ts';
+import type { Database, UserRow } from '../db/schema.ts';
+import { AppError } from '../lib/errors.ts';
+import { formatBytes } from '../lib/format.ts';
+import { t } from '../lib/i18n.ts';
+
+/** What a person's space holds: the size of its versions, each counted in full, and its artifacts. */
+export interface Usage {
+  bytes: number;
+  artifacts: number;
+}
+
+/** null = no limit. */
+export interface QuotaLimits {
+  bytes: number | null;
+  artifacts: number | null;
+}
+
+/** Whose space a publish fills, and what it adds. projectId null: the publisher's own default. */
+export interface QuotaNeed {
+  projectId: string | null;
+  actor: UserRow;
+  bytes: number;
+  artifacts: number;
+}
+
+/**
+ * What `userId`'s space holds. In personal mode, every version and artifact in the projects they
+ * own, editors' publishes included, so the usage moves with the projects; in team mode, where
+ * projects are shared, the versions and artifacts they published (`created_by`).
+ */
+export async function usageOf(db: Db, config: Config, userId: string): Promise<Usage> {
+  if (config.visibility === 'personal') {
+    const bytes = await db
+      .selectFrom('versions')
+      .innerJoin('artifacts', 'artifacts.id', 'versions.artifact_id')
+      .innerJoin('projects', 'projects.id', 'artifacts.project_id')
+      .where('projects.owner_id', '=', userId)
+      .select((eb) => eb.fn.sum<number | string | null>('versions.total_bytes').as('n'))
+      .executeTakeFirstOrThrow();
+    const artifacts = await db
+      .selectFrom('artifacts')
+      .innerJoin('projects', 'projects.id', 'artifacts.project_id')
+      .where('projects.owner_id', '=', userId)
+      .select((eb) => eb.fn.countAll<number | string>().as('n'))
+      .executeTakeFirstOrThrow();
+    return toUsage(bytes.n, artifacts.n);
+  }
+  const bytes = await db
+    .selectFrom('versions')
+    .where('created_by', '=', userId)
+    .select((eb) => eb.fn.sum<number | string | null>('total_bytes').as('n'))
+    .executeTakeFirstOrThrow();
+  const artifacts = await db
+    .selectFrom('artifacts')
+    .where('created_by', '=', userId)
+    .select((eb) => eb.fn.countAll<number | string>().as('n'))
+    .executeTakeFirstOrThrow();
+  return toUsage(bytes.n, artifacts.n);
+}
+
+/** A sum is a numeric (a string) on Postgres and null over no rows; a count is a bigint. */
+function toUsage(bytes: number | string | null, artifacts: number | string): Usage {
+  return { bytes: Number(bytes ?? 0), artifacts: Number(artifacts) };
+}
+
+/** Admins: both null. Otherwise the user's override, else the instance value; 0 means null. */
+export function limitsOf(config: Config, user: UserRow): QuotaLimits {
+  if (effectiveRole(user) === 'admin') return { bytes: null, artifacts: null };
+  return {
+    bytes: noLimitAtZero(user.quota_bytes ?? config.quota.bytes),
+    artifacts: noLimitAtZero(user.quota_artifacts ?? config.quota.artifacts),
+  };
+}
+
+const noLimitAtZero = (limit: number): number | null => (limit === 0 ? null : limit);
+
+/**
+ * Without locks: for checkTarget and restore's early check. When the space is the publisher's
+ * own, it goes by `need.actor` as the caller read it, so a publisher without limits costs no
+ * query here; the commit reads the row again.
+ */
+export async function checkQuota(db: Db, config: Config, need: QuotaNeed): Promise<void> {
+  const subject = (await projectOwnerOf(db, config, need)) ?? need.actor;
+  const limits = applicableLimits(config, subject, need);
+  if (limits === null) return;
+  assertFits(need, subject, limits, await usageOf(db, config, subject.id));
+}
+
+/**
+ * In the commit transaction, after the target is held and before the first insert. Reads the
+ * subject's row; only when a limit applies does it take lockUser(subject) and then read usage, so
+ * the default configuration takes no new lock. The lock makes the publishes into one space take
+ * turns from there to their commit, so of two that would each fit alone but not together, the
+ * second sees the first's version and is refused. It is the last lock a commit takes, after the
+ * artifact, the project and the role: a commit holding a user row never waits for one of those.
+ */
+export async function assertQuota(
+  trx: Transaction<Database>,
+  dialect: DbDialect,
+  config: Config,
+  need: QuotaNeed,
+): Promise<void> {
+  const subject = (await projectOwnerOf(trx, config, need)) ?? (await currentRow(trx, need.actor));
+  const limits = applicableLimits(config, subject, need);
+  if (limits === null) return;
+  await lockUser(trx, dialect, subject.id);
+  assertFits(need, subject, limits, await usageOf(trx, config, subject.id));
+}
+
+/**
+ * Whose space `need` fills when it is not the publisher's: in personal mode, the owner of its
+ * project, when that project has one. Null otherwise, and in team mode always: the publisher's.
+ */
+async function projectOwnerOf(db: Db, config: Config, need: QuotaNeed): Promise<UserRow | null> {
+  if (config.visibility !== 'personal' || need.projectId === null) return null;
+  const owner = await db
+    .selectFrom('projects')
+    .innerJoin('users', 'users.id', 'projects.owner_id')
+    .selectAll('users')
+    .where('projects.id', '=', need.projectId)
+    .executeTakeFirst();
+  return owner ?? null;
+}
+
+/** `user`'s row as it is now, for the overrides an admin may have just changed. */
+async function currentRow(db: Db, user: UserRow): Promise<UserRow> {
+  const row = await db.selectFrom('users').selectAll().where('id', '=', user.id).executeTakeFirst();
+  return row ?? user;
+}
+
+/**
+ * The subject's limits that `need` can go over, or null when none can: the bytes limit always
+ * (a version of no bytes still may not go into a space that is already over), the artifacts
+ * limit only for a new artifact.
+ */
+function applicableLimits(config: Config, subject: UserRow, need: QuotaNeed): QuotaLimits | null {
+  const limits = limitsOf(config, subject);
+  const applicable = {
+    bytes: limits.bytes,
+    artifacts: need.artifacts > 0 ? limits.artifacts : null,
+  };
+  return applicable.bytes === null && applicable.artifacts === null ? null : applicable;
+}
+
+/** 413 `quota_exceeded` when `need` does not fit: artifacts first, then bytes, each `used + need ≤ limit`. */
+function assertFits(need: QuotaNeed, subject: UserRow, limits: QuotaLimits, used: Usage): void {
+  const whose = subject.id === need.actor.id ? 'own' : 'other';
+  const owner = subject.name ?? subject.email ?? subject.id;
+  const spaceOwner = { id: subject.id, name: subject.name };
+  if (limits.artifacts !== null && used.artifacts + need.artifacts > limits.artifacts) {
+    throw new AppError(
+      'quota_exceeded',
+      413,
+      t(`quota.artifacts.${whose}`, { used: used.artifacts, limit: limits.artifacts, owner }),
+      {
+        used_artifacts: used.artifacts,
+        limit_artifacts: limits.artifacts,
+        space_owner: spaceOwner,
+      },
+    );
+  }
+  if (limits.bytes !== null && used.bytes + need.bytes > limits.bytes) {
+    throw new AppError(
+      'quota_exceeded',
+      413,
+      t(`quota.bytes.${whose}`, {
+        needed: formatBytes(need.bytes),
+        used: formatBytes(used.bytes),
+        limit: formatBytes(limits.bytes),
+        owner,
+      }),
+      {
+        used_bytes: used.bytes,
+        limit_bytes: limits.bytes,
+        needed_bytes: need.bytes,
+        space_owner: spaceOwner,
+      },
+    );
+  }
+}

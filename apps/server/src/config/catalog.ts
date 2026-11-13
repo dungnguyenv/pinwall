@@ -430,6 +430,22 @@ export const CONFIG_VARS: readonly ConfigVar[] = [
     description:
       'How many times larger than its compressed upload a version may unpack to. It stops archive bombs.',
   },
+  {
+    name: 'PINWALL_QUOTA_BYTES',
+    section: 'limits',
+    secret: false,
+    default: '0',
+    description:
+      "The most a person may store, as the total size of their versions, each counted in full. 0 means no limit. In personal mode it counts the projects a person owns, editors' publishes included; in team mode what they published. Admins have no limit, and an admin can set another value for one person.",
+  },
+  {
+    name: 'PINWALL_QUOTA_ARTIFACTS',
+    section: 'limits',
+    secret: false,
+    default: '0',
+    description:
+      'The most artifacts a person may have, counted like PINWALL_QUOTA_BYTES. 0 means no limit.',
+  },
 
   // Lifetimes
   {

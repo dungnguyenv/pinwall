@@ -36,6 +36,7 @@ const ERROR_CODES = Object.keys({
   setup_done: true,
   invalid_credentials: true,
   access_denied: true,
+  quota_exceeded: true,
   internal: true,
 } satisfies Record<ErrorCode, true>);
 

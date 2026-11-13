@@ -123,6 +123,7 @@ const restoreRoute = createRoute({
     ...authErrors,
     ...missing,
     409: error('The artifact has a newer version than `expected_version_id` (`version_conflict`)'),
+    413: error('The copy, counted in full, does not fit in the space it fills (`quota_exceeded`)'),
   },
 });
 

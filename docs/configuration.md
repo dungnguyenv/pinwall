@@ -111,6 +111,8 @@ The `*_BYTES` limits accept the size syntax above. A publish that goes over any 
 | `PINWALL_MAX_VERSION_BYTES` | `500000000` | The largest total size of an artifact version once it is unpacked. |
 | `PINWALL_MAX_FILES` | `10000` | The most files one artifact version can hold. |
 | `PINWALL_MAX_EXPANSION_RATIO` | `100` | How many times larger than its compressed upload a version may unpack to. It stops archive bombs. |
+| `PINWALL_QUOTA_BYTES` | `0` | The most a person may store, as the total size of their versions, each counted in full. 0 means no limit. In personal mode it counts the projects a person owns, editors' publishes included; in team mode what they published. Admins have no limit, and an admin can set another value for one person. |
+| `PINWALL_QUOTA_ARTIFACTS` | `0` | The most artifacts a person may have, counted like PINWALL_QUOTA_BYTES. 0 means no limit. |
 
 ## Lifetimes
 

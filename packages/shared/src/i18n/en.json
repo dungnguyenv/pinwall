@@ -426,6 +426,8 @@
   "web.config.help.PINWALL_MAX_VERSION_BYTES": "The largest total size of an artifact version once it is unpacked.",
   "web.config.help.PINWALL_MAX_FILES": "The most files one artifact version can hold.",
   "web.config.help.PINWALL_MAX_EXPANSION_RATIO": "How many times larger than its zip file an upload may unpack to, which stops zip bombs.",
+  "web.config.help.PINWALL_QUOTA_BYTES": "The most each person may store, as the total size of their versions; 0 means no limit, admins have none, and you can set another value for one person.",
+  "web.config.help.PINWALL_QUOTA_ARTIFACTS": "The most artifacts each person may have; 0 means no limit, admins have none, and you can set another value for one person.",
   "web.config.help.PINWALL_SESSION_TTL": "How long a browser stays signed in without being used; each visit extends it.",
   "web.config.help.PINWALL_PREVIEW_TTL": "How long the access Pinwall grants for viewing an artifact lasts, in the review viewer and in raw links.",
   "web.config.help.PINWALL_UPLOAD_SESSION_TTL": "How long a started upload may take to finish before Pinwall discards it.",
@@ -947,6 +949,11 @@
   "spaces.move.otherSpace": "An artifact can only move between projects that have the same owner.",
   "spaces.exposure.shareLink": "You cannot create share links yet: an admin of this Pinwall has to allow it for your account first. Links you already made still list and can be revoked.",
   "spaces.exposure.rawLink": "Raw links are not available to your account yet: an admin of this Pinwall has to allow you to share pages outside Pinwall first. You can still review the artifact in Pinwall.",
+  "quota.bytes.own": "This version needs {{needed}}, but your space already holds {{used}} of its {{limit}}. Delete versions you no longer need, or ask an admin for more room.",
+  "quota.bytes.other": "This version needs {{needed}}, but the space of {{owner}}, who owns this project, already holds {{used}} of its {{limit}}. Ask them to delete versions they no longer need, or to ask an admin for more room.",
+  "quota.artifacts.own": "Your space already holds {{used}} of its {{limit}} artifacts. Delete artifacts you no longer need, or ask an admin for more room.",
+  "quota.artifacts.other": "The space of {{owner}}, who owns this project, already holds {{used}} of its {{limit}} artifacts. Ask them to delete artifacts they no longer need, or to ask an admin for more room.",
   "content.framedOnly.title": "Open this page in Pinwall",
-  "content.framedOnly.message": "This page can only be viewed inside Pinwall's viewer."
+  "content.framedOnly.message": "This page can only be viewed inside Pinwall's viewer.",
+  "mcp.hint.quota_exceeded": "Do not retry this publish. Tell the person their space is full: they can delete old versions in Pinwall, or ask an admin for more room."
 }

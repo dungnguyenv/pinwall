@@ -483,6 +483,10 @@ export function loadConfig(
     maxFiles: r.read('PINWALL_MAX_FILES', wholeNumber(1)) ?? 10_000,
     maxExpansionRatio: r.read('PINWALL_MAX_EXPANSION_RATIO', wholeNumber(1)) ?? 100,
   };
+  const quota = {
+    bytes: r.read('PINWALL_QUOTA_BYTES', custom(parseSize).pipe(z.number().min(0))) ?? 0,
+    artifacts: r.read('PINWALL_QUOTA_ARTIFACTS', wholeNumber(0)) ?? 0,
+  };
   const ttl = {
     sessionMs: r.read('PINWALL_SESSION_TTL', positiveDuration) ?? 30 * DAY_MS,
     previewMs: r.read('PINWALL_PREVIEW_TTL', positiveDuration) ?? 12 * 3_600_000,
@@ -516,6 +520,7 @@ export function loadConfig(
     visibility,
     shareLinks,
     limits,
+    quota,
     ttl,
     metrics: { port: metricsPort },
     logLevel,

@@ -21,8 +21,13 @@ const passkeyDuplicate = () => conflict(t('auth.passkeyDuplicate'));
 
 /**
  * Takes a row lock on the user for the rest of the transaction, so two requests that each count
- * the user's credentials before removing one take turns instead of both passing the count. A
- * SQLite database has a single writer, so transactions already take turns there.
+ * the user's credentials (or a space's usage) before writing take turns instead of both passing
+ * the count. A SQLite database has a single writer, so transactions already take turns there.
+ *
+ * On Postgres it is `FOR NO KEY UPDATE`: it waits for another holder and for a write to the row,
+ * but not for the key-share lock a foreign-key check takes on it. A row that names the user
+ * (`created_by`) can then be written meanwhile, so two publishes that each hold one person's row
+ * while writing rows that name the other cannot wait on each other.
  */
 export async function lockUser(
   trx: Transaction<Database>,
@@ -30,7 +35,7 @@ export async function lockUser(
   userId: string,
 ): Promise<void> {
   if (dialect !== 'postgres') return;
-  await trx.selectFrom('users').select('id').where('id', '=', userId).forUpdate().execute();
+  await trx.selectFrom('users').select('id').where('id', '=', userId).forNoKeyUpdate().execute();
 }
 
 /** Changes what the user has set about themselves; a field left `undefined` stays as it is. */

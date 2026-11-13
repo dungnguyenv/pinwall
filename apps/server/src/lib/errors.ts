@@ -17,6 +17,7 @@ export type ErrorCode =
   | 'setup_done'
   | 'invalid_credentials'
   | 'access_denied'
+  | 'quota_exceeded'
   | 'internal';
 
 export class AppError extends Error {

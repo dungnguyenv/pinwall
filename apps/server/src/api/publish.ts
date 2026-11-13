@@ -126,6 +126,7 @@ const createSessionRoute = createRoute({
     400: error('Invalid fields or tags'),
     ...authErrors,
     ...targetErrors,
+    413: error('The space the publish fills is already full (`quota_exceeded`)'),
     429: error('Too many upload URLs (`rate_limited`)'),
   },
 });
@@ -147,7 +148,9 @@ const inlineRoute = createRoute({
     400: error('Invalid fields, a refused path, a binary file, or no entry page'),
     ...authErrors,
     ...targetErrors,
-    413: error('Over the inline limit or another publishing limit (`payload_too_large`)'),
+    413: error(
+      'Over the inline limit or another publishing limit (`payload_too_large`), or the version does not fit in the space it fills (`quota_exceeded`)',
+    ),
   },
 });
 
@@ -187,7 +190,9 @@ const uploadRoute = createRoute({
     ),
     ...authErrors,
     ...targetErrors,
-    413: error('Over a publishing limit (`payload_too_large`)'),
+    413: error(
+      'Over a publishing limit (`payload_too_large`), or the version does not fit in the space it fills (`quota_exceeded`)',
+    ),
     415: error('A single archive part that is not a tar, tar.gz or zip'),
   },
 });
