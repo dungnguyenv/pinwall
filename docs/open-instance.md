@@ -130,6 +130,13 @@ domain with a good name. With `PINWALL_SHARE_LINKS=approved`, a person who is no
 An admin approves a person with the **may expose content** switch in **Admin, Users**. Admins never
 need it.
 
+**With `approved`, the nested frames of an unapproved person's pages do not load in the viewer.**
+A page that embeds other pages of its own version in frames loads, and each frame shows the
+browser's error page. The viewer's sandbox gives the page an origin that never matches the policy
+those pages are served with, so the browser refuses to frame them. It happens in single-domain and
+in content-domain mode alike, and approval lifts it. See
+[Writing pages](authoring.md#links-frames-and-anchors).
+
 **Approve people before switching.** The check runs every time a link is opened, not only when it is
 made, so switching an existing instance to `approved` stops the links of everyone who is not
 approved yet. A stopped link is suspended, not revoked: it opens again as soon as its maker is
@@ -168,6 +175,12 @@ days, so a report that arrives late can still be traced to the owner. For someon
 limit of 600 grants an hour, that is up to about 430,000 rows, around 65 MB. After 30 days the
 look-up answers 404. Content that was revoked or deleted answers 410 and cannot be attributed.
 
+**Where the abuse contact does not show.** A share link without comments sends the visitor straight
+to the raw page, which is the artifact's files as they are, so it carries no abuse contact. With
+`PINWALL_SHARE_LINKS=approved` only approved people can make such links. The contact shows on the
+viewer of a link that allows comments, on the password page of a locked link, and on the pages of
+links that are gone or not found.
+
 Admins never open private content. The **Share links** page, which lists every link that is not
 revoked or expired, has no "open", because Pinwall stores only a hash of each token and cannot
 rebuild the address. The operator, who can read the database, can open anything.
@@ -190,7 +203,8 @@ the message `moderation`:
   `lookup`, `artifact.delete`, `version.delete` and `version.end_grants`. A `lookup` line names the
   kind of address and the artifact, not the address.
 - A person who deletes their own content under **Settings, Usage** (**Delete all my content**)
-  leaves a `self.purge` line with `user_id`.
+  leaves a `self.purge` line with `user_id`. Pinwall writes it before the deletion runs, so it has
+  no `outcome`: a deletion that failed leaves the same line as one that worked.
 - `pinwall transfer` writes a `transfer` line. The command logs to its own output, in the terminal
   of whoever runs it, and not to the server's log, so keep what it prints.
 - Pinwall 1.0 already logs `role override changed` when an admin sets or clears a role or blocks
@@ -252,6 +266,10 @@ app, and its people, at risk:
 A content domain holds nothing but artifacts, on a domain of its own. If it is blocklisted, the app
 stays up and its reputation stays clean. See [Content isolation](install.md#content-isolation) for
 how to set one up.
+
+A content domain does not change who may open what. In particular it does not lift the limit that
+[a person who is not approved](#who-may-share-outside-pinwall) has: the nested frames of their pages
+do not load in the viewer in either mode.
 
 Prefer PostgreSQL for an open instance. With SQLite, search results are ranked using statistics of
 the whole index, so other people's text can change the order of what a person finds, though never

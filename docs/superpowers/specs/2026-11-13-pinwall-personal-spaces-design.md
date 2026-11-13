@@ -228,8 +228,13 @@ A new setting, `PINWALL_SHARE_LINKS`, controls who may **expose content outside 
   - a top-level load (`Sec-Fetch-Dest: document`, or a request without fetch metadata) is refused;
   - every response carries `Content-Security-Policy: frame-ancestors 'self' <app origin>`.
 
-  `'self'` keeps the artifact's own nested frames working. The person still reviews their pages in
-  the viewer, full screen included.
+  The person still reviews their pages in the viewer, full screen included. `'self'` does **not**
+  keep the artifact's own nested frames working, as this section first assumed. The review frame is
+  sandboxed and has an opaque origin, which never matches `'self'`, so a real browser (Chromium)
+  refuses the nested frames of such a page with `ERR_BLOCKED_BY_RESPONSE`. It happens in both
+  isolation modes. Approved people and admins are not affected. This is a known limitation for
+  people who are not approved: `frame-ancestors` stays, because it is what keeps these pages from
+  being embedded elsewhere, and the docs and the 1.1.0 changelog say so.
 
 **Approval:**
 - **Who approves:** an admin turns on "May expose content" for a person in **Admin → Users**.
