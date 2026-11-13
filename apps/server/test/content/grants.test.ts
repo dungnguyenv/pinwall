@@ -1,3 +1,4 @@
+import { InsertQueryNode, PrimitiveValueListNode, ValueNode, ValuesNode } from 'kysely';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { idpAccessCurrent, idpAccessDeadline } from '../../src/auth/oidc/gate.ts';
 import { revokeAllCredentials } from '../../src/auth/revoke.ts';
@@ -9,10 +10,14 @@ import {
   resolveGrant,
 } from '../../src/content/grants.ts';
 import type { UserRow, VersionRow } from '../../src/db/schema.ts';
+import type { AppDeps } from '../../src/deps.ts';
+import { deleteArtifact, deleteVersion } from '../../src/domain/deletion.ts';
+import { createShareLink, revokeShareLink } from '../../src/domain/shares.ts';
 import { addTombstones } from '../../src/domain/tombstones.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { AppError } from '../../src/lib/errors.ts';
 import { t } from '../../src/lib/i18n.ts';
+import { newContentToken } from '../../src/lib/ids.ts';
 import { createSignedInUser } from '../helpers/auth.ts';
 import { CONTENT_ENV } from '../helpers/content.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
@@ -220,6 +225,96 @@ describe.each(dialects)('content grants on %s', (dialect) => {
     clock.set(live.expires_at);
     expect((await failure(resolveGrant(ctx.deps, live.token))).status).toBe(404);
     expect((await revokeAllCredentials(ctx.deps, member.id)).contentGrants).toBe(0);
+  });
+
+  /**
+   * `ctx.deps`, watched: `ended` gets, for each statement that tombstones content grants, their
+   * tokens in the order the statement lists them.
+   */
+  function watchingGrantTombstones(): { deps: AppDeps; ended: string[][] } {
+    const ended: string[][] = [];
+    const db = ctx.deps.db.db.withPlugin({
+      transformQuery: ({ node }) => {
+        if (
+          InsertQueryNode.is(node) &&
+          node.into?.table.identifier.name === 'tombstones' &&
+          node.values !== undefined &&
+          ValuesNode.is(node.values)
+        ) {
+          const columns = (node.columns ?? []).map((column) => column.column.name);
+          const rows = node.values.values.map((row) => {
+            const values = PrimitiveValueListNode.is(row)
+              ? row.values
+              : row.values.map((value) => (ValueNode.is(value) ? value.value : value));
+            return Object.fromEntries(columns.map((column, i) => [column, values[i]]));
+          });
+          const tokens = rows
+            .filter((row) => row.kind === 'content_grant')
+            .map((row) => String(row.key));
+          if (tokens.length > 0) ended.push(tokens);
+        }
+        return node;
+      },
+      transformResult: async ({ result }) => result,
+    });
+    return { deps: { ...ctx.deps, db: { ...ctx.deps.db, db } }, ended };
+  }
+
+  /** Five live grants on `versionId`, made in falling token order, which a scan follows. */
+  async function grantsInFallingOrder(
+    versionId: string,
+    o: { shareLinkId?: string; userId?: string } = {},
+  ): Promise<string[]> {
+    const tokens = Array.from({ length: 5 }, () => newContentToken())
+      .sort()
+      .reverse();
+    for (const token of tokens) {
+      await ctx.deps.db.db
+        .insertInto('content_grants')
+        .values({
+          token,
+          version_id: versionId,
+          mode: 'review',
+          share_link_id: o.shareLinkId ?? null,
+          user_id: o.userId ?? null,
+          created_at: clock.now(),
+          expires_at: clock.now() + H,
+        })
+        .execute();
+    }
+    return tokens;
+  }
+
+  // Two transactions that end some of the same grants then insert their tombstones in one order,
+  // so neither can hold one tombstone while waiting for another that the other holds.
+  test('every way of ending grants tombstones them in token order', async () => {
+    const { user: member } = await createSignedInUser(ctx, { kind: 'oidc' });
+    const artifactId = version.artifact_id;
+    const { version: v2 } = await publishFiles(
+      ctx,
+      owner,
+      { 'index.html': '<p>2</p>' },
+      { kind: 'new_version', artifactId, expectedVersionId: version.id },
+    );
+    const { row: link } = await createShareLink(ctx.deps, owner, artifactId, {
+      versionId: null,
+      password: null,
+      expiresAt: null,
+      allowComments: true,
+    });
+    const fromLink = await grantsInFallingOrder(v2.id, { shareLinkId: link.id });
+    const forMember = await grantsInFallingOrder(v2.id, { userId: member.id });
+    const onV1 = await grantsInFallingOrder(version.id);
+    const onV2 = await grantsInFallingOrder(v2.id);
+    const { deps, ended } = watchingGrantTombstones();
+    const auth = { user: owner, via: 'session' } as const;
+
+    await revokeShareLink(deps, owner, link.id);
+    await revokeAllCredentials(deps, member.id);
+    await deleteVersion(deps, auth, artifactId, 1);
+    await deleteArtifact(deps, auth, artifactId);
+    const inTokenOrder = (tokens: string[]) => [...tokens].sort();
+    expect(ended).toEqual([fromLink, forMember, onV1, onV2].map(inTokenOrder));
   });
 
   test('purge removes only expired grants', async () => {

@@ -418,7 +418,8 @@ async function getShareLink(db: Db, scope: Scope, id: string): Promise<ShareLink
 
 /**
  * Deletes the content grants made from the links `linkIds` (of one artifact), tombstoning those
- * still live until they would have expired, so they answer 410 rather than 404.
+ * still live until they would have expired, so they answer 410 rather than 404. The tombstones
+ * go in token order, as every grant ending inserts them.
  */
 async function endGrantsOf(trx: Transaction<Database>, linkIds: readonly string[], now: number) {
   const live = await trx
@@ -426,6 +427,7 @@ async function endGrantsOf(trx: Transaction<Database>, linkIds: readonly string[
     .select(['token', 'expires_at'])
     .where('share_link_id', 'in', linkIds)
     .where('expires_at', '>', now)
+    .orderBy('token')
     .execute();
   await addTombstones(
     trx,

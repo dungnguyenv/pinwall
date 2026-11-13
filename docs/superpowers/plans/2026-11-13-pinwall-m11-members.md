@@ -94,7 +94,7 @@ SQLite transactions already run one at a time (`BEGIN IMMEDIATE`). Team mode has
   - Whoever holds such a row holds its project too, so a membership change, which holds the project `FOR UPDATE`, never waits for one.
   - Whoever waits for a membership change waits at the project, before touching any of its rows.
   - Two transactions that hold artifacts never wait for each other at the project: both ask for it `FOR SHARE`, and on Postgres a `FOR SHARE` request joins the holders even while a membership change's `FOR UPDATE` waits.
-  - The exception is the grants that `revokeUserGrants` ends without holding their project (the person has no link there). A removal ends them in token order too, so the two take turns at the first grant they share.
+  - The exception is the grants that `revokeUserGrants` ends without holding their project (the person has no link there). Every grant ending inserts its tombstones in token order: `endGrants` (removals, Revoke now), `endGrantsOf` (link revokes) and the deletions' `grantTombstones`. Two that share a grant therefore take turns at the first one they share.
   - Every pair being acyclic is not enough. An earlier `revokeShareLinksOf` went artifact → links. With a write (artifact → project) and a removal (project → links), those three formed a cycle: Revoke now held artifact b and E's link on b and waited for artifact a, the write held a and waited for the project, and the removal held the project and waited for the link on b. `members-race.test.ts` keeps that case.
 
 ## Interface handed to M12–M13

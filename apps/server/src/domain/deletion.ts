@@ -271,7 +271,9 @@ async function blobsOf(trx: Transaction<Database>, target: DeletionTarget): Prom
 
 /**
  * Tombstones for the grants of the versions in `target` that have not expired, each kept until
- * its grant would have expired. An expired grant needs none: it no longer serves anything.
+ * its grant would have expired. An expired grant needs none: it no longer serves anything. They
+ * go in token order, as every grant ending inserts them, so a revocation ending some of the same
+ * grants takes turns with this deletion instead of deadlocking.
  */
 async function grantTombstones(
   trx: Transaction<Database>,
@@ -283,6 +285,7 @@ async function grantTombstones(
     .select(['token', 'expires_at'])
     .where('version_id', 'in', versionIdsIn(trx, target))
     .where('expires_at', '>', now)
+    .orderBy('token')
     .execute();
   return grants.map((grant) => ({
     kind: 'content_grant',
