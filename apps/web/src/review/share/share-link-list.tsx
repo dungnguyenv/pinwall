@@ -3,14 +3,10 @@ import { Lock, MessageSquare } from 'lucide-react';
 import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { type ApiError, errorMessage } from '../../api/client.ts';
-import type {
-  ArtifactSummary,
-  Me,
-  ShareLink,
-  ShareLinkList as ShareLinkPage,
-} from '../../api/dto.ts';
+import type { ArtifactSummary, ShareLink, ShareLinkList as ShareLinkPage } from '../../api/dto.ts';
 import { qk } from '../../api/keys.ts';
 import { listShareLinks, revokeShareLink } from '../../api/shares.ts';
+import { useArtifactRights } from '../../api/spaces.ts';
 import { formatRelativeTime } from '../../lib/format.ts';
 import {
   Badge,
@@ -21,7 +17,7 @@ import {
   Skeleton,
   toast,
 } from '../../ui/index.ts';
-import { canRevoke, shareStatus } from './share-status.ts';
+import { shareStatus } from './share-status.ts';
 
 /** What a link shows: the latest version, or the one it is fixed to. */
 function useScopeLabel() {
@@ -110,18 +106,14 @@ function LinkRow({
 
 /**
  * The share links of `artifact` that work or lately did, newest first, with
- * Revoke on the ones `me` may revoke, after a question. Read afresh each time
- * it appears, since links also come from elsewhere (an agent, another tab).
+ * Revoke on the ones the signed-in person's rights let them revoke, after a
+ * question. Read afresh each time it appears, since links also come from
+ * elsewhere (an agent, another tab).
  */
-export function ShareLinkList({
-  artifact,
-  me,
-}: {
-  artifact: ArtifactSummary;
-  me: Me | null | undefined;
-}) {
+export function ShareLinkList({ artifact }: { artifact: ArtifactSummary }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const rights = useArtifactRights(artifact);
   const headingId = useId();
   const links = useInfiniteQuery<
     ShareLinkPage,
@@ -171,7 +163,7 @@ export function ShareLinkList({
                 key={link.id}
                 link={link}
                 now={now}
-                revocable={me != null && canRevoke(me, artifact, link)}
+                revocable={rights.revokeLink(link)}
                 onRevoke={() => setRevoking({ link, open: true })}
               />
             ))}

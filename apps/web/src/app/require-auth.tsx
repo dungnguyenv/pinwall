@@ -3,7 +3,7 @@ import type { ReactElement, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Navigate, useLocation } from 'react-router';
 import { errorMessage } from '../api/client.ts';
-import { useMe } from '../api/session.ts';
+import { useMe, usePublicConfig } from '../api/session.ts';
 import { signInPath } from '../lib/return-to.ts';
 import { EmptyState, ErrorState, LoadingRegion, Skeleton } from '../ui/index.ts';
 
@@ -36,8 +36,10 @@ function SessionSkeleton() {
  * Renders `children` for a signed-in person. Without a session it sends them
  * to sign in with this page as `return_to`; that includes a session that ends
  * mid-use, because any 401 `unauthorized` sets the cached `me` to null.
- * `skeleton` stands in while the session is checked. The default is the
- * shell's outline; a page shown without the shell passes its own.
+ * `skeleton` stands in while the session is checked, and until the public
+ * configuration has answered or failed: the pages need its mode to know which
+ * controls to show, and one that cannot be read counts as `team`. The default
+ * is the shell's outline; a page shown without the shell passes its own.
  */
 export function RequireAuth({
   children,
@@ -49,8 +51,9 @@ export function RequireAuth({
   const { t } = useTranslation();
   const location = useLocation();
   const me = useMe();
+  const config = usePublicConfig();
 
-  if (me.data) return <>{children}</>;
+  if (me.data && !config.isPending) return <>{children}</>;
   if (me.data === null) {
     const here = location.pathname + location.search + location.hash;
     return <Navigate to={signInPath(here)} replace />;

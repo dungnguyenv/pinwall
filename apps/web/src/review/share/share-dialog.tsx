@@ -2,7 +2,6 @@ import { TriangleAlert } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ArtifactSummary, CreatedShareLink, VersionSummary } from '../../api/dto.ts';
-import { useMe } from '../../api/session.ts';
 import { Button, CopyField, Dialog } from '../../ui/index.ts';
 import { ShareForm } from './share-form.tsx';
 import { LinkStatusText, LinkTitle, ShareLinkList } from './share-link-list.tsx';
@@ -30,7 +29,6 @@ export function ShareDialog({
   shown: VersionSummary | null;
 }) {
   const { t } = useTranslation();
-  const me = useMe().data;
   const formId = useId();
   const urlBox = useRef<HTMLDivElement>(null);
   const [pending, setPending] = useState(false);
@@ -107,7 +105,7 @@ export function ShareDialog({
             onPending={setPending}
             onCreated={setCreated}
           />
-          <ShareLinkList artifact={artifact} me={me} />
+          <ShareLinkList artifact={artifact} />
         </div>
       )}
     </Dialog>

@@ -165,6 +165,7 @@ export function TopBar(p: TopBarProps) {
       <ReviewMenu
         artifact={p.artifact}
         shown={p.shown}
+        shownVersion={p.shownVersion}
         follow={p.follow}
         versionCount={versionCount}
         onFullScreen={p.onFullScreen}
