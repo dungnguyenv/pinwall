@@ -8,8 +8,10 @@ import { startAuth } from './auth/startup.ts';
 import { type Config, ConfigError, loadConfig } from './config/load.ts';
 import { connectDb } from './db/connect.ts';
 import { migrateToLatest } from './db/migrate.ts';
+import type { UserRow } from './db/schema.ts';
 import { closeDeps, createDeps } from './deps.ts';
 import { confirmTeamVisibility, startSpaces } from './domain/spaces-startup.ts';
+import { findUserByRef, transferContent } from './domain/transfer.ts';
 import { systemClock } from './lib/clock.ts';
 import { t } from './lib/i18n.ts';
 import { createLogger, type Logger } from './lib/logger.ts';
@@ -28,6 +30,7 @@ Commands:
   backup --out <file|->   Write a backup archive to a file, or to stdout with -
   restore --in <file|->   Restore an archive into an empty installation (- reads stdin)
   visibility team --confirm  Allow team mode after personal mode: every member sees every project
+  transfer --from <user> --to <user>  Move every project of one user to another (id or email)
   version                 Print the Pinwall version
 
 Configuration comes from PINWALL_* environment variables.`;
@@ -43,7 +46,8 @@ type Command =
   | { name: 'serve' | 'migrate' | 'help' | 'version' }
   | { name: 'backup'; out: string }
   | { name: 'restore'; input: string }
-  | { name: 'visibility' };
+  | { name: 'visibility' }
+  | { name: 'transfer'; from: string; to: string };
 
 /** What the fatal log line says when a command other than `serve` fails. */
 const FAILURES: Partial<Record<Command['name'], string>> = {
@@ -63,6 +67,8 @@ function parseCommand(argv: string[]): Command | { error: string } {
         out: { type: 'string' },
         in: { type: 'string' },
         confirm: { type: 'boolean' },
+        from: { type: 'string' },
+        to: { type: 'string' },
       },
     });
     if (values.help) return { name: 'help' };
@@ -82,6 +88,11 @@ function parseCommand(argv: string[]): Command | { error: string } {
     if (values.confirm && name !== 'visibility') {
       return { error: '--confirm belongs to the visibility command' };
     }
+    for (const option of ['from', 'to'] as const) {
+      if (values[option] !== undefined && name !== 'transfer') {
+        return { error: `--${option} belongs to the transfer command` };
+      }
+    }
     if (name === 'visibility') {
       if (rest[0] !== 'team')
         return { error: 'visibility needs "team": run pinwall visibility team --confirm' };
@@ -95,6 +106,13 @@ function parseCommand(argv: string[]): Command | { error: string } {
         return { error: `${name} needs ${option} <file|->` };
       }
       return name === 'backup' ? { name, out: path } : { name, input: path };
+    }
+    if (name === 'transfer') {
+      const { from, to } = values;
+      if (from === undefined || from === '' || to === undefined || to === '') {
+        return { error: 'transfer needs --from <id|email> and --to <id|email>' };
+      }
+      return { name, from, to };
     }
     if (name === 'serve' || name === 'migrate' || name === 'help' || name === 'version') {
       return { name };
@@ -128,6 +146,41 @@ async function confirmTeam(config: Config, logger: Logger): Promise<void> {
     console.log(t('spaces.guard.confirmed', { owners }));
   } finally {
     await db.close();
+  }
+}
+
+/** How the transfer's report names a user: their email or name, with the id that is certain. */
+function describeUser(user: UserRow): string {
+  const known = user.email ?? user.name;
+  return known === null ? user.id : `${known} (${user.id})`;
+}
+
+/** `transfer --from --to`: moves every project of one user to the other, and says what moved. */
+async function transfer(
+  config: Config,
+  logger: Logger,
+  refs: { from: string; to: string },
+): Promise<void> {
+  const deps = await createDeps(config, { logger });
+  try {
+    const from = await findUserByRef(deps.db.db, refs.from);
+    const to = await findUserByRef(deps.db.db, refs.to);
+    const moved = await transferContent(deps, from, to);
+    console.log(
+      t('transfer.done', {
+        projects: moved.projects,
+        artifacts: moved.artifacts,
+        from: describeUser(from),
+        to: describeUser(to),
+        links: moved.shareLinks,
+        memberships: moved.membershipsDropped,
+      }),
+    );
+    if (moved.renamedDefault !== null) {
+      console.log(t('transfer.renamed', { from: describeUser(from), name: moved.renamedDefault }));
+    }
+  } finally {
+    await closeDeps(deps);
   }
 }
 
@@ -242,12 +295,12 @@ function messageOf(error: unknown): string {
 }
 
 /**
- * Runs `backup` or `restore`. A failure is one plain line on stderr and exit code 1 (a
- * configuration problem is exit code 2, as everywhere); success leaves the process to end on
+ * Runs `backup`, `restore` or `transfer`. A failure is one plain line on stderr and exit code 1
+ * (a configuration problem is exit code 2, as everywhere); success leaves the process to end on
  * its own once the database is closed.
  */
 async function runOperation(
-  name: 'backup' | 'restore',
+  name: 'backup' | 'restore' | 'transfer',
   logger: Logger,
   run: () => Promise<void>,
 ): Promise<void> {
@@ -307,6 +360,11 @@ async function main(argv: string[]): Promise<void> {
   if (command.name === 'restore') {
     const { input } = command;
     await runOperation('restore', logger, () => runRestoreCommand(config, logger, input));
+    return;
+  }
+  if (command.name === 'transfer') {
+    const { from, to } = command;
+    await runOperation('transfer', logger, () => transfer(config, logger, { from, to }));
     return;
   }
 

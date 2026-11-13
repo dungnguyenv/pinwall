@@ -201,6 +201,21 @@ export async function revokeProjectGrants(
   projectId: string,
   now: number,
 ): Promise<number> {
+  return revokeGrantsInProjects(db, userId, [projectId], now);
+}
+
+/**
+ * `revokeProjectGrants` for several projects at once (a transfer's), in one pass: the tombstones
+ * of all of them go in one token order, as every other grant ending inserts its own, so this and
+ * a "Revoke now" of the same person take turns at the first grant they share.
+ */
+export async function revokeGrantsInProjects(
+  db: Db,
+  userId: string,
+  projectIds: readonly string[],
+  now: number,
+): Promise<number> {
+  if (projectIds.length === 0) return 0;
   return endGrants(
     db,
     (eb) =>
@@ -213,7 +228,7 @@ export async function revokeProjectGrants(
             .selectFrom('versions')
             .innerJoin('artifacts', 'artifacts.id', 'versions.artifact_id')
             .select('versions.id')
-            .where('artifacts.project_id', '=', projectId),
+            .where('artifacts.project_id', 'in', [...projectIds]),
         ),
       ]),
     now,
