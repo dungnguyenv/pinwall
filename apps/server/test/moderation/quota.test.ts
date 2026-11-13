@@ -5,12 +5,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
 import { loadConfig } from '../../src/config/load.ts';
 import { createProject } from '../../src/domain/projects.ts';
 import { limitsOf, usageOf } from '../../src/domain/usage.ts';
+import type { PublishTarget } from '../../src/domain/versions.ts';
 import { formatBytes } from '../../src/lib/format.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { referencedShas } from '../helpers/backup.ts';
 import type { TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 import { connectMcp, toolText } from '../helpers/mcp.ts';
+import { publishFiles } from '../helpers/publish.ts';
 import type { Reply } from '../helpers/rest.ts';
 import {
   addMember,
@@ -428,6 +430,85 @@ describe.each(dialects)('quotas on %s', (dialect) => {
       expect(await artifactsInP()).toBe(inPBefore + 1);
       expect(await usage(A)).toMatchObject({ bytes: used + 600 });
       expect(await storedBlobs()).toEqual(await referencedShas(ctx.deps));
+    });
+
+    test.runIf(dialect === 'postgres')(
+      'a quota an admin lowers while a publish waits for the space is the one it is held to',
+      async () => {
+        const { A } = fx.people;
+        const used = (await usage(A)).bytes;
+        await setQuota(ctx, A.user.id, { bytes: used + 10_000 });
+        const before = await written();
+        // The admin's change holds A's row until the publish waits for it at its quota lock.
+        let release = () => {};
+        const released = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let held = () => {};
+        const holding = new Promise<void>((resolve) => {
+          held = resolve;
+        });
+        const lowering = db()
+          .transaction()
+          .execute(async (trx) => {
+            await trx
+              .updateTable('users')
+              .set({ quota_bytes: used })
+              .where('id', '=', A.user.id)
+              .execute();
+            held();
+            await released;
+          });
+        try {
+          await holding;
+          const target: PublishTarget = {
+            kind: 'new_artifact',
+            projectId: fx.ids.P,
+            name: null,
+            tags: [],
+          };
+          const publishing = publishFiles(
+            ctx,
+            A.user,
+            { 'index.html': page('While lowered') },
+            target,
+          );
+          await untilWaitingOnLocks(1, publishing);
+          release();
+          await lowering;
+          const error = await publishing.then(
+            () => null,
+            (err: unknown) => err,
+          );
+          expect(error).toMatchObject({ code: 'quota_exceeded', details: { limit_bytes: used } });
+        } finally {
+          release();
+          await lowering;
+        }
+        await expectNothingLeft(before);
+      },
+    );
+
+    test('a refusal names the space owner by name, else email, else id', async () => {
+      const { A, E } = fx.people;
+      const used = (await usage(A)).bytes;
+      await setQuota(ctx, A.user.id, { bytes: used });
+      const nameOf = async () => {
+        const r = await inline(ctx, E, { project_id: fx.ids.P }, page('Into a full P'));
+        return (r.body as { error: { details: { space_owner: unknown } } }).error.details
+          .space_owner;
+      };
+      if (mode === 'team') {
+        // E's version counts toward E, who has no limit: nothing to name.
+        expect((await inline(ctx, E, { project_id: fx.ids.P }, page('In team'))).status).toBe(201);
+        return;
+      }
+      const rename = (set: { name: string | null; email?: string | null }) =>
+        db().updateTable('users').set(set).where('id', '=', A.user.id).execute();
+      await rename({ name: null });
+      expect(await nameOf()).toEqual({ id: A.user.id, name: A.user.email });
+      await rename({ name: null, email: null });
+      expect(await nameOf()).toEqual({ id: A.user.id, name: A.user.id });
     });
 
     test("two editors publishing into each other's spaces at once both commit", async () => {
