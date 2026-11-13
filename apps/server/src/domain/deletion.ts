@@ -19,6 +19,7 @@ import {
   type ProjectRole,
   roleIn,
   type Scope,
+  type SystemScope,
   scopeForUser,
   seesAll,
 } from './spaces.ts';
@@ -55,17 +56,56 @@ export function canDelete(
  * for the artifact's publisher; in personal mode for the version's, and for the artifact's too
  * when the version is its last, since that deletes the artifact.
  */
-export async function deleteVersion(
+export function deleteVersion(
   deps: AppDeps,
   auth: AuthContext,
   artifactId: string,
   n: number,
-): Promise<{ artifactDeleted: boolean; currentVersionId: string | null }> {
-  const { db, dialect } = deps.db;
+): Promise<DeletedVersion> {
   const scope = scopeForUser(deps, auth.user);
+  return deleteVersionAs(deps, scope, artifactId, n, (db, projectId, publishedBy) =>
+    assertCanDelete(db, scope, auth, projectId, publishedBy),
+  );
+}
+
+/**
+ * `deleteVersion` for the system, as a moderation action: no one's role is asked, and the
+ * artifact is found whichever space it is in. The same deletion otherwise, with the same 404 and
+ * 410 for a missing or deleted artifact or version.
+ */
+export function systemDeleteVersion(
+  deps: AppDeps,
+  scope: SystemScope,
+  artifactId: string,
+  n: number,
+): Promise<DeletedVersion> {
+  return deleteVersionAs(deps, scope, artifactId, n, allowed);
+}
+
+/** What a version deletion leaves of its artifact. */
+type DeletedVersion = { artifactDeleted: boolean; currentVersionId: string | null };
+
+/**
+ * Whether the deletion may go ahead, for the artifact's or a version's `publishedBy` in the
+ * project: returns, or throws the 403 that refuses it. It reads through `db`, the transaction
+ * when one is open.
+ */
+type Authorize = (db: Db, projectId: string, publishedBy: string | null) => Promise<void>;
+
+/** The system's: it deletes whatever it is asked to. */
+const allowed: Authorize = async () => {};
+
+async function deleteVersionAs(
+  deps: AppDeps,
+  scope: Scope,
+  artifactId: string,
+  n: number,
+  authorize: Authorize,
+): Promise<DeletedVersion> {
+  const { db, dialect } = deps.db;
   const seen = await getArtifact(db, scope, artifactId, deps.clock.now());
   // The 1.0 rule looks at the artifact's publisher; personal mode at the version's, below.
-  if (seesAll(scope)) await assertCanDelete(db, scope, auth, seen.project_id, seen.created_by);
+  if (seesAll(scope)) await authorize(db, seen.project_id, seen.created_by);
   // Read before the transaction: it reads blobs, and on SQLite the transaction holds the only
   // connection.
   const successor = await readSuccessor(deps, seen, n);
@@ -77,11 +117,11 @@ export async function deleteVersion(
       (await getArtifact(trx, scope, artifactId, now));
     const version = await getVersionByNumber(trx, artifact, n);
     if (!seesAll(scope)) {
-      await assertCanDelete(trx, scope, auth, artifact.project_id, version.created_by);
+      await authorize(trx, artifact.project_id, version.created_by);
       // The last version takes the artifact with it: an editor may delete that only if they
       // published the artifact.
       if (await isOnlyVersion(trx, artifact.id, version.id)) {
-        await assertCanDelete(trx, scope, auth, artifact.project_id, artifact.created_by);
+        await authorize(trx, artifact.project_id, artifact.created_by);
       }
     }
     const target: DeletionTarget = { versionId: version.id };
@@ -159,20 +199,43 @@ export async function deleteVersion(
  * `artifact.deleted` goes out on `ARTIFACT_TOPIC`. A missing artifact answers 404 (as does one
  * the caller does not see), a deleted one 410, and a caller that `canDelete` refuses 403.
  */
-export async function deleteArtifact(
+export function deleteArtifact(
   deps: AppDeps,
   auth: AuthContext,
   artifactId: string,
 ): Promise<void> {
-  const { db, dialect } = deps.db;
   const scope = scopeForUser(deps, auth.user);
+  return deleteArtifactAs(deps, scope, artifactId, (db, projectId, publishedBy) =>
+    assertCanDelete(db, scope, auth, projectId, publishedBy),
+  );
+}
+
+/**
+ * `deleteArtifact` for the system, as a moderation action or a purge: no one's role is asked, and
+ * the artifact is found whichever space it is in.
+ */
+export function systemDeleteArtifact(
+  deps: AppDeps,
+  scope: SystemScope,
+  artifactId: string,
+): Promise<void> {
+  return deleteArtifactAs(deps, scope, artifactId, allowed);
+}
+
+async function deleteArtifactAs(
+  deps: AppDeps,
+  scope: Scope,
+  artifactId: string,
+  authorize: Authorize,
+): Promise<void> {
+  const { db, dialect } = deps.db;
 
   const shas = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const artifact =
       (await lockArtifact(trx, dialect, scope, artifactId)) ??
       (await getArtifact(trx, scope, artifactId, now));
-    await assertCanDelete(trx, scope, auth, artifact.project_id, artifact.created_by);
+    await authorize(trx, artifact.project_id, artifact.created_by);
     const target: DeletionTarget = { artifactId: artifact.id };
     const shas = await blobsOf(trx, target);
     await addTombstones(trx, await grantTombstones(trx, target, now), now);

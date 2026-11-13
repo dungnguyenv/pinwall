@@ -1,3 +1,4 @@
+import type { AdminUsage } from '@pinwall/shared';
 import type { Transaction } from 'kysely';
 import { lockUser } from '../auth/account.ts';
 import type { Db } from '../auth/passkeys.ts';
@@ -62,6 +63,113 @@ export async function usageOf(db: Db, config: Config, userId: string): Promise<U
     .select((eb) => eb.fn.countAll<number | string>().as('n'))
     .executeTakeFirstOrThrow();
   return toUsage(bytes.n, artifacts.n);
+}
+
+/**
+ * What an admin sees of each of `userIds`, for the user list: five grouped queries, whatever the
+ * number of people. Artifacts, versions and bytes are on `usageOf`'s basis (the projects they own
+ * in personal mode, what they published in team mode); projects are the ones they own and share
+ * links the ones they made that are still active at `now`, in either mode; the last publish is
+ * the newest version they published. Everyone asked for is in the result, with zeros.
+ */
+export async function usageSummaries(
+  db: Db,
+  config: Config,
+  userIds: readonly string[],
+  now: number,
+): Promise<Map<string, AdminUsage>> {
+  const summaries = new Map<string, AdminUsage>(
+    userIds.map((id) => [
+      id,
+      {
+        projects: 0,
+        artifacts: 0,
+        versions: 0,
+        bytes: 0,
+        share_links: 0,
+        last_published_at: null,
+      },
+    ]),
+  );
+  if (userIds.length === 0) return summaries;
+  const ids = [...userIds];
+  const set = <K extends keyof AdminUsage>(id: string | null, key: K, value: AdminUsage[K]) => {
+    const summary = id === null ? undefined : summaries.get(id);
+    if (summary !== undefined) summary[key] = value;
+  };
+
+  for (const row of await db
+    .selectFrom('projects')
+    .select(['owner_id', (eb) => eb.fn.countAll<number | string>().as('n')])
+    .where('owner_id', 'in', ids)
+    .groupBy('owner_id')
+    .execute()) {
+    set(row.owner_id, 'projects', Number(row.n));
+  }
+
+  const personal = config.visibility === 'personal';
+  // Whose each artifact and version is: the owner of its project, or whoever published it.
+  const artifacts = personal
+    ? db
+        .selectFrom('artifacts')
+        .innerJoin('projects', 'projects.id', 'artifacts.project_id')
+        .select('projects.owner_id as who')
+        .where('projects.owner_id', 'in', ids)
+        .groupBy('projects.owner_id')
+    : db
+        .selectFrom('artifacts')
+        .select('artifacts.created_by as who')
+        .where('artifacts.created_by', 'in', ids)
+        .groupBy('artifacts.created_by');
+  for (const row of await artifacts
+    .select((eb) => eb.fn.countAll<number | string>().as('n'))
+    .execute()) {
+    set(row.who, 'artifacts', Number(row.n));
+  }
+
+  const versions = personal
+    ? db
+        .selectFrom('versions')
+        .innerJoin('artifacts', 'artifacts.id', 'versions.artifact_id')
+        .innerJoin('projects', 'projects.id', 'artifacts.project_id')
+        .select('projects.owner_id as who')
+        .where('projects.owner_id', 'in', ids)
+        .groupBy('projects.owner_id')
+    : db
+        .selectFrom('versions')
+        .select('versions.created_by as who')
+        .where('versions.created_by', 'in', ids)
+        .groupBy('versions.created_by');
+  for (const row of await versions
+    .select((eb) => [
+      eb.fn.countAll<number | string>().as('n'),
+      eb.fn.sum<number | string | null>('versions.total_bytes').as('bytes'),
+    ])
+    .execute()) {
+    set(row.who, 'versions', Number(row.n));
+    set(row.who, 'bytes', Number(row.bytes ?? 0));
+  }
+
+  for (const row of await db
+    .selectFrom('share_links')
+    .select(['created_by', (eb) => eb.fn.countAll<number | string>().as('n')])
+    .where('created_by', 'in', ids)
+    .where('revoked_at', 'is', null)
+    .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', now)]))
+    .groupBy('created_by')
+    .execute()) {
+    set(row.created_by, 'share_links', Number(row.n));
+  }
+
+  for (const row of await db
+    .selectFrom('versions')
+    .select(['created_by', (eb) => eb.fn.max<number | string>('created_at').as('last')])
+    .where('created_by', 'in', ids)
+    .groupBy('created_by')
+    .execute()) {
+    set(row.created_by, 'last_published_at', Number(row.last));
+  }
+  return summaries;
 }
 
 /** A sum is a numeric (a string) on Postgres and null over no rows; a count is a bigint. */

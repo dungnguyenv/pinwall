@@ -22,14 +22,20 @@ export type ProjectRole = 'owner' | MemberRole;
 /** Whose view a lookup serves: a signed-in person, in the instance's visibility mode. */
 export type ViewerScope = { kind: 'viewer'; user: UserRow; visibility: Visibility; admin: boolean };
 
-/** A viewer, or the system: Pinwall itself, which sees every project. */
-export type Scope = ViewerScope | { kind: 'system' };
+/**
+ * Pinwall itself, which sees every project. `SYSTEM_SCOPE` is the only value of it, so a function
+ * that takes this type, not `Scope`, can be called only by a file that guard allows.
+ */
+export type SystemScope = { readonly kind: 'system' };
+
+/** A viewer, or the system. */
+export type Scope = ViewerScope | SystemScope;
 
 /**
  * Access without a viewer. Only the files `test/spaces/scope-guard.test.ts` allows may use it,
  * each bound to something else that grants access (a share link) or serving the whole instance.
  */
-export const SYSTEM_SCOPE: Scope = Object.freeze({ kind: 'system' });
+export const SYSTEM_SCOPE: SystemScope = Object.freeze({ kind: 'system' });
 
 /**
  * `user`'s scope in the instance's mode: for callers without a request (MCP tools, upload URLs,

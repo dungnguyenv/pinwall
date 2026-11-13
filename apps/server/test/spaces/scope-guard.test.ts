@@ -21,6 +21,10 @@ const SYSTEM_SCOPE_ALLOWED = [
   'ops/backup/',
   'domain/spaces-startup.ts',
   'publish/startup.ts',
+  // An admin deletes everything one person owns (the purge in personal mode).
+  'api/admin-users.ts',
+  // A person deletes everything they own themselves (their purge in personal mode).
+  'api/me.ts',
 ];
 
 const allowed = (path: string) =>

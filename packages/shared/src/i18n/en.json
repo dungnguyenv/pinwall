@@ -953,6 +953,8 @@
   "quota.bytes.other": "This version needs {{needed}}, but the space of {{owner}}, who owns this project, already holds {{used}} of its {{limit}}. Ask them to delete versions they no longer need, or to ask an admin for more room.",
   "quota.artifacts.own": "Your space already holds {{used}} of its {{limit}} artifacts. Delete artifacts you no longer need, or ask an admin for more room.",
   "quota.artifacts.other": "The space of {{owner}}, who owns this project, already holds {{used}} of its {{limit}} artifacts. Ask them to delete artifacts they no longer need, or to ask an admin for more room.",
+  "purge.confirm": "To confirm, type the account's email address exactly (its id, when it has no email).",
+  "purge.busy": "New artifacts kept arriving while this space was being deleted. Try again.",
   "content.framedOnly.title": "Open this page in Pinwall",
   "content.framedOnly.message": "This page can only be viewed inside Pinwall's viewer.",
   "mcp.hint.quota_exceeded": "Do not retry this publish. Tell the person their space is full: they can delete old versions in Pinwall, or ask an admin for more room."

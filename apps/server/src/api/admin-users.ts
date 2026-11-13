@@ -1,14 +1,35 @@
 import { createRoute, type OpenAPIHono } from '@hono/zod-openapi';
-import { AdminUser, AdminUserList, ErrorBody, RevokeResult, SetRoleRequest } from '@pinwall/shared';
+import {
+  type AdminUsage,
+  AdminUser,
+  AdminUserList,
+  ErrorBody,
+  PurgeRequest,
+  PurgeResult,
+  RevokeResult,
+  SetRoleRequest,
+  UpdateAdminUserRequest,
+} from '@pinwall/shared';
 import type { MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import type { AppEnv } from '../app.ts';
-import { listUsers, setRoleOverride, userExists } from '../auth/admin-users.ts';
+import {
+  getUser,
+  listUsers,
+  logModeration,
+  setRoleOverride,
+  updateUserModeration,
+  userExists,
+} from '../auth/admin-users.ts';
 import { authOf, requireAdmin } from '../auth/guards.ts';
 import { revokeAllCredentials } from '../auth/revoke.ts';
 import { effectiveRole } from '../auth/roles.ts';
 import { clearSessionCookie } from '../auth/session-cookie.ts';
 import type { UserRow } from '../db/schema.ts';
+import type { AppDeps } from '../deps.ts';
+import { assertPurgeAvailable, assertPurgeConfirmed, purgeSpace } from '../domain/purge.ts';
+import { SYSTEM_SCOPE } from '../domain/spaces.ts';
+import { usageSummaries } from '../domain/usage.ts';
 import { notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { jsonBodyLimit } from './body-limit.ts';
@@ -37,7 +58,8 @@ const listAdminUsers = createRoute({
   path: '/admin/users',
   tags: ['admin'],
   summary: 'List users',
-  description: 'Oldest first, with the role each user has and where it comes from.',
+  description:
+    'Oldest first, with the role each user has and where it comes from, what their space holds, whether they may expose content, and the quota overrides an admin set. These are sent in both visibility modes.',
   middleware: [requireAdmin] as MiddlewareHandler<AppEnv>[],
   security,
   request: { query: ListQuery },
@@ -72,6 +94,52 @@ const putRole = createRoute({
   },
 });
 
+const patchUser = createRoute({
+  method: 'patch',
+  path: '/admin/users/{id}',
+  tags: ['admin'],
+  summary: 'Approve a user, or set their quota',
+  description:
+    "`share_approved` lets the user expose content (share links and raw links) when the instance requires approval (`PINWALL_SHARE_LINKS=approved`); taking it away revokes every share link they made, unless they are an admin. `quota_bytes` and `quota_artifacts` replace the instance's limits for this user (0: no limit); `null` gives the instance's back. Only the keys sent change, and at least one is needed.",
+  middleware: [requireAdmin, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
+  security,
+  request: {
+    params: UserId,
+    body: { required: true, content: { 'application/json': { schema: UpdateAdminUserRequest } } },
+  },
+  responses: {
+    200: { description: 'The user', content: { 'application/json': { schema: AdminUser } } },
+    400: error('An empty body, or a quota that is not a whole number of at least 0'),
+    ...adminErrors,
+    404: error('No such user (`not_found`)'),
+  },
+});
+
+const purgeUser = createRoute({
+  method: 'post',
+  path: '/admin/users/{id}/purge',
+  tags: ['admin'],
+  summary: "Delete all of a user's content",
+  description:
+    'Only in `personal` mode (in `team` mode the route does not exist: `not_found`). Deletes every project the user owns, with all that is in them, as deleting each artifact does: their share links answer "gone" and the files are removed. Projects the user only belongs to stay, and so does the user. Send the user\'s email address (their id, when they have none) as `confirm_email`. This destroys work but shows none of it.',
+  middleware: [requireAdmin, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
+  security,
+  request: {
+    params: UserId,
+    body: { required: true, content: { 'application/json': { schema: PurgeRequest } } },
+  },
+  responses: {
+    200: {
+      description: 'What was deleted',
+      content: { 'application/json': { schema: PurgeResult } },
+    },
+    400: error("`confirm_email` is not the user's email address"),
+    ...adminErrors,
+    404: error('No such user, or the instance is in `team` mode (`not_found`)'),
+    409: error('New artifacts kept arriving; try again (`conflict`)'),
+  },
+});
+
 const revokeNow = createRoute({
   method: 'post',
   path: '/admin/users/{id}/revoke',
@@ -92,7 +160,7 @@ const revokeNow = createRoute({
   },
 });
 
-function toAdminUser(user: UserRow): AdminUser {
+function toAdminUser(user: UserRow, usage: AdminUsage): AdminUser {
   return {
     id: user.id,
     kind: user.kind,
@@ -107,7 +175,24 @@ function toAdminUser(user: UserRow): AdminUser {
     disabled_reason: user.disabled_reason,
     created_at: user.created_at,
     last_seen_at: user.last_seen_at,
+    usage,
+    share_approved: user.share_approved === 1,
+    quota_bytes: user.quota_bytes,
+    quota_artifacts: user.quota_artifacts,
   };
+}
+
+/** `user` as an admin sees them, with the usage of their space. */
+async function adminUserOf(deps: AppDeps, user: UserRow): Promise<AdminUser> {
+  const usage = await usageSummaries(deps.db.db, deps.config, [user.id], deps.clock.now());
+  return toAdminUser(user, usageIn(usage, user.id));
+}
+
+/** The usage `usageSummaries` made for `userId`, which it does for everyone asked for. */
+function usageIn(usage: ReadonlyMap<string, AdminUsage>, userId: string): AdminUsage {
+  const found = usage.get(userId);
+  if (found === undefined) throw new Error(`No usage was summarized for ${userId}`);
+  return found;
 }
 
 const noStore = { 'Cache-Control': 'no-store' };
@@ -115,8 +200,22 @@ const noStore = { 'Cache-Control': 'no-store' };
 export function registerAdminUserRoutes(api: OpenAPIHono<AppEnv>): void {
   api.openapi(listAdminUsers, async (c) => {
     const { limit, cursor } = c.req.valid('query');
-    const { items, nextCursor } = await listUsers(c.var.deps, { limit, cursor: cursor ?? null });
-    return c.json({ items: items.map(toAdminUser), next_cursor: nextCursor }, 200, noStore);
+    const { deps } = c.var;
+    const { items, nextCursor } = await listUsers(deps, { limit, cursor: cursor ?? null });
+    const usage = await usageSummaries(
+      deps.db.db,
+      deps.config,
+      items.map((user) => user.id),
+      deps.clock.now(),
+    );
+    return c.json(
+      {
+        items: items.map((user) => toAdminUser(user, usageIn(usage, user.id))),
+        next_cursor: nextCursor,
+      },
+      200,
+      noStore,
+    );
   });
 
   api.openapi(putRole, async (c) => {
@@ -129,7 +228,30 @@ export function registerAdminUserRoutes(api: OpenAPIHono<AppEnv>): void {
       { actor_id: actor.id, user_id: id, role_override, share_links: shareLinks },
       'role override changed',
     );
-    return c.json(toAdminUser(user), 200, noStore);
+    return c.json(await adminUserOf(deps, user), 200, noStore);
+  });
+
+  api.openapi(patchUser, async (c) => {
+    const { deps } = c.var;
+    const { id } = c.req.valid('param');
+    const body = c.req.valid('json');
+    const { user } = await updateUserModeration(deps, id, {
+      ...(body.share_approved === undefined ? {} : { shareApproved: body.share_approved }),
+      ...(body.quota_bytes === undefined ? {} : { quotaBytes: body.quota_bytes }),
+      ...(body.quota_artifacts === undefined ? {} : { quotaArtifacts: body.quota_artifacts }),
+    });
+    logModeration(deps, authOf(c).user.id, 'user.update', { user_id: id });
+    return c.json(await adminUserOf(deps, user), 200, noStore);
+  });
+
+  api.openapi(purgeUser, async (c) => {
+    const { deps } = c.var;
+    const { id } = c.req.valid('param');
+    const { confirm_email } = c.req.valid('json');
+    assertPurgeAvailable(deps);
+    assertPurgeConfirmed(await getUser(deps, id), confirm_email);
+    logModeration(deps, authOf(c).user.id, 'user.purge', { user_id: id });
+    return c.json(await purgeSpace(deps, SYSTEM_SCOPE, id), 200, noStore);
   });
 
   api.openapi(revokeNow, async (c) => {
