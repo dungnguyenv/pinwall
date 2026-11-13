@@ -134,17 +134,21 @@ export function toProject(row: ProjectWithCount): Project {
   };
 }
 
+/** What a personal-mode response adds to a project: who owns it and what the viewer is to it. */
+export type SpaceFields = Pick<Project, 'owner' | 'role'>;
+
 /**
- * Projects as the API shows them to `scope`. In personal mode each also names its owner and the
- * viewer's role in it, loaded for all rows at once (one query for the owners' names, one for the
- * roles); team mode adds neither. The rows come from lookups in the viewer's scope.
+ * For each of `rows`, its owner and the viewer's role in it, loaded for all rows at once (one
+ * query for the owners' names, one for the roles); `null` in team mode, which shows neither. The
+ * rows come from lookups in the viewer's scope.
  */
-export async function toProjects(
+export async function spaceFieldsOf(
   deps: AppDeps,
   scope: Scope,
-  rows: readonly ProjectWithCount[],
-): Promise<Project[]> {
-  if (seesAll(scope) || rows.length === 0) return rows.map(toProject);
+  rows: readonly Pick<ProjectRow, 'id' | 'owner_id'>[],
+): Promise<Map<string, SpaceFields> | null> {
+  if (seesAll(scope)) return null;
+  if (rows.length === 0) return new Map();
   const { db } = deps.db;
   const ownerIds = [...new Set(rows.flatMap((row) => row.owner_id ?? []))];
   const [owners, roles] = await Promise.all([
@@ -158,15 +162,32 @@ export async function toProjects(
     ),
   ]);
   const ownerById = new Map(owners.map((owner) => [owner.id, owner]));
-  return rows.map((row) => {
-    const owner = row.owner_id === null ? undefined : ownerById.get(row.owner_id);
-    const role = roles.get(row.id);
-    return {
-      ...toProject(row),
-      owner: owner === undefined ? null : { id: owner.id, name: owner.name },
-      ...(role === undefined ? {} : { role }),
-    };
-  });
+  return new Map(
+    rows.map((row) => {
+      const owner = row.owner_id === null ? undefined : ownerById.get(row.owner_id);
+      const role = roles.get(row.id);
+      return [
+        row.id,
+        {
+          owner: owner === undefined ? null : { id: owner.id, name: owner.name },
+          ...(role === undefined ? {} : { role }),
+        },
+      ];
+    }),
+  );
+}
+
+/**
+ * Projects as the API shows them to `scope`. In personal mode each also names its owner and the
+ * viewer's role in it (`spaceFieldsOf`); team mode adds neither.
+ */
+export async function toProjects(
+  deps: AppDeps,
+  scope: Scope,
+  rows: readonly ProjectWithCount[],
+): Promise<Project[]> {
+  const fields = await spaceFieldsOf(deps, scope, rows);
+  return rows.map((row) => ({ ...toProject(row), ...fields?.get(row.id) }));
 }
 
 /** One project as the API shows it to `scope`, with its artifact count. */

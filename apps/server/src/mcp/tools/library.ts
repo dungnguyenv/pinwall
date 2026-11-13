@@ -1,6 +1,7 @@
 import type { ArtifactSummary } from '@pinwall/shared';
 import { z } from 'zod';
 import { toArtifactSummary } from '../../api/artifacts.ts';
+import { type SpaceFields, spaceFieldsOf } from '../../api/projects.ts';
 import type { ProjectRow, VersionRow } from '../../db/schema.ts';
 import type { AppDeps } from '../../deps.ts';
 import { getArtifact, listArtifacts, SEARCH_MAX_CHARS } from '../../domain/artifacts.ts';
@@ -83,7 +84,8 @@ const GetArtifactIn = z.object({
     .describe('How many of the newest versions to list.'),
 });
 
-function toProjectOut(row: ProjectRow): ProjectOut {
+/** `space`: the owner and role a personal-mode viewer sees (`spaceFieldsOf`); none in team mode. */
+function toProjectOut(row: ProjectRow, space?: SpaceFields): ProjectOut {
   return {
     id: row.id,
     name: row.name,
@@ -91,6 +93,7 @@ function toProjectOut(row: ProjectRow): ProjectOut {
     archived: row.archived_at !== null,
     // Instructions of nothing but blank space tell an agent nothing.
     has_instructions: row.instructions.trim() !== '',
+    ...space,
   };
 }
 
@@ -205,8 +208,9 @@ function versionLine(v: VersionOut): string {
 }
 
 /** What `get_project` and `create_project` return: the project with its instructions. */
-function detailOf(row: ProjectRow): ProjectDetailOut {
-  return { project: { ...toProjectOut(row), instructions: row.instructions } };
+async function detailOf(deps: AppDeps, scope: Scope, row: ProjectRow): Promise<ProjectDetailOut> {
+  const space = await spaceFieldsOf(deps, scope, [row]);
+  return { project: { ...toProjectOut(row, space?.get(row.id)), instructions: row.instructions } };
 }
 
 /**
@@ -236,8 +240,9 @@ export const libraryTools: ToolModule = (server, ctx) => {
         limit: a.limit,
         cursor: a.cursor ?? null,
       });
+      const space = await spaceFieldsOf(deps, viewer, items);
       const projects = items.map((row) => ({
-        ...toProjectOut(row),
+        ...toProjectOut(row, space?.get(row.id)),
         artifact_count: row.artifact_count,
       }));
       const lines = [
@@ -260,8 +265,9 @@ export const libraryTools: ToolModule = (server, ctx) => {
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof GetProjectIn>) => {
-      const row = await readProject(deps, scope(), a.project_id);
-      const structured = detailOf(row);
+      const viewer = scope();
+      const row = await readProject(deps, viewer, a.project_id);
+      const structured = await detailOf(deps, viewer, row);
       const heading = t('mcp.project.heading', { id: row.id, name: oneLine(row.name) });
       const guidance = structured.project.has_instructions
         ? `${t('mcp.project.followInstructions')}\n\n${row.instructions}`
@@ -285,7 +291,7 @@ export const libraryTools: ToolModule = (server, ctx) => {
       });
       return {
         text: t('mcp.project.created', { id: row.id, name: oneLine(row.name) }),
-        structured: detailOf(row),
+        structured: await detailOf(deps, scope(), row),
       };
     }),
   );

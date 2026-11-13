@@ -1,4 +1,4 @@
-import { PublishResult, PublishSession } from '@pinwall/shared';
+import { Project, PublishResult, PublishSession } from '@pinwall/shared';
 import { z } from 'zod';
 import { REVIEWER_FIELDS } from './descriptions.ts';
 
@@ -30,13 +30,18 @@ export const WhoamiOut = z.object({
 });
 export type WhoamiOut = z.infer<typeof WhoamiOut>;
 
-/** A project as every project tool shows it. The instructions travel only where they are asked for. */
+/**
+ * A project as every project tool shows it. The instructions travel only where they are asked
+ * for. `owner` and `role` (as the REST API sends them) are there only in `personal` mode.
+ */
 export const ProjectOut = z.object({
   id: z.string(),
   name: z.string(),
   is_default: z.boolean(),
   archived: z.boolean(),
   has_instructions: z.boolean(),
+  owner: Project.shape.owner,
+  role: Project.shape.role,
 });
 export type ProjectOut = z.infer<typeof ProjectOut>;
 
