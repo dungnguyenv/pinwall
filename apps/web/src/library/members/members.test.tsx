@@ -415,6 +415,48 @@ test.each(['viewer', 'editor'] as const)(
   },
 );
 
+test("leaving forgets what the cache holds about the project's artifacts, and only those", async () => {
+  serveMembers({
+    projectId: 'prj_1',
+    members: [fxMember({ user: { id: ME.id, name: ME.name, email: null }, role: 'editor' })],
+  });
+  serveProject(fxShared('editor', { id: 'prj_1', name: 'Pricing' }));
+  const { user, router, queryClient } = renderRoute('/projects/prj_1', { config: PERSONAL });
+  /** Every key a review of artifact `id` fills: what Back would paint from before reading. */
+  const keysOf = (id: string) => [
+    qk.artifact(id),
+    qk.versions(id),
+    qk.version(id, 1),
+    qk.preview(id, 1, 'review'),
+    qk.threads({ kind: 'artifact', artifactId: id }),
+    qk.shareLinks(id),
+    qk.diff(id, 1, 2),
+    qk.fileDiff(id, 1, 2, 'index.html'),
+  ];
+  // An artifact of the project, and one of another project, each reviewed before.
+  for (const artifact of [
+    fx.artifact({ id: 'art_in', project_id: 'prj_1' }),
+    fx.artifact({ id: 'art_out', project_id: 'prj_9' }),
+  ]) {
+    const [summary, ...rest] = keysOf(artifact.id);
+    queryClient.setQueryData(summary as readonly unknown[], artifact);
+    for (const key of rest) queryClient.setQueryData(key, { cached: artifact.id });
+  }
+
+  const dialog = await openMembers(user, 'Pricing');
+  await user.click(await within(dialog).findByRole('button', { name: t('web.members.leave') }));
+  const confirm = await screen.findByRole('alertdialog', { name: t('web.members.leave.title') });
+  await user.click(within(confirm).getByRole('button', { name: t('web.members.leave') }));
+  await waitFor(() => expect(router.state.location.pathname).toBe('/'));
+
+  for (const key of keysOf('art_in')) {
+    expect(queryClient.getQueryData(key), key.join(' ')).toBeUndefined();
+  }
+  for (const key of keysOf('art_out')) {
+    expect(queryClient.getQueryData(key), key.join(' ')).toBeDefined();
+  }
+});
+
 test('a failed leave says why and keeps the person in', async () => {
   serveMembers({ projectId: 'prj_1', members: [fxMember()] });
   serveProject(fxShared('viewer', { id: 'prj_1', name: 'Pricing' }));

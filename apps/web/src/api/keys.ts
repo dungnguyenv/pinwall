@@ -76,4 +76,18 @@ export const qk = {
   /** The block diff of one Markdown file between two versions. */
   mdDiff: (id: string, from: number | null, to: number | null, path: string | null) =>
     ['diff', id, from, to, 'markdown', path] as const,
+  /**
+   * Prefixes of every key that holds something of artifact `id`: it, its versions, their content
+   * grants and diffs, its comments and its share links. For forgetting it all at once.
+   */
+  ofArtifact: (id: string) =>
+    [
+      ['artifact', id],
+      ['versions', id],
+      ['version', id],
+      ['preview', id],
+      ['threads', 'artifact', id],
+      ['share-links', id],
+      ['diff', id],
+    ] as const,
 };

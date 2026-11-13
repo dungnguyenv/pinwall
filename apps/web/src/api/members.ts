@@ -1,4 +1,5 @@
 import {
+  type QueryClient,
   type UseMutationResult,
   type UseQueryResult,
   useMutation,
@@ -8,6 +9,7 @@ import {
 import { type ApiError, api, isApiError } from './client.ts';
 import {
   type AddMemberRequest,
+  type ArtifactSummary,
   MemberCandidate,
   ProjectMember,
   ProjectMemberList,
@@ -98,10 +100,26 @@ export function useRemoveMember(projectId: string): UseMutationResult<void, ApiE
 }
 
 /**
+ * Forgets what the cache holds about each artifact of `projectId` that it holds: the artifact,
+ * and everything read of it since. Back to one of them then reads it again, and is refused,
+ * instead of showing it from memory first.
+ */
+function forgetArtifactsOf(queryClient: QueryClient, projectId: string): void {
+  const ids = queryClient
+    .getQueriesData<ArtifactSummary>({ queryKey: ['artifact'] })
+    .filter(([, artifact]) => artifact?.project_id === projectId)
+    .map(([key]) => String(key[1]));
+  for (const id of ids) {
+    for (const queryKey of qk.ofArtifact(id)) queryClient.removeQueries({ queryKey });
+  }
+}
+
+/**
  * Leaves the project: removes the signed-in person from it. They can no longer read it, so what
- * the cache holds about it goes, and the lists that showed it (the sidebar's projects, every
- * artifact list, Recent) are read again. Nothing waits for those reads: the caller leaves the
- * page at once, and the page must not ask for a project that has just become unreachable.
+ * the cache holds about it and its artifacts goes, and the lists that showed it (the sidebar's
+ * projects, every artifact list, Recent) are read again. Nothing waits for those reads: the
+ * caller leaves the page at once, and the page must not ask for a project that has just become
+ * unreachable.
  */
 export function useLeaveProject(projectId: string): UseMutationResult<void, ApiError, void> {
   const queryClient = useQueryClient();
@@ -112,6 +130,7 @@ export function useLeaveProject(projectId: string): UseMutationResult<void, ApiE
     onSuccess: () => {
       queryClient.removeQueries({ queryKey: qk.project(projectId) });
       queryClient.removeQueries({ queryKey: qk.members(projectId) });
+      forgetArtifactsOf(queryClient, projectId);
       void queryClient.invalidateQueries({ queryKey: qk.projectLists });
       void queryClient.invalidateQueries({ queryKey: qk.artifactLists });
     },
