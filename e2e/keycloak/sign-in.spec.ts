@@ -1,41 +1,8 @@
 import { expect, type Page, test } from '@playwright/test';
-import messages from '../../packages/shared/src/i18n/en.json' with { type: 'json' };
+import { acceptConsentIfShown, keycloakLogin, signInWithKeycloak, t } from './support.ts';
 
+const TEAM_ORIGIN = 'http://localhost:18096';
 const PINWALL_ORIGIN = /^http:\/\/localhost:18096\//;
-
-/** The product's own wording for `key`, with `{{name}}` filled in, so the walks read what people read. */
-function t(key: keyof typeof messages, vars: Record<string, string> = {}): string {
-  return messages[key].replace(/\{\{(\w+)\}\}/g, (_, name: string) => vars[name] ?? '');
-}
-
-/** Fills Keycloak's login form. */
-async function keycloakLogin(page: Page, user: string, password: string): Promise<void> {
-  await page.locator('#username').fill(user);
-  await page.locator('#password').fill(password);
-  await page.locator('#kc-login').click();
-}
-
-/**
- * Keycloak asks for consent only when the sign-in prompts for it, so this answers "Yes" when that
- * page comes up first, and does nothing when the person lands back on Pinwall.
- */
-async function acceptConsentIfShown(page: Page): Promise<void> {
-  const yes = page.getByRole('button', { name: 'Yes', exact: true });
-  const shown = await Promise.race([
-    yes.waitFor({ state: 'visible', timeout: 10_000 }).then(() => true),
-    page.waitForURL(PINWALL_ORIGIN, { timeout: 10_000 }).then(() => false),
-  ]).catch(() => false);
-  if (shown) await yes.click();
-}
-
-/** Starts from Pinwall's sign-in page, takes the single sign-on link and signs in at Keycloak. */
-async function signInWithKeycloak(page: Page, user: string, password: string): Promise<void> {
-  await page.goto('/signin');
-  await page.getByRole('link', { name: t('web.signin.oidc', { name: 'Keycloak' }) }).click();
-  await keycloakLogin(page, user, password);
-  await acceptConsentIfShown(page);
-  await expect(page).toHaveURL(PINWALL_ORIGIN);
-}
 
 /** What `GET /api/v1/me` says about the browser's session, asked from inside the page. */
 function readMe(page: Page): Promise<unknown> {
@@ -46,7 +13,7 @@ function readMe(page: Page): Promise<unknown> {
 // session left by another.
 
 test('an admin from pinwall-admins signs in as admin', async ({ page }) => {
-  await signInWithKeycloak(page, 'ada', 'ada-e2e-password');
+  await signInWithKeycloak(page, TEAM_ORIGIN, 'ada');
   expect(await readMe(page)).toMatchObject({
     kind: 'oidc',
     role: 'admin',
@@ -58,7 +25,7 @@ test('an admin from pinwall-admins signs in as admin', async ({ page }) => {
 });
 
 test('a member from pinwall-members signs in as member', async ({ page }) => {
-  await signInWithKeycloak(page, 'bob', 'bob-e2e-password');
+  await signInWithKeycloak(page, TEAM_ORIGIN, 'bob');
   expect(await readMe(page)).toMatchObject({
     kind: 'oidc',
     role: 'member',
@@ -84,14 +51,14 @@ async function switchToBob(page: Page): Promise<void> {
   await page.getByRole('link', { name: t('oidc.noAccess.switch') }).click();
   await expect(page.locator('#username')).toBeVisible();
   await keycloakLogin(page, 'bob', 'bob-e2e-password');
-  await acceptConsentIfShown(page);
+  await acceptConsentIfShown(page, TEAM_ORIGIN);
   await expect(page).toHaveURL(PINWALL_ORIGIN);
   expect(await readMe(page)).toMatchObject({ kind: 'oidc', role: 'member' });
 }
 
 test('an unadmitted user sees who signed in and can switch accounts', async ({ page }) => {
   // The refusal is a page on Pinwall's own origin, which the helper's landing check accepts.
-  await signInWithKeycloak(page, 'eve', 'eve-e2e-password');
+  await signInWithKeycloak(page, TEAM_ORIGIN, 'eve');
   await expectNoAccessPage(page);
   // Pinwall asks for offline_access by default, and Keycloak keeps no single-sign-on session for
   // a sign-in that does. Eve's walk above left none, so the login form comes back whatever the

@@ -16,7 +16,10 @@
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
       "secret": "pinwall-e2e-client-secret",
-      "redirectUris": ["http://localhost:18096/auth/oidc/callback"],
+      "redirectUris": [
+        "http://localhost:18096/auth/oidc/callback",
+        "http://localhost:18097/auth/oidc/callback"
+      ],
       "webOrigins": [],
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
@@ -25,7 +28,7 @@
       "consentRequired": false,
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "http://localhost:18096/auth/oidc/signed-out"
+        "post.logout.redirect.uris": "http://localhost:18096/auth/oidc/signed-out##http://localhost:18097/auth/oidc/signed-out"
       },
       "protocolMappers": [
         {

@@ -29,12 +29,16 @@ export const qk = {
   recent: ['artifacts', 'recent'] as const,
   search: (q: string) => ['artifacts', 'search', q] as const,
   artifact: (id: string) => ['artifact', id] as const,
+  /** The people a project's owner let in, as the signed-in person sees them. */
+  members: (projectId: string) => ['members', projectId] as const,
   /** The owner's passkeys, for Settings. */
   passkeys: ['passkeys'] as const,
   /** The signed-in person's API tokens, for Settings. Never holds a token's secret. */
   tokens: ['tokens'] as const,
   /** The admin user list, every page of it. */
   adminUsers: ['admin', 'users'] as const,
+  /** The active share links of every person, every page of it, for Admin → Share links. */
+  adminShareLinks: ['admin', 'share-links'] as const,
   /** The effective configuration, for the admin Configuration page. */
   adminConfig: ['admin', 'config'] as const,
   /** An OAuth authorization request waiting on the consent page. */
@@ -72,4 +76,18 @@ export const qk = {
   /** The block diff of one Markdown file between two versions. */
   mdDiff: (id: string, from: number | null, to: number | null, path: string | null) =>
     ['diff', id, from, to, 'markdown', path] as const,
+  /**
+   * Prefixes of every key that holds something of artifact `id`: it, its versions, their content
+   * grants and diffs, its comments and its share links. For forgetting it all at once.
+   */
+  ofArtifact: (id: string) =>
+    [
+      ['artifact', id],
+      ['versions', id],
+      ['version', id],
+      ['preview', id],
+      ['threads', 'artifact', id],
+      ['share-links', id],
+      ['diff', id],
+    ] as const,
 };

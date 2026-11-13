@@ -42,6 +42,10 @@ export function shareStatus(l: ShareLink, now: number): ShareStatus {
 }
 
 /** Whether `me` may revoke `l`, as the server decides: its creator, the artifact's publisher, or an admin. */
-export function canRevoke(me: Me, artifact: { created_by: string | null }, l: ShareLink): boolean {
+export function canRevoke(
+  me: Me,
+  artifact: { created_by: string | null },
+  l: Pick<ShareLink, 'created_by'>,
+): boolean {
   return me.role === 'admin' || artifact.created_by === me.id || l.created_by?.user_id === me.id;
 }

@@ -296,7 +296,10 @@ test('the viewer frames the shared page with a minimal bar', async () => {
   await screen.findByRole('region', { name: 'Comments' }, TIMEOUT);
   expect(stream().url).toBe('http://localhost:3000/api/v1/share/tok/events');
   expect(s.requests.filter((r) => r.startsWith('GET /api/v1/me'))).toEqual([]);
-  expect(s.requests.every((r) => r.includes('/api/v1/share/tok'))).toBe(true);
+  // The bar reads the public configuration, for the abuse contact; nothing else leaves the link.
+  expect(
+    s.requests.every((r) => r.includes('/api/v1/share/tok') || r === 'GET /api/v1/config/public'),
+  ).toBe(true);
 
   const robots = document.head.querySelector('meta[name="robots"]');
   expect(robots?.getAttribute('content')).toBe('noindex, nofollow');

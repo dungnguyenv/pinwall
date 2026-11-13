@@ -16,6 +16,7 @@ import {
   guestReply,
   listGuestThreads,
 } from '../../api/shares.ts';
+import type { Rights } from '../../api/spaces.ts';
 import { forgetGuestToken, guestMayChange, guestTokenFor, rememberGuestToken } from './guest.ts';
 import type { ThreadScope } from './threads.ts';
 
@@ -112,11 +113,19 @@ export function guestBackend(token: string, guestName: () => string): CommentBac
 const isOwn = (c: Comment, me: Me) => c.author.type === 'member' && c.author.user_id === me.id;
 
 /**
- * A member edits only their own comments. They delete their own; the
- * artifact's publisher and any admin delete anyone's.
+ * A member edits only their own comments, and deletes their own. Who deletes
+ * anyone's comes from `rights` when given; without it, the 1.0 rule: the
+ * artifact's publisher and any admin.
  */
-export function memberPermissions(me: Me, artifact: { created_by: string | null }): Permissions {
-  const moderates = me.id === artifact.created_by || me.role === 'admin';
+export function memberPermissions(
+  me: Me,
+  artifact: { created_by: string | null },
+  rights?: Pick<Rights, 'deleteOthersComments'>,
+): Permissions {
+  const moderates =
+    rights === undefined
+      ? me.id === artifact.created_by || me.role === 'admin'
+      : rights.deleteOthersComments;
   return {
     canComment: true,
     canResolve: true,

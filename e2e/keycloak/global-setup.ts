@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { buildAnnotator } from '../support/annotator.ts';
 import { OWNER } from '../support/in-page-api.ts';
 import { type RunningPinwall, startPinwall, stopPinwall } from '../support/pinwall-server.ts';
 
@@ -15,7 +16,9 @@ const KEYCLOAK_IMAGE =
   'quay.io/keycloak/keycloak:26.8.2@sha256:723b1d6e254c0fc96d5cffec860c7e0744d6a3277822b865bb538cf891575e41';
 
 const KEYCLOAK_PORT = 18180;
-const PINWALL_PORT = 18096;
+/** The team-mode Pinwall (`sign-in.spec.ts`) and the personal-mode one (`spaces.spec.ts`). */
+const TEAM_PORT = 18096;
+const SPACES_PORT = 18097;
 const REALM_FILE = join(import.meta.dirname, 'realm.json');
 
 /** The first start pulls the image, so `docker run` gets time for that. */
@@ -120,12 +123,29 @@ async function createOwner(pinwall: RunningPinwall): Promise<void> {
   }
 }
 
+/** What both Pinwalls need to sign people in through the realm's `pinwall` client. */
+const OIDC_ENV = {
+  PINWALL_OIDC_ISSUER: ISSUER,
+  PINWALL_OIDC_CLIENT_ID: 'pinwall',
+  PINWALL_OIDC_CLIENT_SECRET: 'pinwall-e2e-client-secret',
+  PINWALL_OIDC_DISPLAY_NAME: 'Keycloak',
+  PINWALL_OIDC_ROLES_CLAIM: 'groups',
+  PINWALL_OIDC_ADMIN_GROUPS: 'pinwall-admins',
+  // Keycloak runs on plain http on this machine; Pinwall refuses that unless told.
+  PINWALL_OIDC_ALLOW_HTTP_ISSUER: 'true',
+};
+
 /**
- * Starts Keycloak with the `pinwall` realm imported, then Pinwall against it. The workers start
- * after this; they only need the two origins, which the config fixes.
+ * Starts Keycloak with the `pinwall` realm imported, then two Pinwalls against it: a team one
+ * that admits only the group `pinwall-members`, and a personal one that admits everybody
+ * (`PINWALL_OIDC_MEMBER_GROUPS` unset is open sign-up), keeps each person's space to themselves
+ * and lets only approved people expose content. The workers start after this; they only need
+ * the origins, which the config fixes.
  */
 export default async function globalSetup(): Promise<void> {
   try {
+    // The personal walks open pages for review, and the server injects the annotator into them.
+    buildAnnotator();
     // A container left by a run that was killed would block the name.
     await removeContainer();
     // The password is random per run and reaches Docker through the environment, so it is in
@@ -151,21 +171,23 @@ export default async function globalSetup(): Promise<void> {
       { ...process.env, KC_BOOTSTRAP_ADMIN_PASSWORD: randomBytes(24).toString('base64url') },
     );
     await waitForRealm();
-    const pinwall = await startPinwall({
-      port: PINWALL_PORT,
+    const team = await startPinwall({
+      port: TEAM_PORT,
+      env: { ...OIDC_ENV, PINWALL_OIDC_MEMBER_GROUPS: 'pinwall-members' },
+    });
+    await createOwner(team);
+    const spaces = await startPinwall({
+      port: SPACES_PORT,
       env: {
-        PINWALL_OIDC_ISSUER: ISSUER,
-        PINWALL_OIDC_CLIENT_ID: 'pinwall',
-        PINWALL_OIDC_CLIENT_SECRET: 'pinwall-e2e-client-secret',
-        PINWALL_OIDC_DISPLAY_NAME: 'Keycloak',
-        PINWALL_OIDC_ROLES_CLAIM: 'groups',
-        PINWALL_OIDC_ADMIN_GROUPS: 'pinwall-admins',
-        PINWALL_OIDC_MEMBER_GROUPS: 'pinwall-members',
-        // Keycloak runs on plain http on this machine; Pinwall refuses that unless told.
-        PINWALL_OIDC_ALLOW_HTTP_ISSUER: 'true',
+        ...OIDC_ENV,
+        PINWALL_VISIBILITY: 'personal',
+        PINWALL_SHARE_LINKS: 'approved',
+        PINWALL_ABUSE_CONTACT: 'abuse@example.test',
+        PINWALL_TERMS_URL: 'https://example.test/terms',
+        PINWALL_PRIVACY_URL: 'https://example.test/privacy',
       },
     });
-    await createOwner(pinwall);
+    await createOwner(spaces);
   } catch (error) {
     await cleanUpKeycloakRun();
     throw error;

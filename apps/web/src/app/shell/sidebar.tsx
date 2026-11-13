@@ -1,4 +1,5 @@
 import type { UseQueryResult } from '@tanstack/react-query';
+import type { TFunction } from 'i18next';
 import {
   ChevronRight,
   LayoutGrid,
@@ -14,6 +15,7 @@ import { Link, NavLink } from 'react-router';
 import { type ApiError, errorMessage } from '../../api/client.ts';
 import type { Project } from '../../api/dto.ts';
 import { useProjects, useRecent } from '../../api/library.ts';
+import { splitProjects } from '../../api/spaces.ts';
 import {
   ariaKeyShortcuts,
   Button,
@@ -49,6 +51,7 @@ function NavRow({
   to,
   end,
   icon,
+  note,
   onNavigate,
   className,
   children,
@@ -56,18 +59,32 @@ function NavRow({
   to: string;
   end?: boolean;
   icon?: ReactNode;
+  /** A second, quieter line under the label. */
+  note?: string;
   onNavigate?: () => void;
   className?: string;
   children: ReactNode;
 }) {
   return (
-    <NavLink to={to} end={end} onClick={onNavigate} className={cn(ROW, className, ROW_ACTIVE)}>
+    <NavLink
+      to={to}
+      end={end}
+      onClick={onNavigate}
+      className={cn(ROW, note && 'h-auto py-1.5', className, ROW_ACTIVE)}
+    >
       {icon ? (
         <span aria-hidden="true" className="inline-flex text-fg-muted">
           {icon}
         </span>
       ) : null}
-      <span className="min-w-0 flex-1 truncate">{children}</span>
+      {note ? (
+        <span className="min-w-0 flex-1">
+          <span className="block truncate">{children}</span>
+          <span className="block truncate text-fg-muted text-xs">{note}</span>
+        </span>
+      ) : (
+        <span className="min-w-0 flex-1 truncate">{children}</span>
+      )}
     </NavLink>
   );
 }
@@ -88,6 +105,32 @@ interface LinkItem {
   id: string;
   to: string;
   label: string;
+  note?: string;
+}
+
+/** The rows of a list of links, one per item. */
+function LinkRows({
+  items,
+  labelledBy,
+  onNavigate,
+  rowClassName,
+}: {
+  items: LinkItem[];
+  labelledBy: string;
+  onNavigate?: () => void;
+  rowClassName?: string;
+}) {
+  return (
+    <ul aria-labelledby={labelledBy} className="flex flex-col gap-px">
+      {items.map((item) => (
+        <li key={item.id}>
+          <NavRow to={item.to} note={item.note} onNavigate={onNavigate} className={rowClassName}>
+            {item.label}
+          </NavRow>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 /**
@@ -118,15 +161,12 @@ function LinkList({
       return <p className="px-2.5 py-1.5 text-fg-muted text-sm">{emptyText}</p>;
     }
     return (
-      <ul aria-labelledby={labelledBy} className="flex flex-col gap-px">
-        {items.map((item) => (
-          <li key={item.id}>
-            <NavRow to={item.to} onNavigate={onNavigate} className={rowClassName}>
-              {item.label}
-            </NavRow>
-          </li>
-        ))}
-      </ul>
+      <LinkRows
+        items={items}
+        labelledBy={labelledBy}
+        onNavigate={onNavigate}
+        rowClassName={rowClassName}
+      />
     );
   }
   if (query.isError) {
@@ -150,32 +190,66 @@ function LinkList({
 }
 
 /** The default project leads; the rest keep the server's order (oldest first). */
-function projectLinks(projects: Project[] | undefined): LinkItem[] {
-  return [...(projects ?? [])]
-    .sort((a, b) => Number(b.is_default) - Number(a.is_default))
-    .map((project) => ({ id: project.id, to: `/projects/${project.id}`, label: project.name }));
+function defaultFirst(projects: Project[]): Project[] {
+  return [...projects].sort((a, b) => Number(b.is_default) - Number(a.is_default));
+}
+
+/**
+ * What a project shared with the person says under its name: whose it is and
+ * what they may do in it. Their own projects, and every project in team mode,
+ * say nothing.
+ */
+function sharedNote(project: Project, t: TFunction): string | undefined {
+  if (project.role !== 'editor' && project.role !== 'viewer') return undefined;
+  return t('web.sidebar.sharedBy', {
+    owner: project.owner?.name ?? t('web.project.someone'),
+    role: project.role === 'editor' ? t('web.role.editor') : t('web.role.viewer'),
+  });
+}
+
+function projectLinks(projects: Project[], t: TFunction): LinkItem[] {
+  return projects.map((project) => ({
+    id: project.id,
+    to: `/projects/${project.id}`,
+    label: project.name,
+    note: sharedNote(project, t),
+  }));
 }
 
 function ProjectsSection({ onNavigate }: { onNavigate?: () => void }) {
   const { t } = useTranslation();
   const projects = useProjects(false);
   const headingId = useId();
+  const sharedHeadingId = useId();
   const archivedId = useId();
   const archivedButtonId = useId();
   // The archived list loads only once someone asks for it.
   const [archivedOpen, setArchivedOpen] = useState(false);
+  // In team mode every project is the person's own, so nothing is shared.
+  const { own, shared } = splitProjects(projects.data?.items ?? []);
 
   return (
     <div>
       <SectionHeading id={headingId}>{t('web.sidebar.projects')}</SectionHeading>
       <LinkList
         query={projects}
-        items={projectLinks(projects.data?.items)}
+        items={projectLinks(defaultFirst(own), t)}
         labelledBy={headingId}
         loadingLabel={t('web.sidebar.loadingProjects')}
         emptyText={t('web.sidebar.noProjects')}
         onNavigate={onNavigate}
       />
+      {/* Shown only once there is something shared; the Projects list above already loads and fails for both. */}
+      {shared.length > 0 ? (
+        <>
+          <SectionHeading id={sharedHeadingId}>{t('web.sidebar.shared')}</SectionHeading>
+          <LinkRows
+            items={projectLinks(shared, t)}
+            labelledBy={sharedHeadingId}
+            onNavigate={onNavigate}
+          />
+        </>
+      ) : null}
       <button
         id={archivedButtonId}
         type="button"
@@ -209,7 +283,7 @@ function ArchivedProjects({ buttonId, onNavigate }: { buttonId: string; onNaviga
   return (
     <LinkList
       query={projects}
-      items={projectLinks(projects.data?.items)}
+      items={projectLinks(defaultFirst(projects.data?.items ?? []), t)}
       labelledBy={buttonId}
       loadingLabel={t('web.sidebar.loadingArchived')}
       emptyText={t('web.sidebar.noArchived')}

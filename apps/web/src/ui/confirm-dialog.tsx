@@ -17,6 +17,8 @@ export function ConfirmDialog({
   body,
   confirmLabel,
   tone = 'default',
+  children,
+  confirmDisabled = false,
   onConfirm,
   errorMessage,
 }: {
@@ -26,6 +28,10 @@ export function ConfirmDialog({
   body: ReactNode;
   confirmLabel: string;
   tone?: 'default' | 'danger';
+  /** Controls under the body, such as a field the person must fill in before Confirm works. */
+  children?: ReactNode;
+  /** Holds Confirm back; a running action still shows it busy. */
+  confirmDisabled?: boolean;
   // biome-ignore lint/suspicious/noConfusingVoidType: a sync handler may return nothing
   onConfirm(): Promise<unknown> | void;
   /** Turns a rejection into text. Defaults to the error's message. */
@@ -89,6 +95,7 @@ export function ConfirmDialog({
               <AlertDialog.Description asChild>
                 <div className="mt-2 text-base text-fg-muted">{body}</div>
               </AlertDialog.Description>
+              {children ? <div className="mt-4">{children}</div> : null}
               {error ? (
                 <p
                   role="alert"
@@ -109,6 +116,7 @@ export function ConfirmDialog({
                 ref={confirmButton}
                 variant={tone === 'danger' ? 'danger' : 'primary'}
                 loading={busy}
+                disabled={confirmDisabled}
                 onClick={(event) => {
                   // The second click of a double click is the same intent, not a retry.
                   if (event.detail > 1) return;

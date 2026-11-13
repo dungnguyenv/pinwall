@@ -31,7 +31,7 @@ function PageSkeleton() {
 
 /**
  * The frame of every page under `/admin`: a heading and the links between
- * its two pages. Only admins reach it (`RequireAdmin` wraps it in the routes),
+ * its pages. Only admins reach it (`RequireAdmin` wraps it in the routes),
  * so nothing below it loads for anyone else.
  */
 export function AdminLayout() {
@@ -42,6 +42,8 @@ export function AdminLayout() {
       <nav aria-label={t('web.admin.nav')} className="mb-6 border-border border-b">
         <ul className="flex items-center gap-5 overflow-x-auto [scrollbar-width:none]">
           <AdminLink to="/admin/users">{t('web.admin.users')}</AdminLink>
+          <AdminLink to="/admin/share-links">{t('web.admin.links')}</AdminLink>
+          <AdminLink to="/admin/lookup">{t('web.admin.lookup')}</AdminLink>
           <AdminLink to="/admin/config">{t('web.admin.configuration')}</AdminLink>
         </ul>
       </nav>

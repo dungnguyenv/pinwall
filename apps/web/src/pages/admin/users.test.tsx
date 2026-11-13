@@ -138,7 +138,7 @@ test('the page opens the user list and names itself', async () => {
     within(nav)
       .getAllByRole('link')
       .map((link) => link.textContent),
-  ).toEqual(['Users', 'Configuration']);
+  ).toEqual(['Users', 'Share links', 'Look up a link', 'Configuration']);
   expect(within(nav).getByRole('link', { name: 'Users' })).toHaveAttribute('aria-current', 'page');
 });
 
@@ -426,17 +426,17 @@ test('the users stack as cards with the same controls on a phone', async () => {
   expect(within(own).getByText(t('auth.ownRole'))).toBeInTheDocument();
 });
 
-test('the table needs 1100 px of content, so a narrower content area gets cards', async () => {
-  // The open sidebar (264 px), its border, the page gutters (2 x 32 px) and a
-  // scrollbar leave about 1100 px of content from 1450 px of window.
+test('the table needs 1136 px of content, so a narrower content area gets cards', async () => {
+  // The content stops growing at 1136 px; the open sidebar (264 px), its border
+  // and a scrollbar leave that much from about 1480 px of window.
   serveAdminUsers({ users: people() });
-  setViewport(1449);
+  setViewport(1499);
   renderRoute('/admin/users');
 
   expect(await screen.findByRole('list', { name: 'Users' })).toBeInTheDocument();
   expect(screen.queryByRole('table')).not.toBeInTheDocument();
 
-  setViewport(1450);
+  setViewport(1500);
   expect(await usersTable()).toBeInTheDocument();
   expect(screen.queryByRole('list', { name: 'Users' })).not.toBeInTheDocument();
 });

@@ -39,6 +39,9 @@ const SecurityPage = lazy(() =>
 const TokensPage = lazy(() =>
   import('../pages/settings/tokens-page.tsx').then((m) => ({ default: m.TokensPage })),
 );
+const UsagePage = lazy(() =>
+  import('../pages/settings/usage-page.tsx').then((m) => ({ default: m.UsagePage })),
+);
 const SignInPage = lazy(() =>
   import('../pages/auth/sign-in-page.tsx').then((m) => ({ default: m.SignInPage })),
 );
@@ -53,6 +56,12 @@ const AdminLayout = lazy(() =>
 );
 const UsersPage = lazy(() =>
   import('../pages/admin/users-page.tsx').then((m) => ({ default: m.UsersPage })),
+);
+const ShareLinksPage = lazy(() =>
+  import('../pages/admin/share-links-page.tsx').then((m) => ({ default: m.ShareLinksPage })),
+);
+const LookupPage = lazy(() =>
+  import('../pages/admin/lookup-page.tsx').then((m) => ({ default: m.LookupPage })),
 );
 const ConfigPage = lazy(() =>
   import('../pages/admin/config-page.tsx').then((m) => ({ default: m.ConfigPage })),
@@ -142,6 +151,8 @@ export function buildRoutes(): RouteObject[] {
               ),
             },
             { path: 'tokens', element: <TokensPage /> },
+            // Without a quota to show, the page sends people back to the profile.
+            { path: 'usage', element: <UsagePage /> },
           ],
         },
         { path: 'connect', element: <ConnectPage /> },
@@ -156,6 +167,8 @@ export function buildRoutes(): RouteObject[] {
           children: [
             { index: true, element: <Navigate to="users" replace /> },
             { path: 'users', element: <UsersPage /> },
+            { path: 'share-links', element: <ShareLinksPage /> },
+            { path: 'lookup', element: <LookupPage /> },
             { path: 'config', element: <ConfigPage /> },
           ],
         },

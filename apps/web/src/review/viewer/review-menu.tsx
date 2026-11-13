@@ -5,6 +5,7 @@ import {
   ExternalLink,
   Keyboard,
   Link2,
+  Lock,
   Maximize,
   RotateCcw,
   Trash2,
@@ -12,12 +13,15 @@ import {
 import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { errorMessage } from '../../api/client.ts';
-import type { ArtifactSummary, Me } from '../../api/dto.ts';
+import type { ArtifactSummary, VersionSummary } from '../../api/dto.ts';
 import { useMe } from '../../api/session.ts';
+import { mayExpose, useArtifactRights } from '../../api/spaces.ts';
 import { rawPath, refreshVersions, restoreVersion, reviewPath } from '../../api/versions.ts';
 import { useGoTo } from '../../lib/navigation.ts';
 import {
+  Button,
   copyText,
+  Dialog,
   IconButton,
   Menu,
   MenuContent,
@@ -29,15 +33,15 @@ import {
 import { DeleteArtifactDialog, DeleteVersionDialog } from './delete-dialogs.tsx';
 import { keysOf } from './shortcuts.ts';
 
-/** Whether `me` may delete the artifact or any of its versions, as the server decides: an admin or its publisher. */
-export function canDelete(me: Me, artifact: { created_by: string | null }): boolean {
-  return me.role === 'admin' || artifact.created_by === me.id;
-}
+// The 1.0 rule now lives in the rights module, which team mode runs; it is still exported here.
+export { canDelete } from '../../api/spaces.ts';
 
 export interface ReviewMenuProps {
   artifact: ArtifactSummary;
   /** The version on screen; null when the artifact has none. */
   shown: number | null;
+  /** The version on screen as the server describes it; null or absent while it is not known. */
+  shownVersion?: VersionSummary | null;
   /** Whether the review follows the latest version (`/a/:id`) rather than showing the one in its address. */
   follow: boolean;
   /** How many versions the artifact has, as far as is known: 0 until its list is read. */
@@ -51,15 +55,22 @@ export interface ReviewMenuProps {
 /**
  * More actions on the review screen: the page's links, full screen, the
  * keyboard shortcuts, and the version actions: restore the version on screen
- * as the current one, delete it, or delete the artifact. Deleting asks first,
- * with the warning about backups; the server decides who may.
+ * as the current one, delete it, or delete the artifact. Each version action
+ * shows only when the person's rights allow it. Deleting asks first, with the
+ * warning about backups; the server decides who may. A person whom the
+ * server's policy does not let open raw links (an admin has to approve them)
+ * gets one item in their place that says so, and no link to `/raw` at all.
  */
 export function ReviewMenu(p: ReviewMenuProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const goTo = useGoTo();
-  const me = useMe().data;
   const { artifact, shown } = p;
+  const rights = useArtifactRights(artifact);
+  const me = useMe().data;
+  // Without a `me` (never inside the shell) the 1.0 rule applies: raw links are open to everyone.
+  const rawAllowed = me == null || mayExpose(me);
+  const [rawExplained, setRawExplained] = useState(false);
   const [restoring, setRestoring] = useState(false);
   // The version a deletion asks about stays as it was when the menu item was chosen,
   // even if the review moves on while the dialog is open.
@@ -74,9 +85,11 @@ export function ReviewMenu(p: ReviewMenuProps) {
   const rawHref = rawPath(artifact.id, pinned);
 
   const current = artifact.current_version;
-  const mayRestore = shown !== null && current !== null && shown !== current.number;
-  const mayDelete = me != null && canDelete(me, artifact);
-  const mayDeleteVersion = mayDelete && shown !== null && p.versionCount > 1;
+  const mayRestore =
+    rights.publish && shown !== null && current !== null && shown !== current.number;
+  const mayDelete = rights.deleteArtifact;
+  const mayDeleteVersion =
+    shown !== null && rights.deleteVersion(p.shownVersion ?? null, p.versionCount);
 
   async function copyLink(path: string) {
     if (await copyText(window.location.origin + path)) toast.success(t('web.comments.linkCopied'));
@@ -113,17 +126,25 @@ export function ReviewMenu(p: ReviewMenuProps) {
         <MenuContent align="end">
           {shown === null ? null : (
             <>
-              <MenuItem asChild icon={<ExternalLink />}>
-                <a href={rawHref} target="_blank" rel="noopener noreferrer">
-                  {t('web.review.openRaw')}
-                </a>
-              </MenuItem>
+              {rawAllowed ? (
+                <MenuItem asChild icon={<ExternalLink />}>
+                  <a href={rawHref} target="_blank" rel="noopener noreferrer">
+                    {t('web.review.openRaw')}
+                  </a>
+                </MenuItem>
+              ) : (
+                <MenuItem icon={<Lock />} onSelect={() => setRawExplained(true)}>
+                  {t('web.review.rawUnavailable')}
+                </MenuItem>
+              )}
               <MenuItem icon={<Link2 />} onSelect={() => void copyLink(reviewHref)}>
                 {t('web.review.copyReviewLink')}
               </MenuItem>
-              <MenuItem icon={<Copy />} onSelect={() => void copyLink(rawHref)}>
-                {t('web.review.copyRawLink')}
-              </MenuItem>
+              {rawAllowed ? (
+                <MenuItem icon={<Copy />} onSelect={() => void copyLink(rawHref)}>
+                  {t('web.review.copyRawLink')}
+                </MenuItem>
+              ) : null}
             </>
           )}
           {p.extra}
@@ -133,7 +154,7 @@ export function ReviewMenu(p: ReviewMenuProps) {
           <MenuItem icon={<Keyboard />} shortcut={keysOf('shortcuts')} onSelect={p.onShortcuts}>
             {t('web.shortcuts.title')}
           </MenuItem>
-          {mayRestore || mayDelete ? <MenuSeparator /> : null}
+          {mayRestore || mayDeleteVersion || mayDelete ? <MenuSeparator /> : null}
           {mayRestore ? (
             <MenuItem icon={<RotateCcw />} disabled={restoring} onSelect={() => void restore()}>
               {t('web.review.restore', { number: shown })}
@@ -154,6 +175,18 @@ export function ReviewMenu(p: ReviewMenuProps) {
           ) : null}
         </MenuContent>
       </Menu>
+      <Dialog
+        open={rawExplained}
+        onOpenChange={setRawExplained}
+        size="sm"
+        title={t('web.review.rawUnavailable')}
+        description={t('spaces.exposure.rawLink')}
+        footer={
+          <Button variant="secondary" onClick={() => setRawExplained(false)}>
+            {t('web.common.close')}
+          </Button>
+        }
+      />
       {deletingVersion ? (
         <DeleteVersionDialog
           artifact={artifact}

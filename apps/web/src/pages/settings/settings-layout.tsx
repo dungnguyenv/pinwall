@@ -37,7 +37,8 @@ function PageSkeleton() {
 /**
  * The frame of every page under `/settings`: a heading and the links between
  * its pages. Security belongs to the owner account, so single sign-on users
- * do not see it; their sign-in lives at their identity provider.
+ * do not see it; their sign-in lives at their identity provider. Usage shows
+ * only when the server sends it: in personal mode, or when a quota applies.
  */
 export function SettingsLayout() {
   const { t } = useTranslation();
@@ -54,6 +55,9 @@ export function SettingsLayout() {
               <SettingsLink to="/settings/security">{t('web.settings.security')}</SettingsLink>
             ) : null}
             <SettingsLink to="/settings/tokens">{t('web.settings.tokens')}</SettingsLink>
+            {me?.usage ? (
+              <SettingsLink to="/settings/usage">{t('web.settings.usage')}</SettingsLink>
+            ) : null}
           </ul>
         </nav>
         <div className="flex min-w-0 flex-1 flex-col gap-6 md:max-w-(--content-form)">

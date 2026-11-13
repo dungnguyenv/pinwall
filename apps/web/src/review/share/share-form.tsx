@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Eye, EyeOff } from 'lucide-react';
 import { type FormEvent, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { errorMessage } from '../../api/client.ts';
+import { errorMessage, isApiError } from '../../api/client.ts';
 import {
   type CreatedShareLink,
   PASSWORD_MAX_LENGTH,
@@ -42,7 +42,9 @@ function passwordLength(password: string): number {
  * to `onCreated` and nowhere else. `shown` is the version on screen, or null
  * when it is not known (its page of the list is not read), which leaves only
  * the latest version to choose. The submit button is outside, in the dialog's
- * footer, and names this form by `formId`.
+ * footer, and names this form by `formId`. A request the server refuses because the
+ * person is no longer approved to share goes to `onRefused` instead of showing as an
+ * error: the dialog explains it. Every other failure shows in the form.
  */
 export function ShareForm({
   artifactId,
@@ -50,12 +52,14 @@ export function ShareForm({
   formId,
   onPending,
   onCreated,
+  onRefused,
 }: {
   artifactId: string;
   shown: VersionSummary | null;
   formId: string;
   onPending(pending: boolean): void;
   onCreated(created: CreatedShareLink): void;
+  onRefused?(reason: 'share_links_not_approved'): void;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -110,7 +114,15 @@ export function ShareForm({
       void queryClient.invalidateQueries({ queryKey: qk.artifactLists });
       onCreated(created);
     } catch (error) {
-      setFormError(errorMessage(error, t));
+      if (
+        onRefused &&
+        isApiError(error, 'forbidden') &&
+        error.details?.reason === 'share_links_not_approved'
+      ) {
+        onRefused('share_links_not_approved');
+      } else {
+        setFormError(errorMessage(error, t));
+      }
     } finally {
       busy.current = false;
       onPending(false);

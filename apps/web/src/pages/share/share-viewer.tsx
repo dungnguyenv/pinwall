@@ -14,6 +14,8 @@ import { useTranslation } from 'react-i18next';
 import { ApiError } from '../../api/client.ts';
 import type { CommentThread, LiveEvent, ShareInfo } from '../../api/dto.ts';
 import { qk } from '../../api/keys.ts';
+import { usePublicConfig } from '../../api/session.ts';
+import { ReportAbuseLink } from '../../app/policy-links.tsx';
 import i18n from '../../i18n.ts';
 import { PHONE_QUERY, useMediaQuery } from '../../lib/media.ts';
 import { usePageTitle } from '../../lib/page-title.ts';
@@ -452,7 +454,8 @@ export function ShareViewer({
 /**
  * The share viewer's bar: the Pinwall pin, the artifact's name as the page's
  * heading, the version (marked Latest when the link follows new versions),
- * then Open original, and comment mode and the comments when the link allows
+ * then Report abuse when the people who run this Pinwall gave a contact, Open
+ * original, and comment mode and the comments when the link allows
  * them. No way into the app: guests have no account.
  */
 function ShareBar({
@@ -473,6 +476,7 @@ function ShareBar({
   onComments(): void;
 }) {
   const { t } = useTranslation();
+  const config = usePublicConfig().data;
   return (
     <header className="flex h-11 shrink-0 items-center gap-1 border-border border-b bg-canvas pr-2 pl-3 md:gap-1.5 md:pr-3">
       <PinMark size={20} title={t('app.name')} />
@@ -490,6 +494,7 @@ function ShareBar({
         ) : null}
       </div>
       <div className="min-w-2 flex-1" />
+      {config ? <ReportAbuseLink config={config} /> : null}
       <Button
         asChild
         variant="ghost"

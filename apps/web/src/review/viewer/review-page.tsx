@@ -14,6 +14,7 @@ import type {
 import { qk } from '../../api/keys.ts';
 import { useArtifact, useProject } from '../../api/library.ts';
 import { useMe } from '../../api/session.ts';
+import { useArtifactRights } from '../../api/spaces.ts';
 import { reviewPath, useReviewGrant, useVersion, useVersions } from '../../api/versions.ts';
 import { PageHeader } from '../../app/shell/page-header.tsx';
 import { PHONE_QUERY, useMediaQuery } from '../../lib/media.ts';
@@ -225,9 +226,10 @@ function Review({
   // Comments. A new one is written on the version whose page the frame shows (`held`, which
   // during a switch is still the version before), and sent with that version's id.
   const backend = useMemo(() => memberBackend(artifactId), [artifactId]);
+  const rights = useArtifactRights(artifact);
   const permissions = useMemo(
-    () => memberPermissions(me, { created_by: artifact.created_by }),
-    [me, artifact.created_by],
+    () => memberPermissions(me, { created_by: artifact.created_by }, rights),
+    [me, artifact.created_by, rights],
   );
   const lookupVersion = (n: number): VersionLookup => {
     const known = knownVersion(n);

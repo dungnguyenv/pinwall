@@ -38,16 +38,19 @@ function carriesFiles(event: DragEvent): boolean {
 /**
  * Covers the window while files are dragged over it and publishes what is
  * dropped anywhere on it. Drags of text, links or the page's own images are
- * left alone. In an archived project it says why nothing can be dropped, and
- * a drop does nothing (not even the browser opening the file).
+ * left alone. When `disabled` it says why nothing can be dropped (by default
+ * that the project is archived; `reason` says otherwise), and a drop does
+ * nothing, not even the browser opening the file.
  */
 export function DropOverlay({
   label,
   disabled = false,
+  reason,
   onSelection,
 }: {
   label: string;
   disabled?: boolean;
+  reason?: string;
   onSelection(s: UploadSelection): void;
 }) {
   const { t } = useTranslation();
@@ -136,7 +139,9 @@ export function DropOverlay({
           <PinMark size={52} className="mb-1 animate-pin-drop" />
         )}
         <p className="max-w-md text-balance font-semibold text-fg text-xl [overflow-wrap:anywhere]">
-          {disabled ? t('web.upload.archived') : t('web.upload.dropHere', { project: label })}
+          {disabled
+            ? (reason ?? t('web.upload.archived'))
+            : t('web.upload.dropHere', { project: label })}
         </p>
         {disabled ? null : <p className="text-base text-fg-muted">{t('web.upload.hint')}</p>}
       </div>

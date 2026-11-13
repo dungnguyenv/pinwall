@@ -180,7 +180,7 @@ test('setup → sign-in → create project → upload a folder → see it in the
 });
 
 test('main pages have no accessibility violations', async ({ page, context }) => {
-  // Ten pages, two viewports, two color schemes: forty page loads, each scanned.
+  // Twelve pages, two viewports, two color schemes: forty-eight page loads, each scanned.
   test.setTimeout(120_000);
   expect(made.projectId, 'the walk above creates the project').toBeTruthy();
   expect(made.artifactId, 'the walk above creates the artifact').toBeTruthy();
@@ -194,6 +194,8 @@ test('main pages have no accessibility violations', async ({ page, context }) =>
     '/settings/tokens',
     '/connect',
     '/admin/users',
+    '/admin/share-links',
+    '/admin/lookup',
     '/admin/config',
   ];
   const viewports = [

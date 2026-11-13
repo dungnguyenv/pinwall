@@ -8,7 +8,15 @@ import { cn, LoadingRegion, Logo, Skeleton } from '../../ui/index.ts';
  * centered on the canvas. On phones the card's frame drops away and its
  * content sits on the canvas with the usual 16 px gutter.
  */
-function Frame({ wide = false, children }: { wide?: boolean; children: ReactNode }) {
+function Frame({
+  wide = false,
+  footer,
+  children,
+}: {
+  wide?: boolean;
+  footer?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <main className="flex min-h-dvh flex-col items-center bg-canvas px-4 pt-14 pb-12 sm:justify-center sm:py-12">
       <div className={cn('w-full', wide ? 'max-w-120' : 'max-w-100')}>
@@ -19,26 +27,32 @@ function Frame({ wide = false, children }: { wide?: boolean; children: ReactNode
         <div className="sm:rounded-xl sm:border sm:border-border sm:bg-surface sm:px-8 sm:py-9 sm:shadow-card">
           {children}
         </div>
+        {footer ? <div className="mt-6">{footer}</div> : null}
       </div>
     </main>
   );
 }
 
-/** A sign-in or setup screen: its title, an optional line under it, then the content. */
+/**
+ * A sign-in or setup screen: its title, an optional line under it, then the
+ * content. A `footer` sits under the card, on the canvas.
+ */
 export function AuthLayout({
   title,
   description,
   wide,
+  footer,
   children,
 }: {
   title: string;
   description?: string;
   /** The setup form's width (480 px) instead of sign-in's (400 px). */
   wide?: boolean;
+  footer?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <Frame wide={wide}>
+    <Frame wide={wide} footer={footer}>
       <h1 className="text-balance text-center font-semibold text-2xl text-fg tracking-tight wrap-anywhere">
         {title}
       </h1>

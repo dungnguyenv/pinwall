@@ -130,8 +130,16 @@ export function useCreateProject(): UseMutationResult<Project, ApiError, CreateP
   });
 }
 
-export function useProject(id: string): UseQueryResult<Project, ApiError> {
-  return useQuery<Project, ApiError>({ queryKey: qk.project(id), queryFn: () => getProject(id) });
+/** One project; with `enabled: false` it is not read (default: it is). */
+export function useProject(
+  id: string,
+  o: { enabled?: boolean } = {},
+): UseQueryResult<Project, ApiError> {
+  return useQuery<Project, ApiError>({
+    queryKey: qk.project(id),
+    queryFn: () => getProject(id),
+    enabled: o.enabled,
+  });
 }
 
 /**

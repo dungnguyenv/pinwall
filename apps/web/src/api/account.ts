@@ -16,6 +16,8 @@ import {
   Me,
   Passkey,
   PasskeyList,
+  type PurgeRequest,
+  PurgeResult,
   type UpdateProfileRequest,
 } from './dto.ts';
 import { qk } from './keys.ts';
@@ -82,6 +84,18 @@ export function createToken(body: CreateApiTokenRequest): Promise<CreatedApiToke
 
 export function revokeToken(id: string): Promise<void> {
   return api(`/me/tokens/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+/**
+ * Deletes everything in the signed-in person's own space: every project they
+ * own, with what is in it. `confirm_email` is their email address, or their id
+ * when they have none; the server checks it. Only `personal` mode has this
+ * route, and only a browser session may call it. Refused with 400 when the
+ * text does not match, and with 409 when new artifacts kept arriving.
+ */
+export function purgeMyContent(confirm_email: string): Promise<PurgeResult> {
+  const body: PurgeRequest = { confirm_email };
+  return api('/me/purge', { method: 'POST', body, schema: PurgeResult });
 }
 
 /** The days a new token lasts, offered in this order; `null` never expires. */
@@ -157,5 +171,20 @@ export function useRevokeToken(): UseMutationResult<void, ApiError, string> {
   return useMutation<void, ApiError, string>({
     mutationFn: revokeToken,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.tokens }),
+  });
+}
+
+/** Deletes the person's own content, then refreshes every list and `me`, whose usage fell to zero. */
+export function usePurgeMyContent(): UseMutationResult<PurgeResult, ApiError, string> {
+  const queryClient = useQueryClient();
+  return useMutation<PurgeResult, ApiError, string>({
+    mutationFn: purgeMyContent,
+    // Artifact lists include Recent; project lists, both active and archived.
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: qk.artifactLists }),
+        queryClient.invalidateQueries({ queryKey: qk.projectLists }),
+        queryClient.invalidateQueries({ queryKey: qk.me }),
+      ]),
   });
 }

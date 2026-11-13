@@ -1,15 +1,17 @@
-import { Archive, ArchiveRestore, Ellipsis, LayoutGrid, Pencil, Plug } from 'lucide-react';
+import { Archive, ArchiveRestore, Ellipsis, LayoutGrid, Pencil, Plug, Users } from 'lucide-react';
 import { type FormEvent, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router';
 import { errorMessage } from '../api/client.ts';
 import { Label, type Project } from '../api/dto.ts';
 import { useArtifacts, useProject, useUpdateProject } from '../api/library.ts';
+import { useProjectRights, useVisibility } from '../api/spaces.ts';
 import { PageHeader } from '../app/shell/page-header.tsx';
 import { formatRelativeTime } from '../lib/format.ts';
 import { usePageTitle } from '../lib/page-title.ts';
 import { ArtifactCollection, isEmptyCollection } from '../library/artifact-collection.tsx';
 import { InstructionsEditor } from '../library/instructions-editor.tsx';
+import { MembersDialog } from '../library/members/members-dialog.tsx';
 import { DropOverlay } from '../library/upload/drop-overlay.tsx';
 import { UploadButton, UploadDialog } from '../library/upload/upload-dialog.tsx';
 import { useUpload } from '../library/upload/use-upload.tsx';
@@ -154,26 +156,28 @@ function ProjectMenu({ project, onRename }: { project: Project; onRename(): void
   );
 }
 
-function ArchivedBanner({ project }: { project: Project }) {
+function ArchivedBanner({ project, canUnarchive }: { project: Project; canUnarchive: boolean }) {
   const { t } = useTranslation();
   const update = useUpdateProject(project.id);
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-lg bg-warning-soft px-4 py-3 sm:px-5">
       <Archive aria-hidden="true" className="size-4 shrink-0 text-warning" />
       <p className="min-w-0 flex-1 basis-56 text-base text-fg">{t('web.project.archivedBanner')}</p>
-      <Button
-        variant="secondary"
-        size="sm"
-        loading={update.isPending}
-        onClick={() =>
-          update.mutate(
-            { archived: false },
-            { onError: (error) => toast.error(errorMessage(error, t)) },
-          )
-        }
-      >
-        {t('web.project.unarchive')}
-      </Button>
+      {canUnarchive ? (
+        <Button
+          variant="secondary"
+          size="sm"
+          loading={update.isPending}
+          onClick={() =>
+            update.mutate(
+              { archived: false },
+              { onError: (error) => toast.error(errorMessage(error, t)) },
+            )
+          }
+        >
+          {t('web.project.unarchive')}
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -198,11 +202,17 @@ function ProjectView({ projectId }: { projectId: string }) {
   const [view, setView] = useLibraryView();
   const [renaming, setRenaming] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [membersOpen, setMembersOpen] = useState(false);
+  // Members exist only in personal mode: in team mode there is no button and no request.
+  const personal = useVisibility() === 'personal';
+  // Rights are none until the role is known, and the page waits for the project, so a
+  // control never shows for a moment and then goes.
+  const rights = useProjectRights(projectId);
   const archived = project.data?.archived_at != null;
   const upload = useUpload({
     projectId,
     projectName: project.data?.name ?? '',
-    disabled: archived,
+    disabled: archived || !rights.publish,
   });
   usePageTitle(project.data?.name ?? null);
 
@@ -221,6 +231,18 @@ function ProjectView({ projectId }: { projectId: string }) {
 
   const p = project.data;
   const newest = Math.max(p.updated_at, artifacts.data?.pages[0]?.items[0]?.updated_at ?? 0);
+  const summary = t('web.project.summary', {
+    count: p.artifact_count,
+    time: formatRelativeTime(newest),
+  });
+  // A project shared with the person says whose it is and what they may do in it.
+  const owner = p.owner?.name ?? t('web.project.someone');
+  const sharedNote =
+    p.role === 'editor'
+      ? t('web.project.sharedEditor', { owner })
+      : p.role === 'viewer'
+        ? t('web.project.sharedViewer', { owner })
+        : null;
   const uploadButton = (label: string, variant: 'primary' | 'secondary') => (
     <UploadButton
       label={label}
@@ -234,19 +256,38 @@ function ProjectView({ projectId }: { projectId: string }) {
     <>
       <PageHeader
         title={p.name}
-        description={t('web.project.summary', {
-          count: p.artifact_count,
-          time: formatRelativeTime(newest),
-        })}
+        description={
+          sharedNote ? (
+            <>
+              <span className="block">{sharedNote}</span>
+              <span className="block">{summary}</span>
+            </>
+          ) : (
+            summary
+          )
+        }
         actions={
-          <>
-            {uploadButton(t('web.upload.action'), 'primary')}
-            <ProjectMenu project={p} onRename={() => setRenaming(true)} />
-          </>
+          personal || rights.publish || rights.manageProject ? (
+            <>
+              {personal ? (
+                <Button
+                  variant="secondary"
+                  leadingIcon={<Users />}
+                  onClick={() => setMembersOpen(true)}
+                >
+                  {t('web.members.button')}
+                </Button>
+              ) : null}
+              {rights.publish ? uploadButton(t('web.upload.action'), 'primary') : null}
+              {rights.manageProject ? (
+                <ProjectMenu project={p} onRename={() => setRenaming(true)} />
+              ) : null}
+            </>
+          ) : undefined
         }
       >
-        {archived ? <ArchivedBanner project={p} /> : null}
-        <InstructionsEditor project={p} />
+        {archived ? <ArchivedBanner project={p} canUnarchive={rights.manageProject} /> : null}
+        <InstructionsEditor project={p} editable={rights.manageProject} />
       </PageHeader>
 
       {isEmptyCollection(artifacts) ? null : (
@@ -263,10 +304,12 @@ function ProjectView({ projectId }: { projectId: string }) {
           <EmptyState
             icon={<LayoutGrid />}
             title={t('web.project.emptyTitle')}
-            description={t('web.project.emptyBody')}
+            description={
+              rights.publish ? t('web.project.emptyBody') : t('web.project.viewerEmptyBody')
+            }
             action={
               <>
-                {uploadButton(t('web.upload.actionFiles'), 'secondary')}
+                {rights.publish ? uploadButton(t('web.upload.actionFiles'), 'secondary') : null}
                 <Button asChild variant="secondary" leadingIcon={<Plug />}>
                   <Link to="/connect">{t('web.project.connectAgent')}</Link>
                 </Button>
@@ -275,9 +318,21 @@ function ProjectView({ projectId }: { projectId: string }) {
           />
         }
       />
-      <RenameDialog project={p} open={renaming} onOpenChange={setRenaming} />
-      <UploadDialog open={uploadOpen} onOpenChange={setUploadOpen} upload={upload} />
-      <DropOverlay label={p.name} disabled={archived} onSelection={upload.start} />
+      {rights.manageProject ? (
+        <RenameDialog project={p} open={renaming} onOpenChange={setRenaming} />
+      ) : null}
+      {rights.publish ? (
+        <UploadDialog open={uploadOpen} onOpenChange={setUploadOpen} upload={upload} />
+      ) : null}
+      {personal ? (
+        <MembersDialog project={p} open={membersOpen} onOpenChange={setMembersOpen} />
+      ) : null}
+      <DropOverlay
+        label={p.name}
+        disabled={archived || !rights.publish}
+        reason={rights.publish ? undefined : t('web.upload.viewerOnly')}
+        onSelection={upload.start}
+      />
       {upload.inputs}
     </>
   );

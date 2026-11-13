@@ -8,6 +8,7 @@ import { passkeySignInOptions, signInWithPasskey, signInWithPassword } from '../
 import { errorMessage } from '../../api/client.ts';
 import type { Me, PublicConfig } from '../../api/dto.ts';
 import { replaceSession, useMe, usePublicConfig } from '../../api/session.ts';
+import { PolicyLinks } from '../../app/policy-links.tsx';
 import { useGoTo } from '../../lib/navigation.ts';
 import { usePageTitle } from '../../lib/page-title.ts';
 import { chooseAccountFrom, oidcStartPath, returnToFrom } from '../../lib/return-to.ts';
@@ -72,7 +73,7 @@ export function SignInPage() {
     );
   }
   return (
-    <AuthLayout title={title}>
+    <AuthLayout title={title} footer={<PolicyLinks config={config.data} terms />}>
       {config.data.setup_required ? (
         <AuthNotice icon={<Wrench />}>{t('auth.setup.required')}</AuthNotice>
       ) : (

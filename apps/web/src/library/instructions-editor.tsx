@@ -76,9 +76,16 @@ function InstructionsText({ text }: { text: string }) {
 /**
  * The project's instructions for agents, edited in place. mod+Enter saves and
  * Escape cancels; a refusal from the server shows under the box as the server
- * worded it, and the draft stays.
+ * worded it, and the draft stays. With `editable` off, whoever may only read
+ * them gets the text and no way to change it.
  */
-export function InstructionsEditor({ project }: { project: Project }) {
+export function InstructionsEditor({
+  project,
+  editable = true,
+}: {
+  project: Project;
+  editable?: boolean;
+}) {
   const { t } = useTranslation();
   const update = useUpdateProject(project.id);
   const titleId = useId();
@@ -167,7 +174,7 @@ export function InstructionsEditor({ project }: { project: Project }) {
             {t('web.instructions.help')}
           </p>
         </div>
-        {editing ? null : (
+        {editing || !editable ? null : (
           <Button
             ref={editButton}
             variant="ghost"
@@ -181,7 +188,7 @@ export function InstructionsEditor({ project }: { project: Project }) {
         )}
       </div>
 
-      {editing ? (
+      {editing && editable ? (
         <form noValidate onSubmit={onSubmit} onKeyDown={onKeyDown} className="mt-3">
           <Textarea
             ref={textarea}
@@ -242,7 +249,9 @@ export function InstructionsEditor({ project }: { project: Project }) {
       ) : text ? (
         <InstructionsText text={text} />
       ) : (
-        <p className="mt-3 text-base text-fg-muted">{t('web.instructions.empty')}</p>
+        <p className="mt-3 text-base text-fg-muted">
+          {editable ? t('web.instructions.empty') : t('web.project.noInstructions')}
+        </p>
       )}
     </section>
   );
