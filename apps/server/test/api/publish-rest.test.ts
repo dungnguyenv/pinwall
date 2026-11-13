@@ -1,5 +1,5 @@
 import { PublishResult } from '@pinwall/shared';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { UserRow } from '../../src/db/schema.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
@@ -7,7 +7,7 @@ import { makeTar, makeZip } from '../helpers/archives.ts';
 import { apiInit, createSignedInUser, createUserToken } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
-import { listen, socketPost, split } from '../helpers/socket.ts';
+import { listen, openPost, socketPost, split, watchUncaught } from '../helpers/socket.ts';
 
 const T = Date.UTC(2026, 10, 11);
 
@@ -466,6 +466,111 @@ describe.each(dialects)('publishing over REST on %s', (dialect) => {
     } finally {
       await server.close();
     }
+  });
+
+  describe('a client that resets the connection', () => {
+    /**
+     * Opens a request to `path` that sends `first` and then resets, while `hold` keeps the
+     * publish busy elsewhere; checks the request ends as a 400 that takes nothing down and keeps
+     * nothing, then that the server still publishes.
+     */
+    async function resetWhileBusy(o: {
+      path: string;
+      headers: Record<string, string>;
+      first: Buffer;
+      hold: (gate: Promise<void>, reached: () => void) => () => void;
+    }): Promise<void> {
+      const server = await listen(ctx.app, ctx.deps.config);
+      const uncaught = watchUncaught();
+      const info = vi.spyOn(ctx.deps.logger, 'info');
+      const errors = vi.spyOn(ctx.deps.logger, 'error');
+      let reached = () => {};
+      const atGate = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      let open = () => {};
+      const opened = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      const restore = o.hold(opened, reached);
+      try {
+        const request = await openPost(server.server, server.port, o.path, o.headers, o.first);
+        await atGate;
+        await request.reset();
+        // Time for the broken body to fail while nothing reads it.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        open();
+        await vi.waitFor(() =>
+          expect(info).toHaveBeenCalledWith(
+            expect.objectContaining({ path: o.path, status: 400 }),
+            'request',
+          ),
+        );
+        restore();
+        expect(uncaught.errors).toEqual([]);
+        expect(errors).not.toHaveBeenCalled();
+        expect(await versions()).toEqual([]);
+        expect(await storedBlobs()).toEqual({ rows: [], objects: [] });
+        const retry = await socketPost(server.port, '/api/v1/publish/upload', {
+          headers: formHeaders(),
+          chunks: [
+            part({ name: 'target', value: '{}' }),
+            part({ name: 'file', filename: 'index.html', body: '<p>again</p>' }),
+            Buffer.from(`--${BOUNDARY}--\r\n`),
+          ],
+        });
+        expect(retry.status).toBe(201);
+      } finally {
+        open();
+        restore();
+        uncaught.stop();
+        info.mockRestore();
+        errors.mockRestore();
+        await server.close();
+      }
+    }
+
+    test('a web upload whose next part waits unread ends as a 400', async () => {
+      await start();
+      // index.html arrives whole and is stored; the reset comes while its blob is being put,
+      // with the start of the next part read by the form but by no one else.
+      const put = ctx.deps.blobs.put.bind(ctx.deps.blobs);
+      await resetWhileBusy({
+        path: '/api/v1/publish/upload',
+        headers: formHeaders(),
+        first: Buffer.concat([
+          part({ name: 'target', value: '{}' }),
+          part({ name: 'file', filename: 'index.html', body: '<p>x</p>' }),
+          part({ name: 'file', filename: 'a.css', body: 'p{}'.repeat(100) }).subarray(0, -50),
+        ]),
+        hold: (gate, reached) => {
+          const spy = vi.spyOn(ctx.deps.blobs, 'put').mockImplementation(async (...args) => {
+            reached();
+            await gate;
+            return put(...args);
+          });
+          return () => spy.mockRestore();
+        },
+      });
+    });
+
+    test('an inline publish whose body breaks off ends as a 400', async () => {
+      await start();
+      await resetWhileBusy({
+        path: '/api/v1/publish/inline',
+        headers: {
+          cookie: member.cookie,
+          origin: ctx.deps.config.publicOrigin,
+          'content-type': 'application/json',
+        },
+        first: Buffer.from('{"target":{},"files":[{"path":"index.html","content":"<p>'),
+        // The body limit reads the body as it arrives; nothing else is busy.
+        hold: (_gate, reached) => {
+          reached();
+          return () => {};
+        },
+      });
+    });
   });
 
   test('the target and message come before the files, and paths go with every file or none', async () => {

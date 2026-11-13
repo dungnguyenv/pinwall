@@ -118,6 +118,12 @@ export function withIdleTimeout(source: Readable, ms: number): Readable {
       callback(error);
     },
   });
+  // The upload awaits its session, its user and its target before anything reads the body. A
+  // client that goes away meanwhile fails `guarded` with no reader listening, and an `error` no
+  // one listens for is an uncaught exception, which ends the process. This listener keeps it
+  // handled; whoever reads later (`pipeline`, async iteration, `peek`) attaches its own and still
+  // gets the error, as a destroyed stream reports it to every new reader.
+  guarded.on('error', () => {});
 
   source.on('data', (chunk: Buffer) => {
     if (guarded.push(chunk)) {

@@ -726,6 +726,7 @@
   "publish.warning.rootAbsolute": "{{file}} refers to {{url}} from the server root, which does not load in single-domain mode. Use a relative path.",
   "publish.versionConflict": "The artifact has a newer version (v{{number}}) than the one this publish replaces. Fetch the artifact again and publish on top of v{{number}}.",
   "publish.unsupported": "Send a tar, tar.gz or zip archive, or a single file with Content-Type text/html or text/markdown, or add ?filename=<name> to the URL.",
+  "publish.inline.interrupted": "The request was interrupted before all of it arrived. Send it again.",
   "publish.inline.textOnly": "{{path}}: inline publish takes text files only (HTML, Markdown, CSS, JavaScript, SVG, JSON). Use an upload URL for other files.",
   "publish.path.encoding": "{{path}}: the name is not valid Unicode text (it contains a lone surrogate).",
   "publish.session.used": "This upload URL was already used; it published v{{number}}. Ask for a new publish session to publish again.",

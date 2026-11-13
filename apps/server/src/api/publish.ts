@@ -15,7 +15,7 @@ import type { AppEnv } from '../app.ts';
 import { authOf, requireAuth } from '../auth/guards.ts';
 import { perUser, RATE_RULES } from '../auth/rate-limits.ts';
 import type { PublishTarget } from '../domain/versions.ts';
-import { badRequest } from '../lib/errors.ts';
+import { AppError, badRequest } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import {
   countFailedPublish,
@@ -84,16 +84,27 @@ export function messageOf(message: string | undefined): string | null {
 
 /**
  * Inline files arrive JSON-escaped, which can double their size; past twice the inline limit
- * plus room for the rest of the body, the request cannot be within the limit.
+ * plus room for the rest of the body, the request cannot be within the limit. A body without a
+ * length is read here as it arrives: one that breaks off before its end (the client went away)
+ * is a 400, as for an upload, not a server error.
  */
-const inlineBodyLimit: MiddlewareHandler<AppEnv> = (c, next) => {
+const inlineBodyLimit: MiddlewareHandler<AppEnv> = async (c, next) => {
   const max = c.var.deps.config.limits.maxInlineBytes;
-  return bodyLimit({
-    maxSize: 2 * max + 65_536,
-    onError: () => {
-      throw limitExceeded('max_inline_bytes', max);
-    },
-  })(c, next);
+  let reading = true;
+  try {
+    return await bodyLimit({
+      maxSize: 2 * max + 65_536,
+      onError: () => {
+        throw limitExceeded('max_inline_bytes', max);
+      },
+    })(c, () => {
+      reading = false;
+      return next();
+    });
+  } catch (error) {
+    if (reading && !(error instanceof AppError)) throw badRequest(t('publish.inline.interrupted'));
+    throw error;
+  }
 };
 
 const createSessionRoute = createRoute({

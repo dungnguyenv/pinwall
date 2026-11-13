@@ -21,7 +21,7 @@ import { apiInit, createSignedInUser, createUserToken } from '../helpers/auth.ts
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 import { publishFiles } from '../helpers/publish.ts';
-import { listen, socketPost, split } from '../helpers/socket.ts';
+import { listen, openPost, socketPost, split, watchUncaught } from '../helpers/socket.ts';
 
 const T = Date.UTC(2026, 10, 11);
 const URL_PATTERN = /^http:\/\/localhost:8080\/upload\/[A-Za-z0-9_-]{43}$/;
@@ -787,6 +787,68 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
         const published = (await versions()).length;
         expect((await put(s.upload_url, await site())).status).toBe(201);
         expect(await versions()).toHaveLength(published + 1);
+      }
+    });
+
+    test('a reset before the upload reads its body does not take the server down', async () => {
+      await start();
+      const s = await newSession();
+      const server = await listen(ctx.app, ctx.deps.config);
+      const uncaught = watchUncaught();
+      const info = vi.spyOn(ctx.deps.logger, 'info');
+      // The upload takes its session, then waits here, before it reads a byte of its body.
+      let reached = () => {};
+      const atGate = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      let open = () => {};
+      const opened = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      const put = ctx.deps.oneTime.put.bind(ctx.deps.oneTime);
+      const gate = vi
+        .spyOn(ctx.deps.oneTime, 'put')
+        .mockImplementation(async (key, value, ttl, opts) => {
+          await put(key, value, ttl, opts);
+          if ((value as UploadReceipt).state === 'running') {
+            reached();
+            await opened;
+          }
+        });
+      try {
+        const request = await openPost(
+          server.server,
+          server.port,
+          pathOf(s.upload_url),
+          { 'content-type': 'application/gzip' },
+          (await site()).subarray(0, 16),
+        );
+        await atGate;
+        await request.reset();
+        // Time for the broken body to fail while nothing reads it yet.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        open();
+        await vi.waitFor(() =>
+          expect(info).toHaveBeenCalledWith(
+            expect.objectContaining({ path: '/upload/:token', status: 400 }),
+            'request',
+          ),
+        );
+        gate.mockRestore();
+        expect(uncaught.errors).toEqual([]);
+        expect(await versions()).toEqual([]);
+        expect(await storedBlobs()).toEqual([]);
+        // The server still answers, and the URL was given back.
+        const retry = await socketPost(server.port, pathOf(s.upload_url), {
+          headers: CURL_HEADERS,
+          chunks: [await site()],
+        });
+        expect(retry.status).toBe(201);
+      } finally {
+        open();
+        uncaught.stop();
+        info.mockRestore();
+        await server.close();
       }
     });
 
