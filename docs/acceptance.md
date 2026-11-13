@@ -168,10 +168,10 @@ card, still pinned on the same words, shows "Resolved in v2".
 Acceptance 3 and 3b with a real Zitadel (Zitadel Cloud or your own instance).
 
 1. Set up the project, the roles `pinwall-admin` and `pinwall-member` and the application as in
-   [the README's Zitadel recipe](../README.md#zitadel), for a Pinwall reachable at the address you
+   [the Zitadel recipe](sign-in.md#zitadel), for a Pinwall reachable at the address you
    registered. Create three users: one with `pinwall-admin`, one with `pinwall-member` and one
    with no role.
-2. Start Pinwall with the README's environment lines for Zitadel, plus
+2. Start Pinwall with the recipe's environment lines for Zitadel, plus
    `PINWALL_ACCESS_RECHECK_INTERVAL=5m`, and create the owner account.
 3. Select **Continue with Zitadel** and sign in as the admin. Expected: the library, and **Admin**,
    **Users** opens.
@@ -190,7 +190,7 @@ Acceptance 3 and 3b with a real Zitadel (Zitadel Cloud or your own instance).
 Acceptance 3 with a real Google OAuth client.
 
 1. Create the OAuth client and set the variables as in
-   [the README's Google recipe](../README.md#google), with your own lists: an admin address in
+   [the Google recipe](sign-in.md#google), with your own lists: an admin address in
    `PINWALL_ADMIN_EMAILS`, a domain you control in `PINWALL_MEMBER_DOMAINS`, and a personal Gmail
    address in `PINWALL_MEMBER_EMAILS`.
 2. Sign in with each of these accounts in turn, signing out in between.
@@ -257,7 +257,7 @@ Acceptance 6 between two hosts. Optional: the automated suite already restores i
 Postgres + S3 install on one host.
 
 1. On the first host, back up an install that has artifacts, comments and a share link, with the
-   commands in [the README's backup section](../README.md#backup-and-restore), and copy the archive
+   commands in [the backup guide](backup.md#backup-and-restore), and copy the archive
    to the second host.
 2. On the second host, start a new, empty install and restore the archive into it with
    `docker exec -i <container> pinwall restore --in - < pinwall.tar`.

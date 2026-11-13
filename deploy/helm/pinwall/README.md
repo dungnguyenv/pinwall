@@ -235,8 +235,9 @@ kubectl exec deploy/pinwall -- pinwall backup --out - > pinwall-$(date +%F).tar
 kubectl exec -i deploy/pinwall -- pinwall restore --in - < pinwall.tar
 ```
 
-The second command restores into an empty installation. The [README](../../../README.md) explains
-what a backup holds and why the secret key is kept apart from it.
+The second command restores into an empty installation. The
+[backup guide](../../../docs/backup.md) explains what a backup holds and why the secret key is kept
+apart from it.
 
 ## Checking the chart
 

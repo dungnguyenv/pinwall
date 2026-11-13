@@ -21,7 +21,8 @@ release, upgrade to the latest one; the changelog says what changed.
 ## How Pinwall is built to be safe
 
 The short version, for deciding whether a report is a vulnerability. Pinwall's documents explain the
-choices behind them: [README.md](README.md) and [docs/configuration.md](docs/configuration.md).
+choices behind them: [README.md](README.md), [docs/install.md](docs/install.md#content-isolation) and
+[docs/configuration.md](docs/configuration.md).
 
 - **Artifacts are untrusted.** A page an agent publishes can run any script. In single-domain mode
   every content response carries a `Content-Security-Policy: sandbox` header without
