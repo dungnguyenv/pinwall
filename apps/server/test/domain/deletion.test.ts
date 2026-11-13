@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { ArtifactList, ArtifactSummary } from '@pinwall/shared';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { AuthContext } from '../../src/app.ts';
-import { createGrant } from '../../src/content/grants.ts';
+import { createGrant, EXPIRED_GRANT_RETENTION_MS } from '../../src/content/grants.ts';
 import type { TombstoneKind, UserRow, VersionRow } from '../../src/db/schema.ts';
 import type { AppDeps } from '../../src/deps.ts';
 import { BACKUP_LEASE, sweepBlobs } from '../../src/domain/blobs.ts';
@@ -494,14 +494,15 @@ describe.each(dialects)('deletion on %s', (dialect) => {
     expect(jobs.get('content-cleanup')?.intervalMs).toBe(3_600_000);
     expect(jobs.get('blob-sweep')?.intervalMs).toBe(600_000);
 
-    // content-cleanup removes expired grants and expired tombstones.
+    // content-cleanup removes expired tombstones, and grants once they have been expired for
+    // EXPIRED_GRANT_RETENTION_MS.
     const { version } = await publish({ 'index.html': '<p>x</p>' });
     const live = await createGrant(ctx.deps, {
       versionId: version.id,
       mode: 'raw',
       user: publisher.user,
     });
-    await createGrant(ctx.deps, {
+    const short = await createGrant(ctx.deps, {
       versionId: version.id,
       mode: 'raw',
       user: publisher.user,
@@ -516,12 +517,18 @@ describe.each(dialects)('deletion on %s', (dialect) => {
       ],
       clock.now(),
     );
+    const grants = async () =>
+      (await ctx.deps.db.db.selectFrom('content_grants').select('token').execute())
+        .map((row) => row.token)
+        .sort();
     clock.advance(10);
     await jobs.get('content-cleanup')?.fn();
-    const grants = await ctx.deps.db.db.selectFrom('content_grants').select('token').execute();
-    expect(grants).toEqual([{ token: live.token }]);
+    expect(await grants()).toEqual([live.token, short.token].sort());
     const left = await ctx.deps.db.db.selectFrom('tombstones').select('key').execute();
     expect(left).toEqual([{ key: 'art_kept' }]);
+    clock.set(short.expires_at + EXPIRED_GRANT_RETENTION_MS);
+    await jobs.get('content-cleanup')?.fn();
+    expect(await grants()).toEqual([live.token]);
 
     // blob-sweep removes blobs no version references, and temp files unwritten for an hour.
     const orphan = await storeBlob(ctx.deps, 'orphan bytes');
