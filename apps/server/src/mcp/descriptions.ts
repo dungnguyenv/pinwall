@@ -11,43 +11,51 @@ export const DESCRIPTIONS = {
       'signed in with OAuth or an API token, the address of this Pinwall, its isolation mode, ' +
       'the size limits for one publish, for an inline publish, for one file and for one ' +
       'version, the most files a version may hold, how long an upload URL stays valid, and ' +
-      'notes on writing pages that work once published. Call it when you need those limits or ' +
-      'are unsure which account you are using.',
+      'notes on writing pages that work once published. With personal spaces, or where a quota ' +
+      "is set, it also reports the space's usage and quota; where an admin must approve share " +
+      'links, it says whether this account may create them (can_create_share_links). Call it ' +
+      'when you need those limits, before a large publish, or when you are unsure which ' +
+      'account you are using.',
   },
   list_projects: {
     title: 'List projects',
     description:
-      'Lists the projects in this Pinwall, the default project first, with the number of ' +
-      'artifacts in each. Use it to find the id of the project a page belongs in. Archived ' +
-      'projects are left out unless you ask for them.',
+      'Lists the projects you can see, your default project first, with the number of ' +
+      'artifacts in each. With personal spaces that means your own projects and those shared ' +
+      'with you, each with your role in it (owner, editor or viewer); otherwise it is every ' +
+      'project in this Pinwall. Use it to find the id of the project a page belongs in. ' +
+      'Archived projects are left out unless you ask for them.',
   },
   get_project: {
     title: 'Get a project',
     description:
       'Returns one project with the instructions its owners wrote for agents that publish ' +
       'into it. Call it before you publish, and follow those instructions for everything you ' +
-      'publish in the project. Without project_id it reads the default project.',
+      'publish in the project. Without project_id it reads your default project.',
   },
   create_project: {
     title: 'Create a project',
     description:
       'Creates a project, a group of related artifacts that can carry instructions for the ' +
-      'agents publishing into it (language, colors, structure). Use it when the user asks for ' +
-      'a new project or when none of the existing ones fits.',
+      'agents publishing into it (language, colors, structure). With personal spaces it is ' +
+      'created in your space, with you as its owner. Use it when the user asks for a new ' +
+      'project or when none of the existing ones fits.',
   },
   list_artifacts: {
     title: 'List artifacts',
     description:
-      'Lists artifacts, the most recently updated first, optionally only those of one project ' +
-      'or with one tag. Each one shows its current version, its open comment threads and its ' +
-      'review link. Artifacts of archived projects appear only when you name that project.',
+      'Lists the artifacts you can see, the most recently updated first, optionally only those ' +
+      'of one project or with one tag. Each one shows its current version, its open comment ' +
+      'threads and its review link. Artifacts of archived projects appear only when you name ' +
+      'that project.',
   },
   search_artifacts: {
     title: 'Search artifacts',
     description:
-      'Finds artifacts by words in their name, tags or text; accents and capital letters do ' +
-      'not matter, and each word may be the start of a longer one. Use it when the user ' +
-      'describes a page without giving its id. The best matches come first.',
+      'Finds, among the artifacts you can see, those matching words in their name, tags or ' +
+      'text; accents and capital letters do not matter, and each word may be the start of a ' +
+      'longer one. Use it when the user describes a page without giving its id. The best ' +
+      'matches come first.',
   },
   get_artifact: {
     title: 'Get an artifact',
@@ -64,7 +72,10 @@ export const DESCRIPTIONS = {
       'published version, including its review_url. Use this whenever you can run shell ' +
       'commands. For a new version of an existing artifact pass artifact_id and ' +
       'expected_version_id (the current version id from get_artifact or your last publish); ' +
-      'otherwise a new artifact is created in project_id, or in the default project.',
+      'otherwise a new artifact is created in project_id, or in your default project. With ' +
+      'personal spaces, viewers of a project cannot publish to it. Where a quota is set, a ' +
+      'publish that does not fit the space it fills is refused as quota_exceeded: do not ' +
+      'retry, tell the user.',
   },
   publish_inline: {
     title: 'Publish text files inline',
@@ -72,8 +83,8 @@ export const DESCRIPTIONS = {
       'Publish text files passed directly in this call, for clients that cannot run shell ' +
       'commands. If you can run commands, use create_publish_session instead. Text files only ' +
       '(HTML, Markdown, CSS, JavaScript, SVG, JSON), at most {{max}} in total; paths are ' +
-      'relative and the entry page is index.html or index.md. Targets work as in ' +
-      'create_publish_session.',
+      'relative and the entry page is index.html or index.md. Targets, the rule that viewers ' +
+      'cannot publish, and the quota refusal work as in create_publish_session.',
   },
   list_comments: {
     title: 'Read comments',
@@ -110,7 +121,9 @@ export const DESCRIPTIONS = {
       'link that opens one artifact. It can follow the current version or show one version, ask ' +
       'for a password, expire after a number of days, and let viewers comment. The URL is ' +
       'returned this once and cannot be read again, so give it to the user right away. Never ' +
-      'make one to show your own work; the review_url is for that.',
+      'make one to show your own work; the review_url is for that. With personal spaces, ' +
+      'viewers of a project cannot make links, and on some Pinwalls an admin must approve ' +
+      'the account first. Such a refusal is final: do not retry, tell the user.',
   },
   list_share_links: {
     title: 'List share links',
@@ -125,7 +138,9 @@ export const DESCRIPTIONS = {
     description:
       'Only when the user asks to share less or to stop sharing a page: ends a share link at ' +
       'once, together with the content it opened. This cannot be undone; to share again, make ' +
-      "a new link. Only the link's creator, the artifact's publisher or an admin may revoke it.",
+      "a new link. With personal spaces, the project's owner may revoke any link on its " +
+      "artifacts, and an editor the links they made. Otherwise only the link's creator, the " +
+      "artifact's publisher or an admin may revoke it.",
   },
 } as const;
 

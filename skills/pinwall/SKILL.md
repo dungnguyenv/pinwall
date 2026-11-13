@@ -27,9 +27,14 @@ themselves.
 ## 2. Before publishing
 
 - Call `get_project` for the project the user named (find its id with `list_projects`), or with no
-  arguments for the default project. Follow its instructions for everything you publish there.
+  arguments for your default project. Follow its instructions for everything you publish there.
 - Call `whoami` once per session. It tells you the account, this Pinwall's size limits and its
-  `authoring_notes`; follow those notes.
+  `authoring_notes`; follow those notes. On a Pinwall with personal spaces, or with a quota, it
+  also gives `usage` and `quota` for your space: look before a large publish. Where an admin has
+  to approve share links, `can_create_share_links` says whether you may make them.
+- `list_projects` lists your own projects and, on a Pinwall with personal spaces, those shared
+  with you, each with your role: owner, editor or viewer. As a viewer you read and comment, but
+  you do not publish or share, so choose a project where you are owner or editor.
 
 ## 3. Authoring
 
@@ -79,6 +84,11 @@ When a publish is refused:
 - `upload_session_expired`: call `create_publish_session` again and run the new command.
 - `payload_too_large` from `publish_inline`: use `create_publish_session` if you can run commands;
   otherwise tell the user the page is over the inline limit.
+- `quota_exceeded`: do not retry. Tell the person that their space, or the project owner's when the
+  project is shared with you, is full. The owner of that space can delete old versions in Pinwall
+  or ask an admin for more room.
+- `forbidden` with reason `role`: you are a viewer of that project, which only lets you read and
+  comment. Do not retry; tell the user, who can ask the project's owner to make them an editor.
 
 ## 5. Report
 
@@ -113,13 +123,18 @@ share with people outside Pinwall. The link can follow the current version or sh
 (`version_id`), and you can mention that it can ask for a `password` and expire after
 `expires_in_days`; `allow_comments` lets its viewers comment. The URL appears only in that result
 and cannot be read again, so hand it to the user straight away. On request, `list_share_links`
-shows an artifact's links (without URLs) and `revoke_share_link` ends one by its `share_link_id`.
+shows an artifact's links (without URLs) and `revoke_share_link` ends one by its `share_link_id`:
+the project's owner may revoke any link on its artifacts, an editor the links they made.
+
+On some Pinwalls an admin has to approve an account before it may share. `forbidden` with
+`share_links_not_approved` means this one is not approved yet: do not retry, and tell the user
+that an admin has to approve the account first. Viewers get the `role` refusal here too.
 
 ## 8. Tool reference
 
-- `whoami`: the account, how it connected, size limits, upload URL lifetime, authoring notes.
-- `list_projects`: projects with their ids and artifact counts, the default project first.
-- `get_project`: one project and its instructions for agents; no id means the default project.
+- `whoami`: the account, how it connected, size limits, usage, quota, whether it may share, notes.
+- `list_projects`: your projects and those shared with you, with ids, counts and your role.
+- `get_project`: one project and its instructions for agents; no id means your default project.
 - `create_project`: a new project with a name and optional instructions, when the user asks.
 - `list_artifacts`: artifacts, newest first, by project or tag, with review links and open threads.
 - `search_artifacts`: artifacts matching words in their name, tags or text, best match first.

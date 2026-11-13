@@ -40,6 +40,9 @@ const ERROR_CODES = Object.keys({
   internal: true,
 } satisfies Record<ErrorCode, true>);
 
+/** The `details.reason` values the skill names for a `forbidden` refusal. */
+const FORBIDDEN_REASONS = ['share_links_not_approved'];
+
 /** The `key: value` lines between the first two `---` lines. */
 function parseFrontmatter(text: string): Record<string, string> {
   const lines = text.split('\n');
@@ -101,7 +104,18 @@ test('the skill names every tool and nothing that does not exist', async () => {
   for (const name of TOOL_NAMES) expect(skill).toContain(`\`${name}\``);
 
   const schemas = tools.flatMap((tool) => [tool.inputSchema, tool.outputSchema]);
-  const known = new Set<string>([...TOOL_NAMES, ...propertyNames(schemas), ...ERROR_CODES]);
+  const known = new Set<string>([
+    ...TOOL_NAMES,
+    ...propertyNames(schemas),
+    ...ERROR_CODES,
+    ...FORBIDDEN_REASONS,
+  ]);
   const named = [...skill.matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)].map((m) => m[1]);
   expect(named.filter((name) => name !== undefined && !known.has(name))).toEqual([]);
+});
+
+test('the skill handles the space refusals', () => {
+  for (const s of ['quota_exceeded', 'share_links_not_approved', 'shared with you', 'viewer'])
+    expect(skill, s).toContain(s);
+  expect(skill).toMatch(/do not retry/i);
 });
