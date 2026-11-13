@@ -266,7 +266,35 @@ export async function removeMember(
     .execute();
 }
 
-export type RestApi = ReturnType<typeof restClient>;
+/**
+ * `restClient`, plus `form`: a multipart POST to `/api/v1`, sent as a browser on the app's own
+ * origin sends a form, with the body parsed as JSON.
+ */
+export function spacesClient(ctx: TestContext, cookie: string) {
+  return {
+    ...restClient(ctx, cookie),
+    async form<T = unknown>(path: string, form: FormData): Promise<Reply<T>> {
+      const encoded = new Response(form);
+      const res = await ctx.request(`/api/v1${path}`, {
+        method: 'POST',
+        body: Buffer.from(await encoded.arrayBuffer()),
+        headers: {
+          cookie,
+          origin: ctx.deps.config.publicOrigin,
+          'content-type': encoded.headers.get('content-type') ?? '',
+        },
+      });
+      const text = await res.text();
+      return {
+        status: res.status,
+        headers: res.headers,
+        body: (text === '' ? null : JSON.parse(text)) as T,
+      };
+    },
+  };
+}
+
+export type RestApi = ReturnType<typeof spacesClient>;
 
 /** One request of an IDOR table and the status it must get in each mode. */
 export interface Case {
@@ -307,7 +335,7 @@ export async function expectCase(
   testCase: Case,
 ): Promise<void> {
   const { who, name, send } = testCase;
-  const api = restClient(ctx, fx.people[who].cookie);
+  const api = spacesClient(ctx, fx.people[who].cookie);
   const expected = mode === 'team' ? testCase.team : testCase.personal;
   const label = `${who}: ${name}, in ${mode} mode`;
   const r = await send(api, fx.ids);

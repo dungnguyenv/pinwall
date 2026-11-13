@@ -23,7 +23,14 @@ import type { StagedFile } from '../publish/stage.ts';
 import { getArtifact, getTags, lockArtifact, normalizeTags } from './artifacts.ts';
 import { getProject } from './projects.ts';
 import { ARTIFACT_TOPIC, indexArtifact } from './search.ts';
-import { defaultProjectFor, type Scope, scopeForUser } from './spaces.ts';
+import {
+  assertCan,
+  defaultProjectFor,
+  roleIn,
+  type Scope,
+  scopeForUser,
+  whereVisible,
+} from './spaces.ts';
 
 /** Where a publish goes: a new artifact, or a new version on top of the one the publisher saw. */
 export type PublishTarget =
@@ -67,9 +74,10 @@ export function versionConflict(current: { id: string; number: number }): AppErr
 
 /**
  * Runs the checks of `commitVersion` without writing anything, so an upload can be refused
- * before its body is read: the project exists, `scope` sees it and it is not archived, the tags
- * are valid, the artifact exists, `scope` sees it and its current version is the expected one.
- * The commit checks again.
+ * before its body is read: the tags are valid; the project or artifact exists and `scope` sees
+ * it (else 404, as for a missing one); `scope` may publish to it (else 403 `reason: 'role'`, in
+ * personal mode); the project is not archived, or the artifact's current version is the expected
+ * one. The commit checks again, against the memberships of its own moment.
  */
 export async function checkTarget(
   deps: AppDeps,
@@ -81,12 +89,22 @@ export async function checkTarget(
     normalizeTags(target.tags);
     // Without a project, the commit finds or makes the publisher's default, never archived.
     if (target.projectId !== null) {
-      assertNotArchived(await getProject(db, scope, target.projectId));
+      const project = await getProject(db, scope, target.projectId);
+      assertCan(scope, await roleIn(db, scope, project.id), 'publish');
+      assertNotArchived(project);
     }
     return;
   }
-  const artifact = await getArtifact(db, scope, target.artifactId, deps.clock.now());
+  const artifact = await publishableArtifact(deps, scope, target.artifactId);
   await assertCurrent(db, artifact, target.expectedVersionId);
+}
+
+/** The artifact `id`, which `scope` must see (as `getArtifact`) and may publish to. */
+async function publishableArtifact(deps: AppDeps, scope: Scope, id: string): Promise<ArtifactRow> {
+  const { db } = deps.db;
+  const artifact = await getArtifact(db, scope, id, deps.clock.now());
+  assertCan(scope, await roleIn(db, scope, artifact.project_id), 'publish');
+  return artifact;
 }
 
 /**
@@ -95,7 +113,10 @@ export async function checkTarget(
  * A new version must name the artifact's current version; writers of one artifact take turns, so
  * of several publishes on top of the same version exactly one wins and the others get
  * `versionConflict`. Numbers continue from `latest_number`, so a deleted version's number is
- * never given again. Once committed, `version.published` goes out on `ARTIFACT_TOPIC`.
+ * never given again. Inside the transaction the actor must still see the project or artifact
+ * (else 404) and may still publish to it (else 403), whatever `checkTarget` found earlier: an
+ * upload URL whose publisher left the project meanwhile writes nothing. Once committed,
+ * `version.published` goes out on `ARTIFACT_TOPIC`.
  */
 export async function commitVersion(
   deps: AppDeps,
@@ -112,7 +133,7 @@ export async function commitVersion(
     const now = deps.clock.now();
     const { artifact, tags } =
       plan.kind === 'new_artifact'
-        ? await insertArtifact(trx, dialect, plan, actor, input.kind, now)
+        ? await insertArtifact(trx, dialect, scope, plan, actor, input.kind, now)
         : await lockCurrent(trx, dialect, scope, plan.artifactId, plan.expectedVersionId, now);
 
     const version: VersionRow = {
@@ -154,8 +175,9 @@ export async function commitVersion(
 
 /**
  * Makes version `n` current again by copying it into a new version (`source` `restore`), on top
- * of `expectedVersionId` as `commitVersion` requires. The copy shares the old version's blobs and
- * takes its entry, title, theme color, thumbnail and warnings.
+ * of `expectedVersionId` as `commitVersion` requires, and with its checks of the actor, before
+ * and again inside the transaction. The copy shares the old version's blobs and takes its entry,
+ * title, theme color, thumbnail and warnings.
  */
 export async function restoreVersion(
   deps: AppDeps,
@@ -168,7 +190,7 @@ export async function restoreVersion(
   const scope = scopeForUser(deps, actor);
   // Settle what can fail cheaply before reading the old version's files for its search text;
   // that read cannot run inside the transaction (on SQLite it holds the only connection).
-  const seen = await getArtifact(db, scope, artifactId, deps.clock.now());
+  const seen = await publishableArtifact(deps, scope, artifactId);
   await assertCurrent(db, seen, expectedVersionId);
   const text = await extractVersionText(deps, (await getVersionByNumber(db, seen, n)).id);
 
@@ -326,25 +348,29 @@ async function planNewArtifact(
 }
 
 /**
- * Inserts the artifact, without a version yet, and its tags. Its project must exist and not be
- * archived; on Postgres the project row stays share-locked until the commit, so archiving the
+ * Inserts the artifact, without a version yet, and its tags. Its project must exist, `scope`
+ * must see it (else 404, as for a missing one) and may publish to it (else 403), and it must not
+ * be archived; on Postgres the project row stays share-locked until the commit, so archiving the
  * project waits for a publish that has already checked it.
  */
 async function insertArtifact(
   trx: Transaction<Database>,
   dialect: DbDialect,
+  scope: Scope,
   plan: Extract<Plan, { kind: 'new_artifact' }>,
   actor: UserRow,
   kind: ArtifactKind,
   now: number,
 ): Promise<{ artifact: ArtifactRow; tags: string[] }> {
-  const project = await trx
-    .selectFrom('projects')
-    .selectAll()
-    .where('id', '=', plan.projectId)
+  const project = await whereVisible(
+    trx.selectFrom('projects').selectAll().where('id', '=', plan.projectId),
+    scope,
+    'projects.id',
+  )
     .$if(dialect === 'postgres', (qb) => qb.forShare())
     .executeTakeFirst();
   if (project === undefined) throw notFound(t('project.notFound'));
+  assertCan(scope, await roleIn(trx, scope, project.id), 'publish');
   assertNotArchived(project);
 
   const artifact: ArtifactRow = {
@@ -373,8 +399,8 @@ function assertNotArchived(project: ProjectRow): void {
 }
 
 /**
- * Locks the artifact, which `scope` must see, checks that `expectedVersionId` is still its
- * current version, and reads its tags.
+ * Locks the artifact, which `scope` must see and may publish to, checks that `expectedVersionId`
+ * is still its current version, and reads its tags.
  */
 async function lockCurrent(
   trx: Transaction<Database>,
@@ -387,6 +413,7 @@ async function lockCurrent(
   const artifact =
     (await lockArtifact(trx, dialect, scope, artifactId)) ??
     (await getArtifact(trx, scope, artifactId, now));
+  assertCan(scope, await roleIn(trx, scope, artifact.project_id), 'publish');
   await assertCurrent(trx, artifact, expectedVersionId);
   return { artifact, tags: await getTags(trx, artifact.id) };
 }
