@@ -138,7 +138,7 @@ const deleteRoute = createRoute({
   tags: ['comments'],
   summary: 'Delete a comment',
   description:
-    "Deleting the first comment of a thread deletes the whole thread. The author, the artifact's publisher or an admin can delete a comment.",
+    "Deleting the first comment of a thread deletes the whole thread. The author, the artifact's publisher or an admin can delete a comment; in personal mode, the author or the project's owner.",
   middleware: [requireAuth] as MiddlewareHandler<AppEnv>[],
   security,
   request: { params: IdParam },
@@ -146,7 +146,7 @@ const deleteRoute = createRoute({
     204: { description: 'Deleted' },
     401: error('Not signed in'),
     403: error(
-      "Neither the author, the artifact's publisher nor an admin, or a cross-site request with the session cookie (`forbidden`)",
+      "Neither the author, the artifact's publisher nor an admin, in personal mode neither the author nor the project's owner (`details.reason` `role`), or a cross-site request with the session cookie (`forbidden`)",
     ),
     ...missingComment,
   },

@@ -14,7 +14,18 @@ import { hashSecret, newId, newSecret } from '../lib/ids.ts';
 import { getArtifact, holdArtifact } from './artifacts.ts';
 import { publishLive } from './live.ts';
 import { holdCommentLink, sharedVersion } from './share-access.ts';
-import { type Scope, SYSTEM_SCOPE, scopeForUser, whereVisible } from './spaces.ts';
+import {
+  assertCan,
+  can,
+  forbiddenRole,
+  type ProjectRole,
+  roleIn,
+  type Scope,
+  SYSTEM_SCOPE,
+  scopeForUser,
+  seesAll,
+  whereVisible,
+} from './spaces.ts';
 import { getCurrentVersion, versionOf } from './versions.ts';
 
 /** How long after writing it a guest may still edit or delete a comment. */
@@ -276,6 +287,7 @@ export async function createThread(
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const artifact = await holdArtifact(trx, dialect, scope, artifactId, now);
+    await assertMayComment(trx, scope, actor, artifact);
     const link = await holdGuestLink(trx, deps, actor, now);
     const version =
       p.versionId === null
@@ -317,7 +329,8 @@ export async function addReply(
   const id = newId('cmt');
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
-    const { comment: target } = await holdComment(trx, dialect, scope, commentId, now);
+    const { comment: target, artifact } = await holdComment(trx, dialect, scope, commentId, now);
+    await assertMayComment(trx, scope, actor, artifact);
     await holdGuestLink(trx, deps, actor, now);
     const root =
       target.parent_id === null ? target : await getComment(trx, scope, target.parent_id);
@@ -371,10 +384,10 @@ export async function editComment(
 }
 
 /**
- * Deletes a comment; its author, the artifact's publisher or an admin may, and a guest with its
- * token within `GUEST_EDIT_WINDOW_MS` (the token then ends), through a link still open to
- * comments (checked again in the transaction). Deleting a thread's first comment deletes the
- * thread with its replies.
+ * Deletes a comment; a member whom `canDeleteComment` allows may, and a guest with its token
+ * within `GUEST_EDIT_WINDOW_MS` (the token then ends), through a link still open to comments
+ * (checked again in the transaction). Deleting a thread's first comment deletes the thread with
+ * its replies.
  */
 export async function deleteComment(
   deps: AppDeps,
@@ -389,8 +402,13 @@ export async function deleteComment(
     await holdGuestLink(trx, deps, actor, now);
     if (actor.kind === 'guest') {
       if (!(await guestMayChange(deps, actor, comment))) throw forbidden(t('comment.guestWindow'));
-    } else if (!canDeleteComment(actor.user, comment, artifact)) {
-      throw forbidden(t('comment.deleteForbidden'));
+    } else {
+      const role = await roleIn(trx, scope, artifact.project_id);
+      if (!canDeleteComment(scope, role, actor.user, comment, artifact)) {
+        throw seesAll(scope)
+          ? forbidden(t('comment.deleteForbidden'))
+          : forbiddenRole('deleteOthersComment');
+      }
     }
     const version = await trx
       .selectFrom('versions')
@@ -418,7 +436,8 @@ export async function deleteComment(
 
 /**
  * Marks the thread of first comment `commentId` resolved by `user` in version `versionId`, or in
- * the current version when null. Any member may. The version must belong to the artifact.
+ * the current version when null. Any member who sees it may. The version must belong to the
+ * artifact.
  */
 export async function resolveThread(
   deps: AppDeps,
@@ -431,6 +450,7 @@ export async function resolveThread(
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const { comment, artifact } = await holdComment(trx, dialect, scope, commentId, now);
+    assertCan(scope, await roleIn(trx, scope, artifact.project_id), 'comment');
     assertThread(comment);
     const version =
       versionId === null
@@ -453,7 +473,7 @@ export async function resolveThread(
   return thread;
 }
 
-/** Opens the thread of first comment `commentId` again. Any member may. */
+/** Opens the thread of first comment `commentId` again. Any member who sees it may. */
 export async function reopenThread(
   deps: AppDeps,
   user: UserRow,
@@ -463,7 +483,8 @@ export async function reopenThread(
   const scope = scopeForUser(deps, user);
   const thread = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
-    const { comment } = await holdComment(trx, dialect, scope, commentId, now);
+    const { comment, artifact } = await holdComment(trx, dialect, scope, commentId, now);
+    assertCan(scope, await roleIn(trx, scope, artifact.project_id), 'comment');
     assertThread(comment);
     await trx
       .updateTable('comments')
@@ -499,13 +520,35 @@ export async function countOpenThreads(
   return new Map(rows.map((row) => [row.artifact_id, Number(row.count)]));
 }
 
-/** Whether member `user` may delete `comment`: its author, the artifact's publisher, or an admin. */
-function canDeleteComment(user: UserRow, comment: CommentRow, artifact: ArtifactRow): boolean {
-  return (
-    comment.author_user_id === user.id ||
-    artifact.created_by === user.id ||
-    effectiveRole(user) === 'admin'
-  );
+/**
+ * Whether member `user`, with `role` in the project, may delete `comment`: its author always.
+ * Someone else's: in team mode and for the system (the 1.0 rule) the artifact's publisher or an
+ * admin; in personal mode a role that may `deleteOthersComment` (the project's owner).
+ */
+function canDeleteComment(
+  scope: Scope,
+  role: ProjectRole,
+  user: UserRow,
+  comment: CommentRow,
+  artifact: ArtifactRow,
+): boolean {
+  if (comment.author_user_id === user.id) return true;
+  if (seesAll(scope)) return artifact.created_by === user.id || effectiveRole(user) === 'admin';
+  return can(role, 'deleteOthersComment');
+}
+
+/**
+ * A member's role in the artifact's project must let them comment (every role does); a guest's
+ * share link is what lets them in, and `holdCommentLink` checks it.
+ */
+async function assertMayComment(
+  trx: Transaction<Database>,
+  scope: Scope,
+  actor: CommentActor,
+  artifact: ArtifactRow,
+): Promise<void> {
+  if (actor.kind === 'guest') return;
+  assertCan(scope, await roleIn(trx, scope, artifact.project_id), 'comment');
 }
 
 /** Only a thread's first comment carries its status. */

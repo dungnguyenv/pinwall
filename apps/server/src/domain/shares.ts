@@ -16,7 +16,17 @@ import { t } from '../lib/i18n.ts';
 import { hashSecret, newId, newSecret } from '../lib/ids.ts';
 import { getArtifact, holdArtifact } from './artifacts.ts';
 import { endShareLinkStreams } from './live.ts';
-import { type Scope, scopeForUser, whereVisible } from './spaces.ts';
+import {
+  assertCan,
+  can,
+  forbiddenRole,
+  type ProjectRole,
+  roleIn,
+  type Scope,
+  scopeForUser,
+  seesAll,
+  whereVisible,
+} from './spaces.ts';
 import { addTombstones } from './tombstones.ts';
 import { versionOf } from './versions.ts';
 
@@ -79,7 +89,8 @@ export function checkSharePassword(pw: string): string {
  * when null; open to anyone with it, or behind `password`; until `expiresAt` (which must be in
  * the future) or until revoked. Returns the row and the token, which is stored only as its hash
  * and cannot be shown again. A version of another artifact answers 400; a missing artifact, or
- * one `actor` does not see, 404, a deleted one 410.
+ * one `actor` does not see, 404, a deleted one 410. In personal mode a role that may not
+ * `createShareLink` (a viewer) gets 403.
  */
 export async function createShareLink(
   deps: AppDeps,
@@ -105,6 +116,7 @@ export async function createShareLink(
   const row = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const artifact = await holdArtifact(trx, dialect, scope, artifactId, now);
+    assertCan(scope, await roleIn(trx, scope, artifact.project_id), 'createShareLink');
     const version = p.versionId === null ? null : await versionOf(trx, artifact, p.versionId);
     const link: ShareLinkRow = {
       id: newId('shr'),
@@ -206,7 +218,7 @@ export async function toShareLinks(
 }
 
 /**
- * Revokes the share link `linkId`; its creator, the artifact's publisher or an admin may. In one
+ * Revokes the share link `linkId` when `canRevoke` allows `actor` to (403 otherwise). In one
  * transaction it marks the link revoked and ends the content grants made from it, so what it
  * opened stops being served at once (those grants answer 410); once that has committed, the
  * link's live streams end too. Revoking a revoked link changes nothing. A link on an artifact
@@ -227,7 +239,12 @@ export async function revokeShareLink(
     const artifact = await holdArtifact(trx, dialect, scope, seen.artifact_id, now);
     // A deletion the hold waited for may have taken the link along.
     const link = dialect === 'postgres' ? await getShareLink(trx, scope, linkId) : seen;
-    if (!canRevoke(actor, link, artifact)) throw forbidden(t('share.revokeForbidden'));
+    const role = await roleIn(trx, scope, artifact.project_id);
+    if (!canRevoke(scope, role, actor, link, artifact)) {
+      throw seesAll(scope)
+        ? forbidden(t('share.revokeForbidden'))
+        : forbiddenRole('revokeShareLink');
+    }
     await trx
       .updateTable('share_links')
       .set({ revoked_at: now })
@@ -309,13 +326,26 @@ function shareLinkStatus(row: ShareLinkRow, now: number): ShareLink['status'] {
   return 'active';
 }
 
-/** Whether `user` may revoke `link`: its creator, the artifact's publisher, or an admin. */
-function canRevoke(user: UserRow, link: ShareLinkRow, artifact: ArtifactRow): boolean {
-  return (
-    link.created_by === user.id ||
-    artifact.created_by === user.id ||
-    effectiveRole(user) === 'admin'
-  );
+/**
+ * Whether `user`, with `role` in the project, may revoke `link`. Team mode and the system (the
+ * 1.0 rule): its creator, the artifact's publisher, or an admin. Personal mode: the project's
+ * owner, or an editor who made it.
+ */
+function canRevoke(
+  scope: Scope,
+  role: ProjectRole,
+  user: UserRow,
+  link: ShareLinkRow,
+  artifact: ArtifactRow,
+): boolean {
+  if (seesAll(scope)) {
+    return (
+      link.created_by === user.id ||
+      artifact.created_by === user.id ||
+      effectiveRole(user) === 'admin'
+    );
+  }
+  return can(role, 'revokeShareLink', { publishedBy: link.created_by, userId: user.id });
 }
 
 /** The share link `id`; 404 when there is none or `scope` does not see its artifact. */

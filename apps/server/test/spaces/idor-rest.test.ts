@@ -1,7 +1,10 @@
+import { CommentThreadList, CreatedShareLink, GuestCreated } from '@pinwall/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { apiInit } from '../helpers/auth.ts';
 import type { TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
+import { restClient } from '../helpers/rest.ts';
+import { sampleAnchor } from '../helpers/review.ts';
 import {
   type Case,
   type CaseIds,
@@ -145,6 +148,10 @@ describe.each(dialects)('REST reads by id on %s', (dialect) => {
 /** A path under `/api/v1`, built from the ids the case runs on. */
 type Path = (i: CaseIds) => string;
 
+const post =
+  (path: Path, body: object): Case['send'] =>
+  (api, i) =>
+    api.post(path(i), body);
 const patch =
   (path: Path, body: object | ((i: CaseIds) => object)): Case['send'] =>
   (api, i) =>
@@ -210,5 +217,105 @@ describe.each(dialects)('REST project and artifact writes on %s', (dialect) => {
     afterAll(() => ctx?.close());
 
     test.each(WRITES)('$who: $name', (writeCase) => expectCase(ctx, fx, mode, writeCase));
+  });
+});
+
+const commentOnp = post((i) => `/artifacts/${i.p}/comments`, { body: 'x', anchor: sampleAnchor() });
+const replyTopThread = post((i) => `/comments/${i.pThread}/replies`, { body: 'x' });
+const editpThread = patch((i) => `/comments/${i.pThread}`, { body: 'x' });
+const deletepReply = del((i) => `/comments/${i.pReply}`);
+const deleteeThread = del((i) => `/comments/${i.eThread}`);
+const resolvepThread = post((i) => `/comments/${i.pThread}/resolve`, {});
+const reopenpThread = post((i) => `/comments/${i.pThread}/reopen`, {});
+const linkOnp = post((i) => `/artifacts/${i.p}/share-links`, { allow_comments: false });
+const revokepLink = del((i) => `/share-links/${i.pLink}`);
+const revokeeLink = del((i) => `/share-links/${i.eLink}`);
+
+/**
+ * Comments and share links: every role comments, replies, resolves and reopens; only the owner
+ * deletes others' comments; owners and editors make links; owners revoke any, editors their own.
+ */
+const REVIEW: Case[] = [
+  c('V', 'comment on p', commentOnp, 201, 201),
+  c('S', 'comment on p', commentOnp, 201, 404),
+  c('V', "reply to A's thread", replyTopThread, 201, 201),
+  c('S', "reply to A's thread", replyTopThread, 201, 404),
+  // Author only, in both modes, with the 1.0 message and no reason.
+  c('E', "edit A's comment", editpThread, 403, 403, null),
+  c('S', "edit A's comment", editpThread, 403, 404),
+  c('E', "delete A's reply", deletepReply, 403, 403),
+  c('S', "delete A's reply", deletepReply, 403, 404),
+  c('X', "delete A's reply", deletepReply, 204, 404),
+  c('A', "delete E's thread on p", deleteeThread, 204, 204),
+  c('V', "resolve A's thread", resolvepThread, 200, 200),
+  c('S', "resolve A's thread", resolvepThread, 200, 404),
+  c('S', "reopen A's thread", reopenpThread, 200, 404),
+  c('E', 'create a link on p', linkOnp, 201, 201),
+  c('V', 'create a link on p', linkOnp, 201, 403),
+  c('S', 'create a link on p', linkOnp, 201, 404),
+  c('E', "revoke A's link", revokepLink, 403, 403),
+  c('S', "revoke A's link", revokepLink, 403, 404),
+  c('X', "revoke A's link", revokepLink, 204, 404),
+  c('E', "revoke E's link", revokeeLink, 204, 204),
+  // Team: A neither made the link nor published e; personal: A owns e's project.
+  c('A', "revoke E's link", revokeeLink, 403, 204),
+];
+
+describe.each(dialects)('REST comment and share link writes on %s', (dialect) => {
+  describe.each(MODES)('in %s mode', (mode) => {
+    let ctx: TestContext;
+    let fx: SpacesFixture;
+    beforeAll(async () => {
+      ctx = await spacesContext(dialect, mode);
+    });
+    // Writes change the fixture, so each case gets its own, in the shared context.
+    beforeEach(async () => {
+      fx = await spacesFixture(ctx);
+    });
+    afterAll(() => ctx?.close());
+
+    test.each(REVIEW)('$who: $name', (reviewCase) => expectCase(ctx, fx, mode, reviewCase));
+  });
+});
+
+describe.each(dialects)('share links in personal mode on %s', (dialect) => {
+  let ctx: TestContext;
+  let fx: SpacesFixture;
+  beforeAll(async () => {
+    ctx = await spacesContext(dialect, 'personal');
+    fx = await spacesFixture(ctx);
+  });
+  afterAll(() => ctx?.close());
+
+  test('guests keep reading and commenting through a share link in personal mode', async () => {
+    const made = await restClient(ctx, fx.people.A.cookie).post(
+      `/artifacts/${fx.ids.p}/share-links`,
+      { allow_comments: true },
+    );
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    const { token } = CreatedShareLink.parse(made.body);
+    const share = `/api/v1/share/${token}`;
+
+    const opened = await ctx.request(share, apiInit(ctx));
+    expect(opened.status, await opened.clone().text()).toBe(200);
+
+    const posted = await ctx.request(
+      `${share}/comments`,
+      apiInit(ctx, { body: { guest_name: 'Lan', body: 'x', anchor: sampleAnchor() } }),
+    );
+    expect(posted.status, await posted.clone().text()).toBe(201);
+    const { thread } = GuestCreated.parse(await posted.json());
+
+    const replied = await ctx.request(
+      `${share}/comments/${thread.id}/replies`,
+      apiInit(ctx, { body: { guest_name: 'Lan', body: 'y' } }),
+    );
+    expect(replied.status, await replied.clone().text()).toBe(201);
+
+    const listed = await ctx.request(`${share}/comments`, apiInit(ctx));
+    expect(listed.status, await listed.clone().text()).toBe(200);
+    const threads = CommentThreadList.parse(await listed.json()).items;
+    const listedThread = threads.find((item) => item.id === thread.id);
+    expect(listedThread?.replies.map((reply) => reply.body)).toEqual(['y']);
   });
 });

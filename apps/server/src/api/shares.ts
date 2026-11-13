@@ -64,7 +64,7 @@ const createLinkRoute = createRoute({
   tags: ['share links'],
   summary: 'Make a share link',
   description:
-    'A link to version `version_id`, or following the current version without it; behind `password` (8 to 256 characters) or open to anyone with it; until `expires_at` (in the future) or until revoked. Any member can make one. The answer holds the token and the link URL: they are shown this once and cannot be read again.',
+    "A link to version `version_id`, or following the current version without it; behind `password` (8 to 256 characters) or open to anyone with it; until `expires_at` (in the future) or until revoked. Any member can make one; in personal mode, the project's owner or an editor. The answer holds the token and the link URL: they are shown this once and cannot be read again.",
   middleware: [requireAuth, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
   security,
   request: {
@@ -79,7 +79,10 @@ const createLinkRoute = createRoute({
     400: error(
       'An invalid body, a password too short or too long, an expiry not in the future, or a `version_id` of another artifact',
     ),
-    ...authErrors,
+    401: error('Not signed in'),
+    403: error(
+      'In personal mode, a viewer of the project (`forbidden`, `details.reason` `role`), or a cross-site request with the session cookie (`forbidden`)',
+    ),
     ...missingArtifact,
   },
 });
@@ -90,7 +93,7 @@ const revokeRoute = createRoute({
   tags: ['share links'],
   summary: 'Revoke a share link',
   description:
-    "The link stops working at once, and so does the content it opened. The link's creator, the artifact's publisher or an admin can revoke it. Revoking a revoked link changes nothing.",
+    "The link stops working at once, and so does the content it opened. The link's creator, the artifact's publisher or an admin can revoke it; in personal mode, the project's owner, or the editor who made it. Revoking a revoked link changes nothing.",
   middleware: [requireAuth] as MiddlewareHandler<AppEnv>[],
   security,
   request: { params: IdParam },
@@ -98,7 +101,7 @@ const revokeRoute = createRoute({
     204: { description: 'Revoked' },
     401: error('Not signed in'),
     403: error(
-      "Neither the link's creator, the artifact's publisher nor an admin, or a cross-site request with the session cookie (`forbidden`)",
+      "Neither the link's creator, the artifact's publisher nor an admin, in personal mode neither the project's owner nor the editor who made it (`details.reason` `role`), or a cross-site request with the session cookie (`forbidden`)",
     ),
     404: error('The share link does not exist (`not_found`)'),
   },
