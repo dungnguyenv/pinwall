@@ -137,8 +137,9 @@ async function createShareLink(page: Page, options: { comments?: boolean } = {})
 
 /**
  * No WCAG 2.1 A or AA violation on the page now, in the light scheme and in the dark one. A
- * change of scheme fades its colors, and contrast is read from what is on screen, so the fade
- * ends first; and the two schemes must differ, or the dark run would only repeat the light one.
+ * change of scheme fades its colors, a dialog fades in, and contrast is read from what is on
+ * screen, so what moves ends first (what moves for good, a loading shimmer, never ends); and the
+ * two schemes must differ, or the dark run would only repeat the light one.
  */
 async function expectAccessible(page: Page): Promise<void> {
   const canvases: string[] = [];
@@ -148,7 +149,7 @@ async function expectAccessible(page: Page): Promise<void> {
       Promise.allSettled(
         document
           .getAnimations()
-          .filter((animation) => animation instanceof CSSTransition)
+          .filter((animation) => animation.effect?.getComputedTiming().endTime !== Infinity)
           .map((animation) => animation.finished),
       ),
     );
@@ -159,7 +160,7 @@ async function expectAccessible(page: Page): Promise<void> {
   await page.emulateMedia({ colorScheme: 'light' });
 }
 
-/** Opens the members of the project on screen, as its owner does. */
+/** Opens the members of the project on screen. */
 async function openMembers(page: Page, project: string) {
   await page.getByRole('button', { name: t('web.members.button') }).click();
   return page.getByRole('dialog', { name: t('web.members.title', { project }) });
@@ -258,16 +259,28 @@ test('acceptance 3: approval gates share links, raw links and top-level content'
   // Share explains, and offers no link.
   await eve.getByRole('button', { name: t('web.review.share'), exact: true }).click();
   const share = eve.getByRole('dialog', { name: t('web.share.title', { name: 'Eve notes' }) });
-  await expect(share.getByText(t('web.share.notApproved.title'))).toBeVisible();
+  await expect(share.getByRole('status', { name: t('web.share.notApproved.title') })).toBeVisible();
   await expect(share.getByRole('button', { name: t('web.share.create') })).toHaveCount(0);
+  await expectAccessible(eve);
   await eve.keyboard.press('Escape');
   await expect(share).toBeHidden();
+
+  // Nor does the server make one for her, asked directly.
+  const noLink = await apiCall<{ error: { details?: { reason?: string } } }>(
+    eve,
+    'POST',
+    `/api/v1/artifacts/${notesId}/share-links`,
+    {},
+  );
+  expect(noLink.status).toBe(403);
+  expect(noLink.json.error.details?.reason).toBe('share_links_not_approved');
 
   // The raw page is not hers to open, and the menu says why.
   await eve.getByRole('button', { name: t('web.review.more') }).click();
   await eve.getByRole('menuitem', { name: t('web.review.rawUnavailable') }).click();
   const why = eve.getByRole('dialog', { name: t('web.review.rawUnavailable') });
   await expect(why.getByText(t('spaces.exposure.rawLink'))).toBeVisible();
+  await expectAccessible(eve);
   await eve.keyboard.press('Escape');
   const raw = await eve.goto(at(`/a/${notesId}/raw`));
   expect(raw?.status()).toBe(403);
@@ -283,10 +296,32 @@ test('acceptance 3: approval gates share links, raw links and top-level content'
     `frame-ancestors 'self' ${SPACES_ORIGIN}`,
   );
 
-  // An admin approves her; the three admin pages of this version are accessible.
+  // An admin approves her; the three admin pages of this version are accessible, and so are
+  // the questions Users asks about a person's limits and about deleting their content.
   const ada = await person(browser, 'ada');
   await approve(ada, 'Eve Example');
   await expectAccessible(ada);
+  const moreFor = ada.getByRole('button', {
+    name: t('web.admin.more', { name: 'Eve Example' }),
+  });
+  await moreFor.click();
+  await ada.getByRole('menuitem', { name: t('web.admin.quota.item') }).click();
+  const limits = ada.getByRole('dialog', {
+    name: t('web.admin.quota.title', { name: 'Eve Example' }),
+  });
+  await expect(limits).toBeVisible();
+  await expectAccessible(ada);
+  await ada.keyboard.press('Escape');
+  await expect(limits).toBeHidden();
+  await moreFor.click();
+  await ada.getByRole('menuitem', { name: t('web.admin.purge.item') }).click();
+  const purge = ada.getByRole('alertdialog', {
+    name: t('web.admin.purge.title', { name: 'Eve Example' }),
+  });
+  await expect(purge.getByRole('button', { name: t('web.purge.button') })).toBeDisabled();
+  await expectAccessible(ada);
+  await ada.keyboard.press('Escape');
+  await expect(purge).toBeHidden();
   await ada.goto(at('/admin/share-links'));
   await expect(ada.getByText(t('web.admin.links.empty'))).toBeVisible();
   await expectAccessible(ada);
@@ -304,6 +339,7 @@ test('acceptance 3: approval gates share links, raw links and top-level content'
     'href',
     'mailto:abuse@example.test',
   );
+  await expectAccessible(guest);
 
   // The raw page opens as content, and so does a page's own address opened as a page.
   const rawNow = await eve.goto(at(`/a/${notesId}/raw`));
@@ -318,7 +354,9 @@ test('acceptance 3: approval gates share links, raw links and top-level content'
   await ada.getByLabel(t('web.admin.lookup.field')).fill(link);
   await ada.getByRole('button', { name: t('web.admin.lookup.submit') }).click();
   const found = ada.getByRole('region', { name: t('web.admin.lookup.kind.share_link') });
-  await expect(found.locator('dt:text-is("Owner") + dd')).toContainText('Eve Example');
+  await expect(found.locator(`dt:text-is("${t('web.admin.links.col.owner')}") + dd`)).toContainText(
+    'Eve Example',
+  );
   await expectAccessible(ada);
   await ada.goto(at('/admin/share-links'));
   await expect(ada.getByText('Eve Example').first()).toBeVisible();
@@ -334,9 +372,11 @@ test('acceptance 3: approval gates share links, raw links and top-level content'
   await saved;
   await expect(approval).not.toBeChecked();
 
-  // Her link stops opening at once.
+  // Her link stops opening at once; the page says so, and where to report abuse.
   await guest.reload();
   await expect(guest.getByRole('heading', { name: t('share.gone.title') })).toBeVisible();
+  await expect(guest.getByRole('link', { name: 'abuse@example.test' })).toBeVisible();
+  await expectAccessible(guest);
 });
 
 test('acceptance 9: project members', async ({ browser }) => {
@@ -407,6 +447,16 @@ test('acceptance 9: project members', async ({ browser }) => {
   expect(refused.status).toBe(403);
   expect(refused.json.error.details?.reason).toBe('role');
 
+  // She sees who else is in Launch, by name only.
+  const names = await openMembers(eve, 'Launch');
+  const people = names.getByRole('list', { name: t('web.members.listLabel') });
+  await expect(people).toContainText('Bob Example');
+  await expect(people).toContainText('Eve Example');
+  await expect(names.getByText('@example.test')).toHaveCount(0);
+  await expectAccessible(eve);
+  await eve.keyboard.press('Escape');
+  await expect(names).toBeHidden();
+
   // She can still read what is there, and comment on it.
   await eve.goto(at(`/a/${launchPage.artifact_id}`));
   await comment(eve, '#date', 'Is Friday final?');
@@ -431,6 +481,25 @@ test('acceptance 9: project members', async ({ browser }) => {
   await expect(
     eve.getByRole('button', { name: t('web.upload.action'), exact: true }),
   ).toBeVisible();
+
+  // Editing Launch gives her nothing in Q: writing there is refused as if Q were not there.
+  const intoQ = await apiCall<{ error: { code?: string } }>(eve, 'POST', '/api/v1/publish/inline', {
+    target: { project_id: secret },
+    files: [{ path: 'index.html', content: html('Not here', '<h1>No</h1>') }],
+  });
+  expect(intoQ.status).toBe(404);
+  expect(intoQ.json.error.code).toBe('not_found');
+  const overSecret = await apiCall<{ error: { code?: string } }>(
+    eve,
+    'POST',
+    '/api/v1/publish/inline',
+    {
+      target: { artifact_id: secretPage.artifact_id, expected_version_id: secretPage.version_id },
+      files: [{ path: 'index.html', content: html('Secret', '<h1>Not hers</h1>') }],
+    },
+  );
+  expect(overSecret.status).toBe(404);
+  expect(overSecret.json.error.code).toBe('not_found');
 
   // What an editor publishes counts against the project owner's space, not hers.
   const bytesOf = async (page: Page) =>
