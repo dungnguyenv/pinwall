@@ -4,6 +4,7 @@ import { hasAccess } from '../auth/roles.ts';
 import type { Config } from '../config/types.ts';
 import type { ContentGrantMode, ContentGrantRow, UserRow, VersionRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
+import { scopeForUser, type ViewerScope, whereVisible } from '../domain/spaces.ts';
 import { addTombstones, isTombstoned } from '../domain/tombstones.ts';
 import { gone, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
@@ -78,9 +79,31 @@ export interface ResolvedGrant {
 }
 
 /**
+ * Version `versionId` of a grant: for one made for a person (`holder`), only while the artifact
+ * is still one they see; a share link's grant (`holder` null) follows the link's rules instead.
+ */
+function grantVersion(
+  db: Db,
+  versionId: string,
+  holder: ViewerScope | null,
+): Promise<VersionRow | undefined> {
+  if (holder === null) {
+    return db.selectFrom('versions').selectAll().where('id', '=', versionId).executeTakeFirst();
+  }
+  const version = db
+    .selectFrom('versions')
+    .innerJoin('artifacts', 'artifacts.id', 'versions.artifact_id')
+    .selectAll('versions')
+    .where('versions.id', '=', versionId);
+  return whereVisible(version, holder, 'artifacts.project_id').executeTakeFirst();
+}
+
+/**
  * The grant `token` names and its version. A token never issued answers 404; one whose grant or
  * version was deleted or revoked (tombstoned) 410; an expired one 410 with `details.expired`; one
- * made for a person who has no access now (blocked, disabled) 410 as well.
+ * made for a person who has no access now (blocked, disabled), or who no longer sees the
+ * version's artifact, 410 as well. Sight is checked at each request, so a grant refused that way
+ * serves again once its holder sees the artifact again.
  */
 export async function resolveGrant(deps: AppDeps, token: string): Promise<ResolvedGrant> {
   const { db } = deps.db;
@@ -97,6 +120,7 @@ export async function resolveGrant(deps: AppDeps, token: string): Promise<Resolv
     throw notFound(t('content.notFound.message'));
   }
   if (grant.expires_at <= now) throw gone(t('content.expired.message'), { expired: true });
+  let holder: ViewerScope | null = null;
   if (grant.user_id !== null) {
     const user = await db
       .selectFrom('users')
@@ -105,13 +129,11 @@ export async function resolveGrant(deps: AppDeps, token: string): Promise<Resolv
       .executeTakeFirst();
     // A deleted user takes their grants along; this is a read that raced the delete.
     if (user === undefined || !hasAccess(user)) throw gone(t('content.gone.message'));
+    holder = scopeForUser(deps, user);
   }
-  const version = await db
-    .selectFrom('versions')
-    .selectAll()
-    .where('id', '=', grant.version_id)
-    .executeTakeFirst();
-  // Deleting a version deletes its grants with it; this is a read that raced the delete.
+  const version = await grantVersion(db, grant.version_id, holder);
+  // Deleting a version deletes its grants with it, so a miss is a read that raced the delete, or
+  // a holder who lost sight of the artifact: either way, gone like a deleted version.
   if (version === undefined) throw gone(t('content.gone.message'));
   return { grant, version };
 }

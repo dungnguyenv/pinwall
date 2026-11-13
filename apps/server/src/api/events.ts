@@ -9,7 +9,7 @@ import { hasAccess } from '../auth/roles.ts';
 import type { AppDeps } from '../deps.ts';
 import { getArtifact } from '../domain/artifacts.ts';
 import { ARTIFACT_TOPIC } from '../domain/search.ts';
-import { scopeOf } from '../domain/spaces.ts';
+import { scopeForUser, scopeOf, whereVisible } from '../domain/spaces.ts';
 import { LIVE_STREAM_LIMITS, liveStream } from '../http/sse.ts';
 import { IdParam } from './pagination.ts';
 
@@ -54,7 +54,7 @@ const eventsRoute = createRoute({
 /**
  * Whether the member stream of `auth` on artifact `artifactId` may go on: the session is still
  * there and not expired, its user still has access (role, not blocked or disabled, a recent
- * enough IdP check), and the artifact still exists.
+ * enough IdP check), and the artifact still exists and is still one they see.
  */
 async function memberStillAllowed(
   deps: AppDeps,
@@ -79,11 +79,11 @@ async function memberStillAllowed(
   if (user === undefined || !hasAccess(user) || !idpAccessCurrent(user, now, deps.config)) {
     return false;
   }
-  const artifact = await db
-    .selectFrom('artifacts')
-    .select('id')
-    .where('id', '=', artifactId)
-    .executeTakeFirst();
+  const artifact = await whereVisible(
+    db.selectFrom('artifacts').select('artifacts.id').where('artifacts.id', '=', artifactId),
+    scopeForUser(deps, user),
+    'artifacts.project_id',
+  ).executeTakeFirst();
   return artifact !== undefined;
 }
 
