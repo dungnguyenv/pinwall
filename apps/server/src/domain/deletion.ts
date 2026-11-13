@@ -1,5 +1,6 @@
 import type { Transaction } from 'kysely';
 import type { AuthContext } from '../app.ts';
+import type { Db } from '../auth/passkeys.ts';
 import { effectiveRole } from '../auth/roles.ts';
 import { extractVersionText } from '../content/metadata.ts';
 import type { DbDialect } from '../db/connect.ts';
@@ -12,13 +13,31 @@ import { entryKind } from '../publish/paths.ts';
 import { getArtifact, getTags, lockArtifact } from './artifacts.ts';
 import { collectBlobs } from './blobs.ts';
 import { ARTIFACT_TOPIC, indexArtifact, reindexArtifact } from './search.ts';
-import { scopeForUser } from './spaces.ts';
+import {
+  can,
+  forbiddenRole,
+  type ProjectRole,
+  roleIn,
+  type Scope,
+  scopeForUser,
+  seesAll,
+} from './spaces.ts';
 import { addTombstones, type NewTombstone } from './tombstones.ts';
 import { getVersionByNumber } from './versions.ts';
 
-/** Whether `auth` may delete the artifact or one of its versions: an admin, or its publisher. */
-export function canDelete(auth: AuthContext, artifact: ArtifactRow): boolean {
-  return effectiveRole(auth.user) === 'admin' || artifact.created_by === auth.user.id;
+/**
+ * Whether `auth`, with `role` in the project, may delete what `publishedBy` published there. Team
+ * mode and the system (the 1.0 rule): an admin, or the artifact's publisher. Personal mode: the
+ * project's owner, or an editor who published it (the artifact, or the version deleted).
+ */
+export function canDelete(
+  scope: Scope,
+  role: ProjectRole,
+  auth: AuthContext,
+  publishedBy: string | null,
+): boolean {
+  if (seesAll(scope)) return effectiveRole(auth.user) === 'admin' || publishedBy === auth.user.id;
+  return can(role, 'deleteArtifact', { publishedBy, userId: auth.user.id });
 }
 
 /**
@@ -32,7 +51,8 @@ export function canDelete(auth: AuthContext, artifact: ArtifactRow): boolean {
  * Once committed, its files that no remaining version uses are removed from storage (deferred
  * to the sweep while a backup runs), and `version.deleted` (or `artifact.deleted`) goes out on
  * `ARTIFACT_TOPIC`. A missing artifact or version answers 404 (as does an artifact the caller
- * does not see), a deleted one 410, and a caller that `canDelete` refuses 403.
+ * does not see), a deleted one 410, and a caller that `canDelete` refuses 403: in team mode
+ * for the artifact's publisher, in personal mode for the version's.
  */
 export async function deleteVersion(
   deps: AppDeps,
@@ -43,7 +63,8 @@ export async function deleteVersion(
   const { db, dialect } = deps.db;
   const scope = scopeForUser(deps, auth.user);
   const seen = await getArtifact(db, scope, artifactId, deps.clock.now());
-  assertCanDelete(auth, seen);
+  // The 1.0 rule looks at the artifact's publisher; personal mode at the version's, below.
+  if (seesAll(scope)) await assertCanDelete(db, scope, auth, seen.project_id, seen.created_by);
   // Read before the transaction: it reads blobs, and on SQLite the transaction holds the only
   // connection.
   const successor = await readSuccessor(deps, seen, n);
@@ -54,6 +75,9 @@ export async function deleteVersion(
       (await lockArtifact(trx, dialect, scope, artifactId)) ??
       (await getArtifact(trx, scope, artifactId, now));
     const version = await getVersionByNumber(trx, artifact, n);
+    if (!seesAll(scope)) {
+      await assertCanDelete(trx, scope, auth, artifact.project_id, version.created_by);
+    }
     const target: DeletionTarget = { versionId: version.id };
 
     const shas = await blobsOf(trx, target);
@@ -136,13 +160,13 @@ export async function deleteArtifact(
 ): Promise<void> {
   const { db, dialect } = deps.db;
   const scope = scopeForUser(deps, auth.user);
-  assertCanDelete(auth, await getArtifact(db, scope, artifactId, deps.clock.now()));
 
   const shas = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
     const artifact =
       (await lockArtifact(trx, dialect, scope, artifactId)) ??
       (await getArtifact(trx, scope, artifactId, now));
+    await assertCanDelete(trx, scope, auth, artifact.project_id, artifact.created_by);
     const target: DeletionTarget = { artifactId: artifact.id };
     const shas = await blobsOf(trx, target);
     await addTombstones(trx, await grantTombstones(trx, target, now), now);
@@ -157,8 +181,19 @@ export async function deleteArtifact(
   });
 }
 
-function assertCanDelete(auth: AuthContext, artifact: ArtifactRow): void {
-  if (!canDelete(auth, artifact)) throw forbidden(t('artifact.deleteForbidden'));
+/**
+ * Refuses unless `canDelete`, with the viewer's role in the project: 403 with the 1.0 message in
+ * team mode, with reason `role` in personal mode.
+ */
+async function assertCanDelete(
+  db: Db,
+  scope: Scope,
+  auth: AuthContext,
+  projectId: string,
+  publishedBy: string | null,
+): Promise<void> {
+  if (canDelete(scope, await roleIn(db, scope, projectId), auth, publishedBy)) return;
+  throw seesAll(scope) ? forbidden(t('artifact.deleteForbidden')) : forbiddenRole('deleteArtifact');
 }
 
 /**

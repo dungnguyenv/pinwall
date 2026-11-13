@@ -1,8 +1,12 @@
-import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { apiInit } from '../helpers/auth.ts';
 import type { TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 import {
+  type Case,
+  type CaseIds,
+  c,
+  expectCase,
   MODES,
   type Person,
   removeMember,
@@ -135,5 +139,76 @@ describe.each(dialects)('REST reads by id on %s', (dialect) => {
       if (mode === 'team') expect(await recent()).toContain(own.ids.p);
       else expect(await recent()).not.toContain(own.ids.p);
     });
+  });
+});
+
+/** A path under `/api/v1`, built from the ids the case runs on. */
+type Path = (i: CaseIds) => string;
+
+const patch =
+  (path: Path, body: object | ((i: CaseIds) => object)): Case['send'] =>
+  (api, i) =>
+    api.patch(path(i), typeof body === 'function' ? body(i) : body);
+const del =
+  (path: Path): Case['send'] =>
+  (api, i) =>
+    api.del(path(i));
+
+const renameP = patch((i) => `/projects/${i.P}`, { name: 'x' });
+const renameQ = patch((i) => `/projects/${i.Q}`, { name: 'x' });
+const renamep = patch((i) => `/artifacts/${i.p}`, { name: 'x' });
+const renamee = patch((i) => `/artifacts/${i.e}`, { name: 'x' });
+const deletep = del((i) => `/artifacts/${i.p}`);
+const deletee = del((i) => `/artifacts/${i.e}`);
+const deletepV1 = del((i) => `/artifacts/${i.p}/versions/1`);
+
+/** Project and artifact writes: team mode keeps the 1.0 rules, personal mode the roles of §4.3. */
+const WRITES: Case[] = [
+  c('A', 'rename P', renameP, 200, 200),
+  c('E', 'rename P', renameP, 200, 403),
+  c('V', 'rename P', renameP, 200, 403),
+  c('S', 'rename P', renameP, 200, 404),
+  c('E', 'rename Q', renameQ, 200, 404),
+  c('A', 'rename p', renamep, 200, 200),
+  c('E', 'rename p', renamep, 200, 403),
+  c('V', 'rename p', renamep, 200, 403),
+  c('S', 'rename p', renamep, 200, 404),
+  c('E', 'rename e', renamee, 200, 200),
+  c(
+    'A',
+    'move p to Q',
+    patch(
+      (i) => `/artifacts/${i.p}`,
+      (i) => ({ project_id: i.Q }),
+    ),
+    200,
+    200,
+  ),
+  c('E', 'delete p', deletep, 403, 403),
+  c('V', 'delete p', deletep, 403, 403),
+  c('S', 'delete p', deletep, 403, 404),
+  c('X', 'delete p', deletep, 204, 404),
+  c('A', 'delete p', deletep, 204, 204),
+  c('E', 'delete e', deletee, 204, 204),
+  // Team: A is neither e's publisher nor an admin; personal: A owns e's project.
+  c('A', 'delete e', deletee, 403, 204),
+  c('E', 'delete version 1 of p', deletepV1, 403, 403),
+  c('A', 'delete version 1 of p', deletepV1, 204, 204),
+];
+
+describe.each(dialects)('REST project and artifact writes on %s', (dialect) => {
+  describe.each(MODES)('in %s mode', (mode) => {
+    let ctx: TestContext;
+    let fx: SpacesFixture;
+    beforeAll(async () => {
+      ctx = await spacesContext(dialect, mode);
+    });
+    // Writes change the fixture, so each case gets its own, in the shared context.
+    beforeEach(async () => {
+      fx = await spacesFixture(ctx);
+    });
+    afterAll(() => ctx?.close());
+
+    test.each(WRITES)('$who: $name', (writeCase) => expectCase(ctx, fx, mode, writeCase));
   });
 });

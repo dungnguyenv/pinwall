@@ -22,7 +22,7 @@ import {
   updateProject,
   withArtifactCounts,
 } from '../domain/projects.ts';
-import { scopeOf } from '../domain/spaces.ts';
+import { defaultProjectFor, rolesIn, type Scope, scopeOf, seesAll } from '../domain/spaces.ts';
 import { jsonBodyLimit } from './body-limit.ts';
 import { IdParam, ListQuery } from './pagination.ts';
 
@@ -113,6 +113,9 @@ const patchProjectRoute = createRoute({
     200: { description: 'The project', content: { 'application/json': { schema: Project } } },
     400: error('Invalid fields'),
     ...authErrors,
+    403: error(
+      "In personal mode, someone other than the project's owner (`forbidden`, `details.reason` `role`), or a cross-site request with the session cookie (`forbidden`)",
+    ),
     ...notFoundError,
     409: error('The default project cannot be archived (`conflict`)'),
   },
@@ -131,10 +134,47 @@ export function toProject(row: ProjectWithCount): Project {
   };
 }
 
-/** One project as the API shows it, with its artifact count. */
-async function projectOf(deps: AppDeps, row: ProjectRow): Promise<Project> {
+/**
+ * Projects as the API shows them to `scope`. In personal mode each also names its owner and the
+ * viewer's role in it, loaded for all rows at once (one query for the owners' names, one for the
+ * roles); team mode adds neither. The rows come from lookups in the viewer's scope.
+ */
+export async function toProjects(
+  deps: AppDeps,
+  scope: Scope,
+  rows: readonly ProjectWithCount[],
+): Promise<Project[]> {
+  if (seesAll(scope) || rows.length === 0) return rows.map(toProject);
+  const { db } = deps.db;
+  const ownerIds = [...new Set(rows.flatMap((row) => row.owner_id ?? []))];
+  const [owners, roles] = await Promise.all([
+    ownerIds.length === 0
+      ? []
+      : db.selectFrom('users').select(['id', 'name']).where('id', 'in', ownerIds).execute(),
+    rolesIn(
+      db,
+      scope,
+      rows.map((row) => row.id),
+    ),
+  ]);
+  const ownerById = new Map(owners.map((owner) => [owner.id, owner]));
+  return rows.map((row) => {
+    const owner = row.owner_id === null ? undefined : ownerById.get(row.owner_id);
+    const role = roles.get(row.id);
+    return {
+      ...toProject(row),
+      owner: owner === undefined ? null : { id: owner.id, name: owner.name },
+      ...(role === undefined ? {} : { role }),
+    };
+  });
+}
+
+/** One project as the API shows it to `scope`, with its artifact count. */
+async function projectOf(deps: AppDeps, scope: Scope, row: ProjectRow): Promise<Project> {
   const [withCount] = await withArtifactCounts(deps.db.db, [row]);
-  return toProject(withCount ?? { ...row, artifact_count: 0 });
+  const [project] = await toProjects(deps, scope, [withCount ?? { ...row, artifact_count: 0 }]);
+  if (project === undefined) throw new Error(`no project DTO for ${row.id}`);
+  return project;
 }
 
 const noStore = { 'Cache-Control': 'no-store' };
@@ -142,15 +182,17 @@ const noStore = { 'Cache-Control': 'no-store' };
 export function registerProjectRoutes(api: OpenAPIHono<AppEnv>): void {
   api.openapi(listProjectsRoute, async (c) => {
     const { deps } = c.var;
+    const scope = scopeOf(c);
     const { archived, limit, cursor } = c.req.valid('query');
-    // Created with the first publish; a library that lists it before then still shows it.
-    if (archived === 'false') await ensureDefaultProject(deps);
-    const { items, nextCursor } = await listProjects(deps, scopeOf(c), {
+    // Made with the first publish without a project; a library listed before then still shows it.
+    if (archived === 'false') await defaultProjectFor(deps, scope);
+    const { items, nextCursor } = await listProjects(deps, scope, {
       archived: archived === 'true',
       limit,
       cursor: cursor ?? null,
     });
-    return c.json({ items: items.map(toProject), next_cursor: nextCursor }, 200, noStore);
+    const projects = await toProjects(deps, scope, items);
+    return c.json({ items: projects, next_cursor: nextCursor }, 200, noStore);
   });
 
   api.openapi(createProjectRoute, async (c) => {
@@ -159,27 +201,30 @@ export function registerProjectRoutes(api: OpenAPIHono<AppEnv>): void {
       name: body.name,
       ...(body.instructions === undefined ? {} : { instructions: body.instructions }),
     });
-    return c.json(await projectOf(c.var.deps, row), 201, noStore);
+    return c.json(await projectOf(c.var.deps, scopeOf(c), row), 201, noStore);
   });
 
   api.openapi(getProjectRoute, async (c) => {
     const { deps } = c.var;
+    const scope = scopeOf(c);
     const { id } = c.req.valid('param');
-    if (id === DEFAULT_PROJECT_ID) await ensureDefaultProject(deps);
-    const row = await getProject(deps.db.db, scopeOf(c), id);
-    return c.json(await projectOf(deps, row), 200, noStore);
+    // Only where the shared default is everyone's: in personal mode it is nobody's to make.
+    if (id === DEFAULT_PROJECT_ID && seesAll(scope)) await ensureDefaultProject(deps);
+    const row = await getProject(deps.db.db, scope, id);
+    return c.json(await projectOf(deps, scope, row), 200, noStore);
   });
 
   api.openapi(patchProjectRoute, async (c) => {
     const { deps } = c.var;
+    const scope = scopeOf(c);
     const { id } = c.req.valid('param');
     const body = c.req.valid('json');
-    if (id === DEFAULT_PROJECT_ID) await ensureDefaultProject(deps);
-    const row = await updateProject(deps, scopeOf(c), id, {
+    if (id === DEFAULT_PROJECT_ID && seesAll(scope)) await ensureDefaultProject(deps);
+    const row = await updateProject(deps, scope, id, {
       ...(body.name === undefined ? {} : { name: body.name }),
       ...(body.instructions === undefined ? {} : { instructions: body.instructions }),
       ...(body.archived === undefined ? {} : { archived: body.archived }),
     });
-    return c.json(await projectOf(c.var.deps, row), 200, noStore);
+    return c.json(await projectOf(deps, scope, row), 200, noStore);
   });
 }

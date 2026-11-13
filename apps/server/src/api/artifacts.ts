@@ -18,7 +18,7 @@ import {
 import { countOpenThreads } from '../domain/comments.ts';
 import { deleteArtifact } from '../domain/deletion.ts';
 import { countActiveShareLinks } from '../domain/shares.ts';
-import { type Scope, scopeOf } from '../domain/spaces.ts';
+import { can, type ProjectRole, rolesIn, type Scope, scopeOf, seesAll } from '../domain/spaces.ts';
 import { getVersionsById } from '../domain/versions.ts';
 import { publicUrl } from '../http/public-url.ts';
 import { jsonBodyLimit } from './body-limit.ts';
@@ -129,6 +129,9 @@ const patchRoute = createRoute({
     },
     400: error('Invalid fields or tags'),
     ...authErrors,
+    403: error(
+      'In personal mode, a role that may not change the artifact or publish into the project (`forbidden`, `details.reason` `role`), a project with another owner (`details.reason` `other_space`), or a cross-site request with the session cookie (`forbidden`)',
+    ),
     404: error('The artifact or the project does not exist (`not_found`)'),
     409: error('The project is archived (`conflict`)'),
     410: error('The artifact was deleted (`gone`)'),
@@ -141,7 +144,7 @@ const deleteRoute = createRoute({
   tags: ['artifacts'],
   summary: 'Delete an artifact',
   description:
-    "Deletes the artifact for good, with every version, comment thread and share link. Its links answer 410 from then on. Files no other artifact uses are removed from storage at once, or shortly after a backup that is running ends; backups made before still hold them. Only an admin or the artifact's publisher can delete it.",
+    "Deletes the artifact for good, with every version, comment thread and share link. Its links answer 410 from then on. Files no other artifact uses are removed from storage at once, or shortly after a backup that is running ends; backups made before still hold them. Only an admin or the artifact's publisher can delete it; in personal mode, the project's owner or the editor who published it.",
   middleware: [requireAuth] as MiddlewareHandler<AppEnv>[],
   security,
   request: { params: IdParam },
@@ -149,7 +152,7 @@ const deleteRoute = createRoute({
     204: { description: 'Deleted' },
     401: error('Not signed in'),
     403: error(
-      "Neither an admin nor the artifact's publisher, or a cross-site request with the session cookie (`forbidden`)",
+      "Neither an admin nor the artifact's publisher (in personal mode, neither the project's owner nor the editor who published it, with `details.reason` `role`), or a cross-site request with the session cookie (`forbidden`)",
     ),
     ...missing,
   },
@@ -159,16 +162,18 @@ const deleteRoute = createRoute({
  * Artifacts as the API shows them, with their tags, current versions, open thread counts and
  * active share link counts loaded for all rows at once, so a page costs the same few queries
  * whatever its size. The rows come from lookups in the viewer's scope, so the counts, which count
- * inside each artifact, need no scope of their own.
+ * inside each artifact, need no scope of their own. In personal mode each also says whether the
+ * viewer may change it (`can_manage`), from their roles in the rows' projects, read in one query.
  */
 export async function toArtifactSummary(
   deps: AppDeps,
-  _scope: Scope,
+  scope: Scope,
   rows: readonly ArtifactRow[],
 ): Promise<ArtifactSummary[]> {
   const { db } = deps.db;
   const ids = rows.map((row) => row.id);
-  const [tags, versions, openThreads, shareLinks] = await Promise.all([
+  const personalViewer = !seesAll(scope) && scope.kind === 'viewer' ? scope.user.id : null;
+  const [tags, versions, openThreads, shareLinks, roles] = await Promise.all([
     getTagsByArtifact(db, ids),
     getVersionsById(
       db,
@@ -176,7 +181,19 @@ export async function toArtifactSummary(
     ),
     countOpenThreads(db, ids),
     countActiveShareLinks(db, ids, deps.clock.now()),
+    personalViewer === null
+      ? new Map<string, ProjectRole>()
+      : rolesIn(db, scope, [...new Set(rows.map((row) => row.project_id))]),
   ]);
+  /** Personal mode only: whether the viewer may rename, retag or delete the artifact. */
+  const manage = (row: ArtifactRow) => {
+    if (personalViewer === null) return {};
+    const role = roles.get(row.project_id);
+    const allowed =
+      role !== undefined &&
+      can(role, 'editArtifact', { publishedBy: row.created_by, userId: personalViewer });
+    return { can_manage: allowed };
+  };
   return rows.map((row) => {
     const current =
       row.current_version_id === null ? undefined : versions.get(row.current_version_id);
@@ -198,6 +215,7 @@ export async function toArtifactSummary(
         review: publicUrl(deps.config, `/a/${row.id}`),
         raw: publicUrl(deps.config, `/a/${row.id}/raw`),
       },
+      ...manage(row),
     };
   });
 }

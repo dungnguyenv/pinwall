@@ -63,6 +63,8 @@ export const ArtifactSummary = z.object({
     /** The raw files of the newest version. */
     raw: z.string(),
   }),
+  /** Whether the caller may rename, retag or delete the artifact. Sent only in `personal` mode. */
+  can_manage: z.boolean().optional(),
 });
 export type ArtifactSummary = z.infer<typeof ArtifactSummary>;
 

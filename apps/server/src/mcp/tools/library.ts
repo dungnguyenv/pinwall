@@ -11,7 +11,7 @@ import {
   getProject,
   listProjects,
 } from '../../domain/projects.ts';
-import { type Scope, scopeForUser } from '../../domain/spaces.ts';
+import { defaultProjectFor, type Scope, scopeForUser, seesAll } from '../../domain/spaces.ts';
 import { listVersions } from '../../domain/versions.ts';
 import { publicUrl } from '../../http/public-url.ts';
 import { t } from '../../lib/i18n.ts';
@@ -143,16 +143,18 @@ async function artifactsOf(
 }
 
 /**
- * The project `id`, or the default one (created when missing) when no id is given; 404 for one
- * `scope` does not see.
+ * The project `id`, or the caller's default one (made when missing) when no id is given; 404 for
+ * one `scope` does not see.
  */
 async function readProject(
   deps: AppDeps,
   scope: Scope,
   id: string | undefined,
 ): Promise<ProjectRow> {
-  if (id === undefined || id === DEFAULT_PROJECT_ID) await ensureDefaultProject(deps);
-  return getProject(deps.db.db, scope, id ?? DEFAULT_PROJECT_ID);
+  if (id === undefined) return defaultProjectFor(deps, scope);
+  // The shared default is everyone's only where everyone sees it.
+  if (id === DEFAULT_PROJECT_ID && seesAll(scope)) await ensureDefaultProject(deps);
+  return getProject(deps.db.db, scope, id);
 }
 
 /** The line of `list_projects` for one project. */
@@ -226,9 +228,10 @@ export const libraryTools: ToolModule = (server, ctx) => {
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof ListProjectsIn>) => {
-      // The default project exists from the first publish; a library listed before that shows it.
-      if (!a.archived) await ensureDefaultProject(deps);
-      const { items, nextCursor } = await listProjects(deps, scope(), {
+      const viewer = scope();
+      // A default project exists from the first publish; a library listed before that shows it.
+      if (!a.archived) await defaultProjectFor(deps, viewer);
+      const { items, nextCursor } = await listProjects(deps, viewer, {
         archived: a.archived,
         limit: a.limit,
         cursor: a.cursor ?? null,

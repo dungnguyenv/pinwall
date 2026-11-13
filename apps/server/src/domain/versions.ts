@@ -21,9 +21,9 @@ import { newId } from '../lib/ids.ts';
 import { entryKind } from '../publish/paths.ts';
 import type { StagedFile } from '../publish/stage.ts';
 import { getArtifact, getTags, lockArtifact, normalizeTags } from './artifacts.ts';
-import { DEFAULT_PROJECT_ID, ensureDefaultProject, getProject } from './projects.ts';
+import { getProject } from './projects.ts';
 import { ARTIFACT_TOPIC, indexArtifact } from './search.ts';
-import { type Scope, scopeForUser } from './spaces.ts';
+import { defaultProjectFor, type Scope, scopeForUser } from './spaces.ts';
 
 /** Where a publish goes: a new artifact, or a new version on top of the one the publisher saw. */
 export type PublishTarget =
@@ -79,10 +79,9 @@ export async function checkTarget(
   const { db } = deps.db;
   if (target.kind === 'new_artifact') {
     normalizeTags(target.tags);
-    const projectId = target.projectId ?? DEFAULT_PROJECT_ID;
-    // The commit creates the default project when it is missing, and it is never archived.
-    if (projectId !== DEFAULT_PROJECT_ID) {
-      assertNotArchived(await getProject(db, scope, projectId));
+    // Without a project, the commit finds or makes the publisher's default, never archived.
+    if (target.projectId !== null) {
+      assertNotArchived(await getProject(db, scope, target.projectId));
     }
     return;
   }
@@ -107,7 +106,7 @@ export async function commitVersion(
   const { dialect } = deps.db;
   const scope = scopeForUser(deps, actor);
   const plan: Plan =
-    target.kind === 'new_artifact' ? await planNewArtifact(deps, target, input) : target;
+    target.kind === 'new_artifact' ? await planNewArtifact(deps, scope, target, input) : target;
 
   const result = await deps.db.db.transaction().execute(async (trx) => {
     const now = deps.clock.now();
@@ -308,15 +307,20 @@ type Plan =
   | { kind: 'new_artifact'; projectId: string; name: string; tags: string[] }
   | Extract<PublishTarget, { kind: 'new_version' }>;
 
+/**
+ * A new artifact's settings. Without a project it goes to the publisher's default project
+ * (`defaultProjectFor`: their own in personal mode, the shared one in team mode), made when
+ * missing.
+ */
 async function planNewArtifact(
   deps: AppDeps,
+  scope: Scope,
   target: Extract<PublishTarget, { kind: 'new_artifact' }>,
   input: VersionInput,
 ): Promise<Plan> {
   const tags = normalizeTags(target.tags);
-  const projectId = target.projectId ?? DEFAULT_PROJECT_ID;
   // Outside the transaction: it writes through the outer handle.
-  if (projectId === DEFAULT_PROJECT_ID) await ensureDefaultProject(deps);
+  const projectId = target.projectId ?? (await defaultProjectFor(deps, scope)).id;
   const name = artifactName(target.name, input.meta, input.entryPath);
   return { kind: 'new_artifact', projectId, name, tags };
 }

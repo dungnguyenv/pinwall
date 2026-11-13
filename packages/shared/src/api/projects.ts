@@ -16,6 +16,13 @@ export const Project = z.object({
   artifact_count: z.number().int(),
   created_at: Timestamp,
   updated_at: Timestamp,
+  /**
+   * Who owns the project, and so whose space it is in; `null` for one nobody owns. Sent only in
+   * `personal` mode.
+   */
+  owner: z.object({ id: z.string(), name: z.string().nullable() }).nullable().optional(),
+  /** What the caller is to the project. Sent only in `personal` mode. */
+  role: z.enum(['owner', 'editor', 'viewer']).optional(),
 });
 export type Project = z.infer<typeof Project>;
 

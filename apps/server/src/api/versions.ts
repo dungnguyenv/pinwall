@@ -132,7 +132,7 @@ const deleteRoute = createRoute({
   tags: ['versions'],
   summary: 'Delete a version',
   description:
-    "Deletes version `n` for good, with the comment threads written on it and its share links. Its links answer 410 from then on, and its number is never given again. If it was the current version, the newest remaining one becomes current; deleting the only version deletes the artifact. Files no remaining version uses are removed from storage at once, or shortly after a backup that is running ends; backups made before still hold them. Only an admin or the artifact's publisher can delete it.",
+    "Deletes version `n` for good, with the comment threads written on it and its share links. Its links answer 410 from then on, and its number is never given again. If it was the current version, the newest remaining one becomes current; deleting the only version deletes the artifact. Files no remaining version uses are removed from storage at once, or shortly after a backup that is running ends; backups made before still hold them. Only an admin or the artifact's publisher can delete it; in personal mode, the project's owner or the editor who published the version.",
   middleware: [requireAuth] as MiddlewareHandler<AppEnv>[],
   security,
   request: { params: VersionParams },
@@ -141,7 +141,7 @@ const deleteRoute = createRoute({
     400: error('`n` is not a positive integer'),
     401: error('Not signed in'),
     403: error(
-      "Neither an admin nor the artifact's publisher, or a cross-site request with the session cookie (`forbidden`)",
+      "Neither an admin nor the artifact's publisher (in personal mode, neither the project's owner nor the editor who published the version, with `details.reason` `role`), or a cross-site request with the session cookie (`forbidden`)",
     ),
     ...missing,
   },
