@@ -45,17 +45,33 @@ test('usage shows bytes and artifacts against the limits', async () => {
   expect(storageMeter()).toHaveAttribute('data-tone', 'normal');
 });
 
-test('a null limit reads as no limit', async () => {
+test('a null limit reads as no limit, as plain figures with no meter', async () => {
   renderRoute('/settings/usage', {
     me: withUsage({ limits: { bytes: null, artifacts: null } }),
   });
 
-  expect(await screen.findByText('120 MB of no limit')).toBeInTheDocument();
-  expect(screen.getByText('12 of no limit artifacts')).toBeInTheDocument();
-  expect(storageMeter()).toHaveAttribute('aria-valuenow', '120000000');
-  expect(storageMeter()).not.toHaveAttribute('aria-valuemax');
-  expect(artifactsMeter()).not.toHaveAttribute('aria-valuemax');
-  expect(storageMeter()).toHaveAttribute('data-tone', 'normal');
+  expect(await screen.findByText('120 MB used (no limit)')).toBeInTheDocument();
+  expect(screen.getByText('12 artifacts (no limit)')).toBeInTheDocument();
+  expect(screen.getByText(t('web.usage.storage'))).toBeInTheDocument();
+  expect(screen.getByText(t('web.usage.artifacts'))).toBeInTheDocument();
+  // With nothing to measure against there is no meter, so no value out of a range that is not there.
+  expect(screen.queryByRole('meter')).not.toBeInTheDocument();
+  expect(document.querySelector('[aria-valuenow]')).toBeNull();
+  expect(screen.queryByText(t('web.usage.full'))).not.toBeInTheDocument();
+});
+
+test('one limit set and the other not: a meter for the one, figures for the other', async () => {
+  renderRoute('/settings/usage', {
+    me: withUsage({
+      usage: { bytes: 120_000_000, artifacts: 1 },
+      limits: { bytes: 500_000_000, artifacts: null },
+    }),
+  });
+
+  expect(await screen.findByText('1 artifact (no limit)')).toBeInTheDocument();
+  expect(storageMeter()).toHaveAttribute('aria-valuetext', '120 MB of 500 MB');
+  expect(storageMeter()).toHaveAttribute('aria-valuemax', '500000000');
+  expect(screen.getAllByRole('meter')).toHaveLength(1);
 });
 
 test('a meter turns to a warning from 90 percent', async () => {

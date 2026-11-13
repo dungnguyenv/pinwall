@@ -38,7 +38,8 @@ const FIGURE: Record<Tone, string> = {
 /**
  * One measure against its limit: a name, the figures in words, and a bar. The
  * bar is the `meter`, and its value text is the sentence beside it. A limit of
- * `null` leaves the bar empty and dashed: there is nothing to fill it against.
+ * `null` leaves the bar empty and dashed: there is nothing to fill it against,
+ * so it is no meter either, only a picture, and the figures speak alone.
  */
 function Meter({
   label,
@@ -64,29 +65,33 @@ function Meter({
           {text}
         </span>
       </div>
-      {/* biome-ignore lint/a11y/useSemanticElements: a <meter> cannot take the tones, the rounded end and the dashed empty track */}
-      <div
-        role="meter"
-        aria-label={label}
-        aria-valuemin={0}
-        // Over the limit the bar is simply full; the value text says by how much.
-        aria-valuenow={limit === null ? used : Math.min(used, limit)}
-        aria-valuemax={limit ?? undefined}
-        aria-valuetext={text}
-        data-tone={tone}
-        className={cn(
-          'mt-2 h-2 overflow-hidden rounded-full',
-          limit === null ? 'border border-border-strong border-dashed' : 'bg-selected',
-        )}
-      >
+      {limit === null ? (
         <div
-          className={cn(
-            'h-full rounded-full transition-[width] duration-(--duration-base) ease-out motion-reduce:transition-none',
-            FILL[tone],
-          )}
-          style={{ width: `${share}%` }}
+          aria-hidden="true"
+          className="mt-2 h-2 rounded-full border border-border-strong border-dashed"
         />
-      </div>
+      ) : (
+        // biome-ignore lint/a11y/useSemanticElements: a <meter> cannot take the tones and the rounded end
+        <div
+          role="meter"
+          aria-label={label}
+          aria-valuemin={0}
+          // Over the limit the bar is simply full; the value text says by how much.
+          aria-valuenow={Math.min(used, limit)}
+          aria-valuemax={limit}
+          aria-valuetext={text}
+          data-tone={tone}
+          className="mt-2 h-2 overflow-hidden rounded-full bg-selected"
+        >
+          <div
+            className={cn(
+              'h-full rounded-full transition-[width] duration-(--duration-base) ease-out motion-reduce:transition-none',
+              FILL[tone],
+            )}
+            style={{ width: `${share}%` }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -112,7 +117,6 @@ export function UsagePage() {
 
   const { usage } = me;
   const limits = me.limits ?? { bytes: null, artifacts: null };
-  const noLimit = t('web.usage.noLimit');
   const bytesTone = toneOf(usage.bytes, limits.bytes);
   const artifactsTone = toneOf(usage.artifacts, limits.artifacts);
   const full = bytesTone === 'danger' || artifactsTone === 'danger';
@@ -125,20 +129,25 @@ export function UsagePage() {
             label={t('web.usage.storage')}
             used={usage.bytes}
             limit={limits.bytes}
-            text={t('web.usage.ofLimit', {
-              used: formatBytes(usage.bytes),
-              limit: limits.bytes === null ? noLimit : formatBytes(limits.bytes),
-            })}
+            text={
+              limits.bytes === null
+                ? t('web.usage.usedNoLimit', { used: formatBytes(usage.bytes) })
+                : t('web.usage.ofLimit', {
+                    used: formatBytes(usage.bytes),
+                    limit: formatBytes(limits.bytes),
+                  })
+            }
             tone={bytesTone}
           />
           <Meter
             label={t('web.usage.artifacts')}
             used={usage.artifacts}
             limit={limits.artifacts}
-            text={t('web.usage.artifactsOf', {
-              count: usage.artifacts,
-              limit: limits.artifacts ?? noLimit,
-            })}
+            text={
+              limits.artifacts === null
+                ? t('web.usage.artifactsNoLimit', { count: usage.artifacts })
+                : t('web.usage.artifactsOf', { count: usage.artifacts, limit: limits.artifacts })
+            }
             tone={artifactsTone}
           />
           {full ? (
