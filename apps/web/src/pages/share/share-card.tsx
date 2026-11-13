@@ -1,12 +1,15 @@
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { usePublicConfig } from '../../api/session.ts';
+import { PolicyLinks } from '../../app/policy-links.tsx';
 import { cn, PinMark } from '../../ui/index.ts';
 
 /**
  * The page around a share link's password and its notices, for people who
  * may never have seen Pinwall: one note centered on the canvas, held to it by
  * the Pinwall pin at its top edge, its title, a line of explanation, then
- * whatever it asks for. A quiet line under it says where the link comes from.
+ * whatever it asks for. A quiet line under it says where the link comes from,
+ * and where to report abuse when the people who run this Pinwall gave a contact.
  * `loose`: the link no longer works, and the pin is drawn faded. On phones
  * the note's frame drops away and the pin sits above the title.
  */
@@ -22,6 +25,7 @@ export function ShareCard({
   children?: ReactNode;
 }) {
   const { t } = useTranslation();
+  const config = usePublicConfig().data;
   return (
     <main className="flex min-h-dvh flex-col items-center bg-canvas px-4 pt-16 pb-10 sm:justify-center sm:py-12">
       <div className="w-full max-w-100">
@@ -43,6 +47,11 @@ export function ShareCard({
         <p className="mt-6 text-center text-fg-muted text-sm">
           {t('web.share.viewer.via', { app: t('app.name') })}
         </p>
+        {config ? (
+          <div className="mt-2">
+            <PolicyLinks config={config} />
+          </div>
+        ) : null}
       </div>
     </main>
   );
