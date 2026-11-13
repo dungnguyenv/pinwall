@@ -153,6 +153,8 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     formatDuration(c.access.recheckIntervalMs),
   ),
 
+  setting('spaces', 'PINWALL_VISIBILITY', (c) => c.visibility),
+
   setting('limits', 'PINWALL_MAX_UPLOAD_BYTES', (c) => String(c.limits.maxUploadBytes)),
   setting('limits', 'PINWALL_MAX_INLINE_BYTES', (c) => String(c.limits.maxInlineBytes)),
   setting('limits', 'PINWALL_MAX_FILE_BYTES', (c) => String(c.limits.maxFileBytes)),

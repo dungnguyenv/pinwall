@@ -1,3 +1,6 @@
+/** Whether every member sees every project (`team`), or each person has a space of their own. */
+export type Visibility = 'team' | 'personal';
+
 export interface Config {
   /** Origin only, no trailing slash, e.g. "https://pinwall.example". */
   publicOrigin: string;
@@ -48,6 +51,8 @@ export interface Config {
     memberDomains: string[];
     recheckIntervalMs: number;
   };
+  /** `PINWALL_VISIBILITY`. Changing it takes a restart. */
+  visibility: Visibility;
   limits: {
     maxUploadBytes: number;
     maxInlineBytes: number;

@@ -462,6 +462,13 @@ export function loadConfig(
       ) ?? 12 * 3_600_000,
   };
 
+  // Spaces and sharing
+  const visibility: Config['visibility'] =
+    r.read(
+      'PINWALL_VISIBILITY',
+      z.enum(['team', 'personal'], { error: 'must be "team" or "personal"' }),
+    ) ?? 'team';
+
   // Limits and lifetimes
   const limits = {
     maxUploadBytes: r.read('PINWALL_MAX_UPLOAD_BYTES', positiveSize) ?? 95_000_000,
@@ -501,6 +508,7 @@ export function loadConfig(
     trustProxy,
     oidc,
     access,
+    visibility,
     limits,
     ttl,
     metrics: { port: metricsPort },

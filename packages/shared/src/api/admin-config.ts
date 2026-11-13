@@ -8,6 +8,7 @@ export const ConfigSection = z.enum([
   'storage',
   'sign_in',
   'access',
+  'spaces',
   'limits',
   'lifetimes',
 ]);

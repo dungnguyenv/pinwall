@@ -9,6 +9,8 @@ import { type Config, ConfigError, loadConfig } from './config/load.ts';
 import { connectDb } from './db/connect.ts';
 import { migrateToLatest } from './db/migrate.ts';
 import { closeDeps, createDeps } from './deps.ts';
+import { confirmTeamVisibility, startSpaces } from './domain/spaces-startup.ts';
+import { systemClock } from './lib/clock.ts';
 import { t } from './lib/i18n.ts';
 import { createLogger, type Logger } from './lib/logger.ts';
 import { runBackupCommand, runRestoreCommand } from './ops/backup/cli.ts';
@@ -25,6 +27,7 @@ Commands:
   migrate                 Apply pending database migrations, then exit.
   backup --out <file|->   Write a backup archive to a file, or to stdout with -
   restore --in <file|->   Restore an archive into an empty installation (- reads stdin)
+  visibility team --confirm  Allow team mode after personal mode: every member sees every project
   version                 Print the Pinwall version
 
 Configuration comes from PINWALL_* environment variables.`;
@@ -39,7 +42,14 @@ const SHUTDOWN_DEADLINE_MS = 10_000;
 type Command =
   | { name: 'serve' | 'migrate' | 'help' | 'version' }
   | { name: 'backup'; out: string }
-  | { name: 'restore'; input: string };
+  | { name: 'restore'; input: string }
+  | { name: 'visibility' };
+
+/** What the fatal log line says when a command other than `serve` fails. */
+const FAILURES: Partial<Record<Command['name'], string>> = {
+  migrate: 'Migration failed',
+  visibility: 'Could not confirm team mode',
+};
 
 /** The command, or an error message for a command line that is not understood. */
 function parseCommand(argv: string[]): Command | { error: string } {
@@ -52,19 +62,31 @@ function parseCommand(argv: string[]): Command | { error: string } {
         version: { type: 'boolean', short: 'v' },
         out: { type: 'string' },
         in: { type: 'string' },
+        confirm: { type: 'boolean' },
       },
     });
     if (values.help) return { name: 'help' };
     if (values.version) return { name: 'version' };
     const [name = 'serve', ...rest] = positionals;
-    if (rest.length > 0) return { error: `Unexpected argument: ${rest.join(' ')}` };
+    // `visibility` takes the word "team"; every other command takes no argument.
+    const extra = name === 'visibility' ? rest.slice(1) : rest;
+    if (extra.length > 0) return { error: `Unexpected argument: ${extra.join(' ')}` };
 
-    // Each file option belongs to one command, which cannot do without it.
+    // Each option belongs to one command, which cannot do without it.
     if (values.out !== undefined && name !== 'backup') {
       return { error: '--out belongs to the backup command' };
     }
     if (values.in !== undefined && name !== 'restore') {
       return { error: '--in belongs to the restore command' };
+    }
+    if (values.confirm && name !== 'visibility') {
+      return { error: '--confirm belongs to the visibility command' };
+    }
+    if (name === 'visibility') {
+      if (rest[0] !== 'team')
+        return { error: 'visibility needs "team": run pinwall visibility team --confirm' };
+      if (!values.confirm) return { error: 'visibility team needs --confirm' };
+      return { name };
     }
     if (name === 'backup' || name === 'restore') {
       const option = name === 'backup' ? '--out' : '--in';
@@ -97,10 +119,27 @@ async function migrate(config: Config, logger: Logger): Promise<void> {
   }
 }
 
+/** `visibility team --confirm`: lets team mode start after personal mode, and says whose projects it joins. */
+async function confirmTeam(config: Config, logger: Logger): Promise<void> {
+  const db = await connectDb(config.database, logger);
+  try {
+    await migrateToLatest(db);
+    const owners = await confirmTeamVisibility(db.db, systemClock.now());
+    console.log(t('spaces.guard.confirmed', { owners }));
+  } finally {
+    await db.close();
+  }
+}
+
 async function runServer(config: Config, logger: Logger): Promise<void> {
   for (const warning of config.warnings) logger.warn(warning);
 
   const deps = await createDeps(config, { logger });
+  // Before the app listens: the mode check can refuse the start.
+  await startSpaces(deps).catch(async (err: unknown) => {
+    await closeDeps(deps);
+    throw err;
+  });
   enableProcessMetrics(deps.metrics);
   // Before the app listens: a metrics port that is taken is a startup failure, not a silent gap.
   const metricsServer = await startMetricsServer(deps).catch(async (err: unknown) => {
@@ -273,14 +312,13 @@ async function main(argv: string[]): Promise<void> {
 
   try {
     if (command.name === 'migrate') await migrate(config, logger);
+    else if (command.name === 'visibility') await confirmTeam(config, logger);
     else await runServer(config, logger);
   } catch (error) {
-    // `ensureSecretKey` reports an unusable key file as a ConfigError too.
+    // `ensureSecretKey` reports an unusable key file as a ConfigError too, and `startSpaces`
+    // refuses a start that would show every space to everyone.
     if (error instanceof ConfigError) exitWithConfigError(error);
-    logger.fatal(
-      { err: error },
-      command.name === 'migrate' ? 'Migration failed' : 'Pinwall cannot start',
-    );
+    logger.fatal({ err: error }, FAILURES[command.name] ?? 'Pinwall cannot start');
     process.exit(1);
   }
 }

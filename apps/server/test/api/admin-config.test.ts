@@ -169,6 +169,7 @@ describe('describeConfig', () => {
       'access PINWALL_MEMBER_EMAILS',
       'access PINWALL_MEMBER_DOMAINS',
       'access PINWALL_ACCESS_RECHECK_INTERVAL',
+      'spaces PINWALL_VISIBILITY',
       'limits PINWALL_MAX_UPLOAD_BYTES',
       'limits PINWALL_MAX_INLINE_BYTES',
       'limits PINWALL_MAX_FILE_BYTES',

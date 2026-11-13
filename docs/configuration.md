@@ -90,6 +90,14 @@ Who the identity provider admits, and as what: admin or member. People who sign 
 | `PINWALL_MEMBER_DOMAINS` | none | Email domains whose verified addresses become members, such as `example.com`. When no member group, email or domain is set, everyone the provider admits is a member. |
 | `PINWALL_ACCESS_RECHECK_INTERVAL` | `12h` | How often Pinwall asks the identity provider whether someone still has access, from `5m` to `24h`. Someone removed at the provider loses access by the next check. |
 
+## Spaces and sharing
+
+Whether every member sees every project, or each person has a space of their own. Changing it takes a restart.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PINWALL_VISIBILITY` | `team` | team: every member sees every project, as in Pinwall 1.0. personal: each person sees only the projects they own or were added to. Going from personal back to team needs pinwall visibility team --confirm once. |
+
 ## Upload limits
 
 The `*_BYTES` limits accept the size syntax above. A publish that goes over any limit is refused.

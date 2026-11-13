@@ -27,6 +27,8 @@ export function registerConfigRoutes(api: OpenAPIHono<AppEnv>): void {
         : { enabled: false, display_name: null },
       isolation: config.isolation.mode,
       passkeys_available: passkeysAvailable(config),
+      // New fields are sent only in personal mode: a team instance answers as 1.0 did.
+      ...(config.visibility === 'personal' ? { visibility: 'personal' as const } : {}),
       limits: {
         max_upload_bytes: config.limits.maxUploadBytes,
         max_inline_bytes: config.limits.maxInlineBytes,

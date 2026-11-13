@@ -30,6 +30,7 @@ export const SECTION_TITLES: Record<ConfigSection, string> = {
   storage: 'Storage',
   sign_in: 'Single sign-on',
   access: 'Roles and access',
+  spaces: 'Spaces and sharing',
   limits: 'Upload limits',
   lifetimes: 'Lifetimes',
 };
@@ -46,6 +47,8 @@ const SECTION_INTROS: Record<ConfigSection, string> = {
     'Single sign-on through an OpenID Connect identity provider. It is on when the issuer and the client id are set, and off when neither is. Setting only one of them, or a client secret without them, stops Pinwall at startup.',
   access:
     'Who the identity provider admits, and as what: admin or member. People who sign in with the owner account are not affected by these.',
+  spaces:
+    'Whether every member sees every project, or each person has a space of their own. Changing it takes a restart.',
   limits:
     'The `*_BYTES` limits accept the size syntax above. A publish that goes over any limit is refused.',
   lifetimes: 'Durations accept the syntax above.',
@@ -361,6 +364,16 @@ export const CONFIG_VARS: readonly ConfigVar[] = [
     default: '12h',
     description:
       'How often Pinwall asks the identity provider whether someone still has access, from `5m` to `24h`. Someone removed at the provider loses access by the next check.',
+  },
+
+  // Spaces and sharing
+  {
+    name: 'PINWALL_VISIBILITY',
+    section: 'spaces',
+    secret: false,
+    default: 'team',
+    description:
+      'team: every member sees every project, as in Pinwall 1.0. personal: each person sees only the projects they own or were added to. Going from personal back to team needs pinwall visibility team --confirm once.',
   },
 
   // Upload limits

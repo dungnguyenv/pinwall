@@ -380,6 +380,7 @@
   "web.config.section.storage": "Storage",
   "web.config.section.sign_in": "Single sign-on",
   "web.config.section.access": "Roles and access",
+  "web.config.section.spaces": "Spaces and sharing",
   "web.config.section.limits": "Upload limits",
   "web.config.section.lifetimes": "Lifetimes",
   "web.config.help.PINWALL_PUBLIC_ORIGIN": "The address people use to open Pinwall; every link, cookie and redirect is built from it.",
@@ -417,6 +418,7 @@
   "web.config.help.PINWALL_MEMBER_EMAILS": "People who sign in with a verified email on this list become members.",
   "web.config.help.PINWALL_MEMBER_DOMAINS": "People whose verified email is in one of these domains become members; when no member group, email or domain is set, everyone the identity provider admits is a member.",
   "web.config.help.PINWALL_ACCESS_RECHECK_INTERVAL": "How often Pinwall asks your identity provider whether a person still has access.",
+  "web.config.help.PINWALL_VISIBILITY": "team: every member sees every project, as in Pinwall 1.0. personal: each person sees only the projects they own or were added to. Takes a restart.",
   "web.config.help.PINWALL_MAX_UPLOAD_BYTES": "The largest single upload request Pinwall accepts.",
   "web.config.help.PINWALL_MAX_INLINE_BYTES": "The most content an agent can send inline in one publish over MCP.",
   "web.config.help.PINWALL_MAX_FILE_BYTES": "The largest single file inside an artifact version.",
@@ -929,5 +931,7 @@
   "restore.failed": "Restore failed: {{message}}",
   "backup.outTerminal": "Standard output is a terminal, which would ruin the archive. Send it to a file or a pipe (with docker exec, leave out -t), or use --out <file>.",
   "backup.schemaBehind": "The database is at migration {{at}}, older than this Pinwall ({{version}}), which expects {{expected}}. A backup never migrates the database: back up with the Pinwall version that runs it, in the server's container or with the server's image.",
-  "backup.schemaAhead": "The database is at migration {{at}}, which this Pinwall ({{version}}) does not know: it expects {{expected}}. A newer Pinwall runs this database: back up with that version, in the server's container or with the server's image."
+  "backup.schemaAhead": "The database is at migration {{at}}, which this Pinwall ({{version}}) does not know: it expects {{expected}}. A newer Pinwall runs this database: back up with that version, in the server's container or with the server's image.",
+  "spaces.guard.refused": "PINWALL_VISIBILITY is team, but Pinwall last ran in personal mode and {{owners}} people own projects. In team mode every member would see all of their projects. To allow that, run pinwall visibility team --confirm once and start Pinwall again, or set PINWALL_VISIBILITY=personal.",
+  "spaces.guard.confirmed": "Team mode confirmed: at the next start every member sees the projects of all {{owners}} owners."
 }

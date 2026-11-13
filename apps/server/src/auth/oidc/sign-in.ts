@@ -222,11 +222,13 @@ export async function finishOidcSignIn(
 }
 
 /**
- * Warns, once per process, when group rules are set but a sign-in token carries no roles claim:
- * no group rule can match that person, which is easy to miss when the IdP never sends the claim
- * (a mapper or scope left out). Only the claim's name is logged, never a value.
+ * Warns, once per process, when member group rules are set but a sign-in token carries no roles
+ * claim: no group rule can match that person, which is easy to miss when the IdP never sends the
+ * claim (a mapper or scope left out). Without a member group rule a missing claim is normal, so
+ * nothing is logged. Only the claim's name is logged, never a value.
  */
 function logMissingRolesClaim(deps: AppDeps, claims: Record<string, unknown>): void {
+  if ((deps.config.oidc?.memberGroups.length ?? 0) === 0) return;
   const runtime = oidcRuntime(deps);
   if (runtime.missingRolesClaimLogged || !lacksGroupsClaim(deps.config, claims)) return;
   runtime.missingRolesClaimLogged = true;

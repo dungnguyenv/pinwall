@@ -6,6 +6,8 @@ export const PublicConfig = z.object({
   oidc: z.object({ enabled: z.boolean(), display_name: z.string().nullable() }),
   isolation: z.enum(['single-domain', 'content-domain']),
   passkeys_available: z.boolean(),
+  /** Sent only in `personal` mode, where each person has a space of their own; absent means `team`. */
+  visibility: z.enum(['team', 'personal']).optional(),
   limits: z.object({
     max_upload_bytes: z.number().int(),
     max_inline_bytes: z.number().int(),
