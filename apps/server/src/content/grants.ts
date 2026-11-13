@@ -235,6 +235,15 @@ export async function revokeGrantsInProjects(
   );
 }
 
+/**
+ * Ends every grant of version `versionId`, those made for people and those a share link's guests
+ * hold: deleted, live ones tombstoned (410). The version and its links stay. Pass the transaction
+ * that holds the artifact. Returns how many.
+ */
+export async function revokeVersionGrants(db: Db, versionId: string, now: number): Promise<number> {
+  return endGrants(db, (eb) => eb('version_id', '=', versionId), now);
+}
+
 /** Deletes the grants that have expired; returns how many. */
 export async function purgeExpiredGrants(deps: AppDeps): Promise<number> {
   const result = await deps.db.db

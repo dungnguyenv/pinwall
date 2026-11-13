@@ -25,6 +25,8 @@ const SYSTEM_SCOPE_ALLOWED = [
   'api/admin-users.ts',
   // A person deletes everything they own themselves (their purge in personal mode).
   'api/me.ts',
+  // admin moderation: metadata, revoke and delete by id, never content
+  'api/admin-moderation.ts',
 ];
 
 const allowed = (path: string) =>

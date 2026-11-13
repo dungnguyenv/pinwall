@@ -25,6 +25,7 @@ import {
   holdRoleIn,
   type ProjectRole,
   type Scope,
+  type SystemScope,
   scopeForUser,
   seesAll,
   whereVisible,
@@ -249,15 +250,43 @@ export async function revokeShareLink(
         ? forbidden(t('share.revokeForbidden'))
         : forbiddenRole('revokeShareLink');
     }
-    await trx
-      .updateTable('share_links')
-      .set({ revoked_at: now })
-      .where('id', '=', link.id)
-      .where('revoked_at', 'is', null)
-      .execute();
-    await endGrantsOf(trx, [link.id], now);
+    await markRevoked(trx, link.id, now);
   });
   endShareLinkStreams(deps, linkId);
+}
+
+/**
+ * `revokeShareLink` for the system, as a moderation action: no one's role is asked, and the link
+ * is found whichever space its artifact is in. The artifact is held first, then its project, as
+ * every write takes them. An unknown link answers 404; a revoked one stays as it was.
+ */
+export async function systemRevokeShareLink(
+  deps: AppDeps,
+  scope: SystemScope,
+  linkId: string,
+): Promise<void> {
+  const { db, dialect } = deps.db;
+  await db.transaction().execute(async (trx) => {
+    const now = deps.clock.now();
+    const seen = await getShareLink(trx, scope, linkId);
+    const artifact = await holdArtifact(trx, dialect, scope, seen.artifact_id, now);
+    await holdProject(trx, dialect, deps.config.visibility, artifact.project_id);
+    // A deletion the hold waited for may have taken the link along.
+    const link = dialect === 'postgres' ? await getShareLink(trx, scope, linkId) : seen;
+    await markRevoked(trx, link.id, now);
+  });
+  endShareLinkStreams(deps, linkId);
+}
+
+/** Marks link `linkId` revoked (a revoked one keeps its time) and ends the grants made from it. */
+async function markRevoked(trx: Transaction<Database>, linkId: string, now: number) {
+  await trx
+    .updateTable('share_links')
+    .set({ revoked_at: now })
+    .where('id', '=', linkId)
+    .where('revoked_at', 'is', null)
+    .execute();
+  await endGrantsOf(trx, [linkId], now);
 }
 
 /**

@@ -98,3 +98,74 @@ export const PurgeResult = z.object({
   artifacts: z.number().int().nonnegative(),
 });
 export type PurgeResult = z.infer<typeof PurgeResult>;
+
+/** A person as an admin sees them in moderation: the name, else the email, else empty. */
+export const AdminPerson = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string().nullable(),
+});
+export type AdminPerson = z.infer<typeof AdminPerson>;
+
+/**
+ * A share link as an admin sees it: metadata only. Its token is stored only as a hash, so no
+ * address to open it exists, and none is listed.
+ */
+export const AdminShareLink = z.object({
+  id: z.string(),
+  artifact: z.object({ id: z.string(), name: z.string() }),
+  /**
+   * Whose space holds the artifact: the owner of its project in `personal` mode, the person who
+   * published it in `team` mode; `null` when there is none (an unclaimed default project, or an
+   * account that is gone).
+   */
+  owner: AdminPerson.nullable(),
+  created_by: AdminPerson.nullable(),
+  /** `null`: the link follows the artifact's current version. */
+  version: z.object({ id: z.string(), number: z.number().int() }).nullable(),
+  has_password: z.boolean(),
+  allow_comments: z.boolean(),
+  created_at: Timestamp,
+  expires_at: Timestamp.nullable(),
+  last_used_at: Timestamp.nullable(),
+});
+export type AdminShareLink = z.infer<typeof AdminShareLink>;
+
+export const AdminShareLinkList = page(AdminShareLink);
+export type AdminShareLinkList = z.infer<typeof AdminShareLinkList>;
+
+/** An address from an abuse report, pasted whole. */
+export const LookupRequest = z.object({ url: z.string().min(1).max(4096) });
+export type LookupRequest = z.infer<typeof LookupRequest>;
+
+/** What a reported address belongs to, without any of its content. */
+export const AdminLookup = z.object({
+  kind: z.enum(['share_link', 'content_grant', 'artifact']),
+  artifact: z.object({
+    id: z.string(),
+    name: z.string(),
+    project: z.object({ id: z.string(), name: z.string() }),
+    owner: AdminPerson.nullable(),
+  }),
+  /** The link's, the grant's, the one `/v/<n>` names, else the artifact's current one. */
+  version: z.object({
+    id: z.string(),
+    number: z.number().int(),
+    published_by: AdminPerson.nullable(),
+  }),
+  /** The link, or the link a content grant was made from. */
+  share_link: AdminShareLink.nullable(),
+  grant: z
+    .object({
+      mode: z.enum(['review', 'raw']),
+      expires_at: Timestamp,
+      /** The person it was made for; `null` for a share link's guest. */
+      holder: AdminPerson.nullable(),
+    })
+    .nullable(),
+});
+export type AdminLookup = z.infer<typeof AdminLookup>;
+
+/** How many content grants ending a version's grants deleted. */
+export const EndGrantsResult = z.object({ grants: z.number().int().nonnegative() });
+export type EndGrantsResult = z.infer<typeof EndGrantsResult>;
