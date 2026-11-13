@@ -29,6 +29,7 @@ export async function ensureDefaultProject(deps: AppDeps): Promise<ProjectRow> {
       created_by: null,
       created_at: now,
       updated_at: now,
+      owner_id: null,
     })
     .onConflict((oc) => oc.column('id').doNothing())
     .execute();
@@ -60,6 +61,7 @@ export async function createProject(
     created_by: actor.id,
     created_at: now,
     updated_at: now,
+    owner_id: actor.id,
   };
   await deps.db.db.insertInto('projects').values(project).execute();
   return project;

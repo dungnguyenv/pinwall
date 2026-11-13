@@ -86,7 +86,10 @@ test('migrate applies the migrations and exits', async () => {
   const { output, exited } = pinwall(['migrate'], { PINWALL_DATA_DIR: dataDir });
   expect(await exited).toBe(0);
   expect(logLines(output.stdout)).toContainEqual(
-    expect.objectContaining({ msg: 'migrated', applied: ['0001_initial', '0002_publishing'] }),
+    expect.objectContaining({
+      msg: 'migrated',
+      applied: ['0001_initial', '0002_publishing', '0003_spaces'],
+    }),
   );
 
   const h = await connectDb({ kind: 'sqlite', path: join(dataDir, 'pinwall.db') });

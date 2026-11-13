@@ -10,6 +10,7 @@ import { type Kysely, sql, type Transaction } from 'kysely';
 import { type Extract, extract } from 'tar-stream';
 import { extractVersionText } from '../../content/metadata.ts';
 import type { DbDialect } from '../../db/connect.ts';
+import { backfillProjectOwners } from '../../db/migrations/0003_spaces.ts';
 import { migrations } from '../../db/migrations/index.ts';
 import type { Database } from '../../db/schema.ts';
 import type { AppDeps } from '../../deps.ts';
@@ -28,6 +29,7 @@ import {
   keyFingerprint,
   type Manifest,
   ManifestSchema,
+  TABLE_SINCE,
   type TableStats,
 } from './format.ts';
 import { holdMaintenanceLease, type MaintenanceLease } from './lease.ts';
@@ -38,6 +40,10 @@ const MANIFEST_MAX_BYTES = 1024 * 1024;
 const INSERT_VALUES_MAX = 30_000;
 /** How much of a stray entry name an error message repeats. */
 const NAME_SHOWN_CHARS = 100;
+/** Hex SHA-256 of no bytes: the checksum of a table entry without rows. */
+const EMPTY_SHA256 = createHash('sha256').digest('hex');
+/** The migration that gave projects their owners; an older archive gets them on restore. */
+const OWNERS_MIGRATION = '0003_spaces';
 
 /** A restore that did not happen. Its message is what the CLI prints. */
 export class RestoreError extends Error {
@@ -65,6 +71,7 @@ type Entry = Extract extends AsyncIterable<infer E> ? E : never;
 /** How `restore.notEmpty` names what a table holds: singular, plural. */
 const NOUNS: Record<BackupTable, readonly [string, string]> = {
   users: ['user', 'users'],
+  instance_settings: ['instance setting', 'instance settings'],
   password_credentials: ['password', 'passwords'],
   passkeys: ['passkey', 'passkeys'],
   sessions: ['session', 'sessions'],
@@ -73,6 +80,7 @@ const NOUNS: Record<BackupTable, readonly [string, string]> = {
   oauth_grants: ['OAuth grant', 'OAuth grants'],
   oauth_tokens: ['OAuth token', 'OAuth tokens'],
   projects: ['project', 'projects'],
+  project_members: ['project member', 'project members'],
   artifacts: ['artifact', 'artifacts'],
   artifact_tags: ['tag', 'tags'],
   artifact_views: ['view', 'views'],
@@ -91,15 +99,16 @@ const notBackup = () => new RestoreError(t('restore.notBackup'));
 
 /**
  * Throws `restore.notEmpty`, listing what it found, unless the target is empty: no row in any
- * backed-up table but the default project a server creates when it first starts, and nothing in
- * the blob store. It only reads, and a table the database does not have (it was never migrated,
- * or an older version migrated it) holds nothing, so it can run before the target is migrated.
+ * backed-up table but what a server writes when it first starts (the default project and the
+ * instance settings), and nothing in the blob store. It only reads, and a table the database does
+ * not have (it was never migrated, or an older version migrated it) holds nothing, so it can run
+ * before the target is migrated.
  */
 export async function assertEmptyTarget(deps: AppDeps): Promise<void> {
   const existing = new Set((await deps.db.db.introspection.getTables()).map((table) => table.name));
   const found = await targetContents(deps.db.db, deps.blobs, {
     tables: BACKUP_TABLES.filter((table) => existing.has(table)),
-    defaultProject: true,
+    firstStart: true,
     blobs: new Set(),
   });
   if (found.length > 0) {
@@ -117,6 +126,10 @@ export async function assertEmptyTarget(deps: AppDeps): Promise<void> {
  * 3. it checks every row against the target's columns, the row counts, and that each version's
  *    files arrived;
  * 4. one transaction then inserts every row and rebuilds the search index.
+ *
+ * An archive made by an older version restores as if the target had migrated its database: the
+ * tables it predates stay empty, a column it lacks takes the table's default, and an archive from
+ * before `0003_spaces` gets its project owners as that migration gives them.
  *
  * Nothing is written to the database before the whole archive has been verified. When the secret
  * key differs from the backup's, IdP refresh tokens (the only values sealed with it) are dropped
@@ -144,16 +157,24 @@ export async function restoreBackup(
     await mkdir(tmp, { recursive: true });
     spool = await mkdtemp(join(tmp, 'restore-'));
     archive = await openArchive(input);
-    const manifest = await unpack(deps, archive, { lease, spool, written, created });
+    const { manifest, absent } = await unpack(deps, archive, { lease, spool, written, created });
     const columns = await tableColumns(deps.db.db);
-    await verifyRows(manifest, { spool, columns, written });
+    await verifyRows(manifest, { spool, columns, written, absent });
 
     lease.assertHeld();
     await hooks.beforeInsert?.();
     const keyChanged = manifest.key_fingerprint !== keyFingerprint(secretKey);
     const cleared = await insertEverything(
       deps,
-      { lease, spool, columns, written, keyChanged },
+      {
+        lease,
+        spool,
+        columns,
+        written,
+        absent,
+        keyChanged,
+        backfillOwners: !manifest.migrations.includes(OWNERS_MIGRATION),
+      },
       hooks,
     );
     const warnings = cleared > 0 ? [t('restore.keyChanged', { count: cleared })] : [];
@@ -169,22 +190,23 @@ export async function restoreBackup(
 
 /**
  * Counts like "2 users" for the rows of `scope.tables` and the files in the blob store; empty when
- * there are none. The default project does not count when `scope.defaultProject` is set, nor do
- * the files whose keys are in `scope.blobs`.
+ * there are none. What a first start writes (the default project and the instance settings) does
+ * not count when `scope.firstStart` is set, nor do the files whose keys are in `scope.blobs`.
  */
 async function targetContents(
   db: Kysely<Database>,
   blobs: BlobStore,
   scope: {
     tables: readonly BackupTable[];
-    defaultProject: boolean;
+    firstStart: boolean;
     blobs: ReadonlySet<string>;
   },
 ): Promise<string[]> {
   const found: string[] = [];
   for (const table of scope.tables) {
+    if (scope.firstStart && table === 'instance_settings') continue;
     const where =
-      scope.defaultProject && table === 'projects' ? sql`where id <> ${DEFAULT_PROJECT_ID}` : sql``;
+      scope.firstStart && table === 'projects' ? sql`where id <> ${DEFAULT_PROJECT_ID}` : sql``;
     const { rows } = await sql<{ n: number | string }>`
       select count(*) as n from ${sql.table(table)} ${where}
     `.execute(db);
@@ -327,21 +349,22 @@ interface UnpackTarget {
 
 /**
  * Reads the whole archive: checks the manifest, spools each table and checks it against the
- * manifest, and stores each blob (the store checks it against its key). Returns the manifest
- * once every table and blob it lists has arrived, and nothing else.
+ * manifest, and stores each blob (the store checks it against its key). Once every table and
+ * blob the manifest lists has arrived, and nothing else, returns the manifest and the tables the
+ * archive is too old to have (see `readManifest`).
  */
 async function unpack(
   deps: AppDeps,
   archive: ArchiveReader,
   { lease, spool, written, created }: UnpackTarget,
-): Promise<Manifest> {
+): Promise<{ manifest: Manifest; absent: ReadonlySet<BackupTable> }> {
   lease.assertHeld();
   const first = await archive.next();
   if (first === null) throw damaged('manifest.json is missing');
   if (first.header.name !== 'manifest.json' || first.header.type !== 'file') {
     throw damaged('manifest.json must come first');
   }
-  const manifest = await readManifest(archive, first);
+  const { manifest, absent } = await readManifest(archive, first);
 
   const tables = new Set<BackupTable>();
   let blobCount = 0;
@@ -353,7 +376,7 @@ async function unpack(
     const { name, type } = entry.header;
     const size = entry.header.size;
     const table = type === 'file' ? tableOf(name) : null;
-    if (table !== null && !tables.has(table)) {
+    if (table !== null && !absent.has(table) && !tables.has(table)) {
       tables.add(table);
       await spoolTable(archive, entry, join(spool, `${table}.jsonl`), manifest.tables[table]);
       continue;
@@ -374,7 +397,9 @@ async function unpack(
   }
 
   for (const table of BACKUP_TABLES) {
-    if (!tables.has(table)) throw damaged(`${tableEntry(table)} is missing`);
+    if (!absent.has(table) && !tables.has(table)) {
+      throw damaged(`${tableEntry(table)} is missing`);
+    }
   }
   if (blobCount !== manifest.blobs.count) {
     throw damaged(`expected ${manifest.blobs.count} blobs, found ${blobCount}`);
@@ -382,14 +407,19 @@ async function unpack(
   if (blobBytes !== manifest.blobs.bytes) {
     throw damaged(`expected ${manifest.blobs.bytes} bytes of blobs, found ${blobBytes}`);
   }
-  return manifest;
+  return { manifest, absent };
 }
 
 /**
  * The manifest in `entry`, checked in this order: a Pinwall backup at all, a format this version
- * reads, a well-formed manifest, and migrations this version has.
+ * reads, a well-formed manifest, and migrations this version has. An archive made before a
+ * table's migration (see `TABLE_SINCE`) has no entry for it: such tables are returned as
+ * `absent`, listed in the manifest as empty.
  */
-async function readManifest(archive: ArchiveReader, entry: Entry): Promise<Manifest> {
+async function readManifest(
+  archive: ArchiveReader,
+  entry: Entry,
+): Promise<{ manifest: Manifest; absent: ReadonlySet<BackupTable> }> {
   if (entry.header.size > MANIFEST_MAX_BYTES) throw notBackup();
   const parts: Buffer[] = [];
   for await (const chunk of archive.body(entry)) parts.push(chunk);
@@ -404,6 +434,7 @@ async function readManifest(archive: ArchiveReader, entry: Entry): Promise<Manif
   if (typeof version === 'number' && version > BACKUP_FORMAT_VERSION) {
     throw new RestoreError(t('restore.newerFormat', { version }));
   }
+  const absent = fillAbsentTables(parsed);
   const result = ManifestSchema.safeParse(parsed);
   if (!result.success) throw notBackup();
   const manifest = result.data;
@@ -416,7 +447,24 @@ async function readManifest(archive: ArchiveReader, entry: Entry): Promise<Manif
     const names = (unknown.length > 0 ? unknown : rest).map((name) => printable(name));
     throw new RestoreError(t('restore.unknownMigrations', { names: names.join(', ') }));
   }
-  return manifest;
+  return { manifest, absent };
+}
+
+/**
+ * Lists as empty, in `parsed.tables`, each `TABLE_SINCE` table that the archive does not list and
+ * whose migration it predates, and returns those tables. A malformed manifest is left as it is,
+ * for `ManifestSchema` to refuse.
+ */
+function fillAbsentTables(parsed: Row): Set<BackupTable> {
+  const absent = new Set<BackupTable>();
+  const { migrations: applied, tables } = parsed;
+  if (!Array.isArray(applied) || !isObject(tables)) return absent;
+  for (const [table, since] of Object.entries(TABLE_SINCE) as [BackupTable, string][]) {
+    if (applied.includes(since) || Object.hasOwn(tables, table)) continue;
+    tables[table] = { rows: 0, bytes: 0, sha256: EMPTY_SHA256 } satisfies TableStats;
+    absent.add(table);
+  }
+  return absent;
 }
 
 function tableEntry(table: BackupTable): string {
@@ -506,7 +554,7 @@ function columnsOf(
 /**
  * Reads every spooled table before anything is written: each line must be a row of the
  * target's columns, each table must hold the rows the manifest counts, and every file a version
- * lists must be a stored blob.
+ * lists must be a stored blob. The `absent` tables have nothing to read.
  */
 async function verifyRows(
   manifest: Manifest,
@@ -514,13 +562,16 @@ async function verifyRows(
     spool,
     columns,
     written,
+    absent,
   }: {
     spool: string;
     columns: Map<BackupTable, ReadonlySet<string>>;
     written: ReadonlySet<string>;
+    absent: ReadonlySet<BackupTable>;
   },
 ): Promise<void> {
   for (const table of BACKUP_TABLES) {
+    if (absent.has(table)) continue;
     let rows = 0;
     for await (const row of spooledRows(spool, table, columnsOf(columns, table))) {
       rows += 1;
@@ -587,13 +638,19 @@ interface InsertSource {
   spool: string;
   columns: Map<BackupTable, ReadonlySet<string>>;
   written: ReadonlySet<string>;
+  /** Tables the archive is too old to have: none of their rows go in. */
+  absent: ReadonlySet<BackupTable>;
   /** The target's secret key is not the backup's: IdP refresh tokens are dropped. */
   keyChanged: boolean;
+  /** The archive predates `OWNERS_MIGRATION`: its owner backfill runs once the rows are in. */
+  backfillOwners: boolean;
 }
 
 /**
- * In one transaction: makes sure the target is still empty, inserts every spooled row, and
- * rebuilds the search index. Returns how many users lost their IdP refresh token.
+ * In one transaction: makes sure the target is still empty, inserts every spooled row, gives the
+ * projects their owners when `source.backfillOwners` says so, and rebuilds the search index. An
+ * archive made since `OWNERS_MIGRATION` keeps its owners exactly as they were, an unowned default
+ * project included. Returns how many users lost their IdP refresh token.
  */
 async function insertEverything(
   deps: AppDeps,
@@ -605,7 +662,7 @@ async function insertEverything(
     await takeTarget(trx, dialect);
     const found = await targetContents(trx, deps.blobs, {
       tables: BACKUP_TABLES,
-      defaultProject: false,
+      firstStart: false,
       blobs: source.written,
     });
     if (found.length > 0) throw new RestoreError(t('restore.changed'));
@@ -621,6 +678,7 @@ async function insertEverything(
       return { ...row, idp_refresh_token: null, idp_checked_at: null };
     };
     for (const table of BACKUP_TABLES) {
+      if (source.absent.has(table)) continue;
       const columns = columnsOf(source.columns, table);
       const rows = () => spooledRows(source.spool, table, columns);
       if (table === 'users') {
@@ -640,6 +698,7 @@ async function insertEverything(
       }
     }
 
+    if (source.backfillOwners) await backfillProjectOwners(trx);
     await rebuildSearch(deps, trx);
     // Committing after the lease passed on could race whoever holds it now.
     source.lease.assertHeld();
@@ -651,14 +710,15 @@ async function insertEverything(
  * Makes the target the restore's until it commits: on Postgres every backed-up table is locked
  * against writers (readers go on), so nothing lands between the check and the rows; on SQLite the
  * transaction took the database's write lock when it began (`BEGIN IMMEDIATE`, see
- * `connectDb`), which does the same. Then the default project a first start created is deleted,
- * unless an artifact already uses it.
+ * `connectDb`), which does the same. Then what a first start wrote goes: the instance settings,
+ * which the archive's replace, and the default project, unless an artifact already uses it.
  */
 async function takeTarget(trx: Transaction<Database>, dialect: DbDialect): Promise<void> {
   if (dialect === 'postgres') {
     const tables = sql.join(BACKUP_TABLES.map((table) => sql.table(table)));
     await sql`lock table ${tables} in exclusive mode`.execute(trx);
   }
+  await trx.deleteFrom('instance_settings').execute();
   await trx
     .deleteFrom('projects')
     .where('id', '=', DEFAULT_PROJECT_ID)

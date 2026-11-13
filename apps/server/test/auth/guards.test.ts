@@ -30,6 +30,9 @@ const member: UserRow = {
   disabled_reason: null,
   created_at: 0,
   last_seen_at: null,
+  share_approved: 0,
+  quota_bytes: null,
+  quota_artifacts: null,
 };
 const owner: UserRow = { ...member, id: 'usr_owner', kind: 'owner', idp_role: null };
 

@@ -16,7 +16,7 @@ const T = 1_762_000_000_000;
 const SHA_A = 'a'.repeat(64);
 const SHA_B = 'b'.repeat(64);
 /** Every migration, in the order they apply. */
-const ALL_MIGRATIONS = ['0001_initial', '0002_publishing'];
+const ALL_MIGRATIONS = ['0001_initial', '0002_publishing', '0003_spaces'];
 
 type Rows = { [K in keyof Database]: Required<Insertable<Database[K]>>[] };
 
@@ -24,10 +24,12 @@ type Rows = { [K in keyof Database]: Required<Insertable<Database[K]>>[] };
  * One fully populated graph, every column set, in an order that satisfies the foreign keys.
  * `ver_1` and `ver_2` belong to `art_1`; `shr_1` is pinned to `ver_1`; `cmt_1` was written on
  * `ver_1` and resolved in `ver_2`, `cmt_2` replies to it on `ver_2`; `cmt_3` was written on
- * `ver_2` and points at `ver_1` as the version it was resolved in.
+ * `ver_2` and points at `ver_1` as the version it was resolved in. `usr_2`, the owner account,
+ * owns `prj_1` and added `usr_1` to it.
  */
 function graph(): Rows {
   const user = 'usr_1';
+  const owner = 'usr_2';
   return {
     users: [
       {
@@ -47,6 +49,30 @@ function graph(): Rows {
         disabled_reason: 'left the team',
         created_at: T,
         last_seen_at: T + 2,
+        share_approved: 1,
+        quota_bytes: 5_000_000_000,
+        quota_artifacts: 50,
+      },
+      {
+        id: owner,
+        kind: 'owner',
+        email: 'chu@example.com',
+        email_verified: 0,
+        name: 'Chủ nhà',
+        avatar_url: null,
+        idp_role: null,
+        role_override: null,
+        oidc_issuer: null,
+        oidc_subject: null,
+        idp_refresh_token: null,
+        idp_checked_at: null,
+        disabled_at: null,
+        disabled_reason: null,
+        created_at: T,
+        last_seen_at: null,
+        share_approved: 0,
+        quota_bytes: null,
+        quota_artifacts: null,
       },
     ],
     password_credentials: [{ user_id: user, hash: 'scrypt$32768$8$1$salt$hash', updated_at: T }],
@@ -129,6 +155,7 @@ function graph(): Rows {
         created_by: user,
         created_at: T,
         updated_at: T + 1,
+        owner_id: owner,
       },
     ],
     artifacts: [
@@ -237,6 +264,10 @@ function graph(): Rows {
       { kind: 'artifact', key: 'art_0', deleted_at: T, expires_at: null },
       { kind: 'content_grant', key: 'grant-0', deleted_at: T, expires_at: T + 1000 },
     ],
+    project_members: [
+      { project_id: 'prj_1', user_id: user, role: 'editor', added_by: owner, created_at: T },
+    ],
+    instance_settings: [{ key: 'visibility.last', value: 'personal', updated_at: T }],
   };
 }
 

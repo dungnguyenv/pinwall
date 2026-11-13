@@ -14,6 +14,7 @@ import { deleteArtifact } from '../../src/domain/deletion.ts';
 import { createProject } from '../../src/domain/projects.ts';
 import { createShareLink } from '../../src/domain/shares.ts';
 import type { FixedClock } from '../../src/lib/clock.ts';
+import { newId } from '../../src/lib/ids.ts';
 import { type BackupHooks, createBackup } from '../../src/ops/backup/backup.ts';
 import {
   BACKUP_TABLES,
@@ -51,9 +52,10 @@ export interface Seeded {
  * Fills a fresh installation so that every backed-up table has rows:
  * - the owner, with a password and a passkey, and an API token;
  * - an MCP client signed in through OAuth (client, grant, tokens);
- * - project "Ảnh" holding an artifact tagged "đồ án": version 1 with an HTML page, a 5 MB
- *   random image, a stylesheet and `notes/secret.txt`, then version 2 with the page changed,
- *   `notes/` dropped and the rest shared;
+ * - the instance setting `visibility.last`;
+ * - project "Ảnh", where Bình, an IdP member without a session, is a viewer, holding an artifact
+ *   tagged "đồ án": version 1 with an HTML page, a 5 MB random image, a stylesheet and
+ *   `notes/secret.txt`, then version 2 with the page changed, `notes/` dropped and the rest shared;
  * - a thread on version 1 with one reply, a password share link, a view, a content grant;
  * - a second artifact published and then deleted, which leaves a tombstone;
  * - one stored blob (row and object) that nothing references.
@@ -73,7 +75,39 @@ export async function seedInstallation(ctx: TestContext): Promise<Seeded> {
   const apiToken = await createUserToken(ctx, owner.id);
   await issueTestTokens(ctx, cookie);
 
+  const now = deps.clock.now();
+  await deps.db.db
+    .insertInto('instance_settings')
+    .values({ key: 'visibility.last', value: 'team', updated_at: now })
+    .execute();
+
   const project = await createProject(deps, owner, { name: 'Ảnh' });
+  const binh = newId('usr');
+  await deps.db.db
+    .insertInto('users')
+    .values({
+      id: binh,
+      kind: 'oidc',
+      email: 'binh@example.test',
+      email_verified: 1,
+      name: 'Bình',
+      idp_role: 'member',
+      oidc_issuer: 'https://idp.example.test',
+      oidc_subject: binh,
+      idp_checked_at: now,
+      created_at: now,
+    })
+    .execute();
+  await deps.db.db
+    .insertInto('project_members')
+    .values({
+      project_id: project.id,
+      user_id: binh,
+      role: 'viewer',
+      added_by: owner.id,
+      created_at: now,
+    })
+    .execute();
   const photo = randomBytes(5_000_000);
   const first = await publishFiles(
     ctx,

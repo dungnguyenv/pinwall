@@ -1,11 +1,12 @@
-import type { ColumnType, Selectable } from 'kysely';
+import type { ColumnType, Generated, Selectable } from 'kysely';
 
 /**
  * Kysely types for every table of migration `0001_initial` (see the roadmap's Data model).
  * Timestamps are epoch milliseconds, booleans are 0/1, JSON columns hold text.
  * `search_index` is left out on purpose: its shape differs per dialect, so it is reached only
  * through the raw SQL in `dialect.ts`.
- * `tombstones` comes from migration `0002_publishing`.
+ * `tombstones` comes from migration `0002_publishing`; `project_members`, `instance_settings` and
+ * the owner, approval and quota columns from `0003_spaces`.
  */
 export interface Database {
   users: UsersTable;
@@ -28,6 +29,8 @@ export interface Database {
   comments: CommentsTable;
   leases: LeasesTable;
   tombstones: TombstonesTable;
+  project_members: ProjectMembersTable;
+  instance_settings: InstanceSettingsTable;
 }
 
 /** Set on insert and never updated: primary keys and creation times. */
@@ -59,6 +62,12 @@ export interface UsersTable {
   disabled_reason: string | null;
   created_at: Fixed<number>;
   last_seen_at: number | null;
+  /** May create share links (`0003_spaces`). */
+  share_approved: Generated<DbBool>;
+  /** Overrides the instance's bytes quota for this person; null keeps it (`0003_spaces`). */
+  quota_bytes: number | null;
+  /** Overrides the instance's artifacts quota for this person; null keeps it (`0003_spaces`). */
+  quota_artifacts: number | null;
 }
 
 export interface PasswordCredentialsTable {
@@ -146,6 +155,23 @@ export interface ProjectsTable {
   created_by: string | null;
   created_at: Fixed<number>;
   updated_at: number;
+  /**
+   * The person whose space holds the project (`0003_spaces`). Null for a default project nobody
+   * has adopted yet (spec §8.1). An owner has at most one default project.
+   */
+  owner_id: string | null;
+}
+
+export type MemberRole = 'editor' | 'viewer';
+
+/** Someone the owner let into a project, besides the owner. */
+export interface ProjectMembersTable {
+  project_id: Fixed<string>;
+  user_id: Fixed<string>;
+  role: MemberRole;
+  /** Who added them; null once that person is gone. */
+  added_by: string | null;
+  created_at: Fixed<number>;
 }
 
 export type ArtifactKind = 'html' | 'markdown';
@@ -287,6 +313,13 @@ export interface TombstonesTable {
   expires_at: number | null;
 }
 
+/** Instance-wide state the server keeps, such as `visibility.last`. */
+export interface InstanceSettingsTable {
+  key: Fixed<string>;
+  value: string;
+  updated_at: number;
+}
+
 export type UserRow = Selectable<UsersTable>;
 export type PasswordCredentialRow = Selectable<PasswordCredentialsTable>;
 export type PasskeyRow = Selectable<PasskeysTable>;
@@ -307,3 +340,5 @@ export type ShareLinkRow = Selectable<ShareLinksTable>;
 export type CommentRow = Selectable<CommentsTable>;
 export type LeaseRow = Selectable<LeasesTable>;
 export type TombstoneRow = Selectable<TombstonesTable>;
+export type ProjectMemberRow = Selectable<ProjectMembersTable>;
+export type InstanceSettingRow = Selectable<InstanceSettingsTable>;

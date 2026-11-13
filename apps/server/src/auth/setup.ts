@@ -130,6 +130,9 @@ export async function completeSetup(deps: AppDeps, input: SetupInput): Promise<U
     disabled_reason: null,
     created_at: now,
     last_seen_at: now,
+    share_approved: 0,
+    quota_bytes: null,
+    quota_artifacts: null,
   };
   try {
     await deps.db.db.transaction().execute(async (trx) => {

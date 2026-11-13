@@ -116,6 +116,9 @@ describe.each(dialects)('IdP access gate on %s', (dialect) => {
       disabled_reason: null,
       created_at: t0,
       last_seen_at: null,
+      share_approved: 0,
+      quota_bytes: null,
+      quota_artifacts: null,
     };
     const ownerRow: UserRow = {
       ...oidcRow,

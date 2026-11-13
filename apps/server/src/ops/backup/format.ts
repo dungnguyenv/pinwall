@@ -10,12 +10,16 @@ import { deriveKey } from '../../lib/crypto.ts';
  * booleans, JSON columns as text), so an archive moves between SQLite and Postgres unchanged.
  */
 export const BACKUP_FORMAT = 'pinwall-backup';
-/** Bumped whenever an older Pinwall could not restore what this one writes. */
+/**
+ * Bumped whenever an older Pinwall could not restore what this one writes. A new migration alone
+ * does not bump it: an older Pinwall refuses an archive that lists a migration it does not know.
+ */
 export const BACKUP_FORMAT_VERSION = 1;
 
 /** Every table a backup carries, parents before children: restore inserts in this order. */
 export const BACKUP_TABLES = [
   'users',
+  'instance_settings',
   'password_credentials',
   'passkeys',
   'sessions',
@@ -24,6 +28,7 @@ export const BACKUP_TABLES = [
   'oauth_grants',
   'oauth_tokens',
   'projects',
+  'project_members',
   'artifacts',
   'artifact_tags',
   'artifact_views',
@@ -41,6 +46,7 @@ export type BackupTable = (typeof BACKUP_TABLES)[number];
 /** Each table's primary key: rows are read in pages by it, so archives list rows in key order. */
 export const TABLE_KEYS: Record<BackupTable, readonly string[]> = {
   users: ['id'],
+  instance_settings: ['key'],
   password_credentials: ['user_id'],
   passkeys: ['id'],
   sessions: ['id_hash'],
@@ -49,6 +55,7 @@ export const TABLE_KEYS: Record<BackupTable, readonly string[]> = {
   oauth_grants: ['id'],
   oauth_tokens: ['token_hash'],
   projects: ['id'],
+  project_members: ['project_id', 'user_id'],
   artifacts: ['id'],
   artifact_tags: ['artifact_id', 'tag'],
   artifact_views: ['user_id', 'artifact_id'],
@@ -59,6 +66,15 @@ export const TABLE_KEYS: Record<BackupTable, readonly string[]> = {
   content_grants: ['token'],
   comments: ['id'],
   tombstones: ['kind', 'key'],
+};
+
+/**
+ * The migration that added each table newer than the first archive format; older archives lack
+ * them.
+ */
+export const TABLE_SINCE: Partial<Record<BackupTable, string>> = {
+  project_members: '0003_spaces',
+  instance_settings: '0003_spaces',
 };
 
 /**
