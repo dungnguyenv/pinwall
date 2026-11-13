@@ -17,6 +17,7 @@ export function Select({
   disabled = false,
   hideLabel = false,
   inline = false,
+  placeholder,
 }: {
   label: string;
   value: string;
@@ -27,6 +28,8 @@ export function Select({
   hideLabel?: boolean;
   /** A compact select with its label beside it, for toolbars. */
   inline?: boolean;
+  /** What the closed select shows while `value` is empty, for a choice nobody made yet. */
+  placeholder?: string;
 }) {
   const id = useId();
   const labelElement = (
@@ -51,7 +54,7 @@ export function Select({
           )}
         >
           <span className="truncate">
-            <RadixSelect.Value />
+            <RadixSelect.Value placeholder={placeholder} />
           </span>
           <RadixSelect.Icon className="shrink-0 text-fg-muted">
             <ChevronDown aria-hidden="true" className="size-4" />

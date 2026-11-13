@@ -29,6 +29,8 @@ export const qk = {
   recent: ['artifacts', 'recent'] as const,
   search: (q: string) => ['artifacts', 'search', q] as const,
   artifact: (id: string) => ['artifact', id] as const,
+  /** The people a project's owner let in, as the signed-in person sees them. */
+  members: (projectId: string) => ['members', projectId] as const,
   /** The owner's passkeys, for Settings. */
   passkeys: ['passkeys'] as const,
   /** The signed-in person's API tokens, for Settings. Never holds a token's secret. */

@@ -8,6 +8,7 @@
  * re-export, and no other file changes.
  */
 export {
+  AddMemberRequest,
   AddPasskeyRequest,
   AdminConfig,
   AdminUser,
@@ -42,6 +43,7 @@ export {
   LiveEvent,
   MarkdownDiff,
   Me,
+  MemberCandidate,
   OAuthConsentRequest,
   OAuthDecisionRequest,
   OAuthDecisionResult,
@@ -54,6 +56,9 @@ export {
   PasskeySignInRequest,
   Project,
   ProjectList,
+  ProjectMember,
+  ProjectMemberList,
+  ProjectMemberRole,
   PublicConfig,
   PublishResult,
   PublishTargetInput,
@@ -72,6 +77,7 @@ export {
   ShareLinkList,
   TextFileDiff,
   UnlockRequest,
+  UpdateMemberRequest,
   UpdateProfileRequest,
   UpdateProjectRequest,
   VersionDiff,

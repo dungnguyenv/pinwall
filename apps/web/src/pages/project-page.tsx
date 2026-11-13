@@ -1,16 +1,17 @@
-import { Archive, ArchiveRestore, Ellipsis, LayoutGrid, Pencil, Plug } from 'lucide-react';
+import { Archive, ArchiveRestore, Ellipsis, LayoutGrid, Pencil, Plug, Users } from 'lucide-react';
 import { type FormEvent, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router';
 import { errorMessage } from '../api/client.ts';
 import { Label, type Project } from '../api/dto.ts';
 import { useArtifacts, useProject, useUpdateProject } from '../api/library.ts';
-import { useProjectRights } from '../api/spaces.ts';
+import { useProjectRights, useVisibility } from '../api/spaces.ts';
 import { PageHeader } from '../app/shell/page-header.tsx';
 import { formatRelativeTime } from '../lib/format.ts';
 import { usePageTitle } from '../lib/page-title.ts';
 import { ArtifactCollection, isEmptyCollection } from '../library/artifact-collection.tsx';
 import { InstructionsEditor } from '../library/instructions-editor.tsx';
+import { MembersDialog } from '../library/members/members-dialog.tsx';
 import { DropOverlay } from '../library/upload/drop-overlay.tsx';
 import { UploadButton, UploadDialog } from '../library/upload/upload-dialog.tsx';
 import { useUpload } from '../library/upload/use-upload.tsx';
@@ -201,6 +202,9 @@ function ProjectView({ projectId }: { projectId: string }) {
   const [view, setView] = useLibraryView();
   const [renaming, setRenaming] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [membersOpen, setMembersOpen] = useState(false);
+  // Members exist only in personal mode: in team mode there is no button and no request.
+  const personal = useVisibility() === 'personal';
   // Rights are none until the role is known, and the page waits for the project, so a
   // control never shows for a moment and then goes.
   const rights = useProjectRights(projectId);
@@ -263,8 +267,17 @@ function ProjectView({ projectId }: { projectId: string }) {
           )
         }
         actions={
-          rights.publish || rights.manageProject ? (
+          personal || rights.publish || rights.manageProject ? (
             <>
+              {personal ? (
+                <Button
+                  variant="secondary"
+                  leadingIcon={<Users />}
+                  onClick={() => setMembersOpen(true)}
+                >
+                  {t('web.members.button')}
+                </Button>
+              ) : null}
               {rights.publish ? uploadButton(t('web.upload.action'), 'primary') : null}
               {rights.manageProject ? (
                 <ProjectMenu project={p} onRename={() => setRenaming(true)} />
@@ -310,6 +323,9 @@ function ProjectView({ projectId }: { projectId: string }) {
       ) : null}
       {rights.publish ? (
         <UploadDialog open={uploadOpen} onOpenChange={setUploadOpen} upload={upload} />
+      ) : null}
+      {personal ? (
+        <MembersDialog project={p} open={membersOpen} onOpenChange={setMembersOpen} />
       ) : null}
       <DropOverlay
         label={p.name}
