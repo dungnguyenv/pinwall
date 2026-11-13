@@ -1,6 +1,7 @@
 # Pinwall — personal spaces (v1.1) — design
 
-Date: 2026-11-13 · Status: **draft; decisions D1–D8 (§12) wait for the owner** ·
+Date: 2026-11-13 · Status: **decisions D1–D8 settled by the owner on 2026-11-13 (§12); ready for
+milestone planning** ·
 Builds on: `2026-11-10-pinwall-design.md` (the v1 spec, still binding wherever this
 document says nothing).
 
@@ -42,8 +43,9 @@ Opening sign-up on 1.0 therefore lets a stranger:
    - live events;
    - content grants;
    - everything the MCP tools return.
-3. **Sharing is a deliberate act.** v1.1 shares only through share links, as in 1.0. Who may make a
-   public link is controlled (§6).
+3. **Sharing is a deliberate act.** There are two ways:
+   - **project members:** a project's owner adds other Pinwall users as editors or viewers (§4.1);
+   - **share links,** as in 1.0. Who may make a public link is controlled (§6).
 4. **Open sign-up is safe enough to run** on a homelab:
    - a storage and artifact quota per person;
    - rate limits on publishing and on minting links;
@@ -85,11 +87,25 @@ share-link settings apply in both modes.
   Visibility always follows the project's owner.
 - `created_by` on artifacts and versions keeps meaning "who published it". It no longer grants
   access by itself.
-- v1.1 has no project members and no invitations. The access check is written as one predicate,
-  "projects this viewer may see", so that v1.2 can add project members by extending that predicate
-  and adding one table, with no change to any route.
-- **Project instructions** for agents stay per project, as in 1.0. Since projects are per person,
-  the instructions are per person too.
+- **Project members (D3).** A project's owner can add other Pinwall users as **editor** or
+  **viewer**.
+  - **Who can be added:** a person who has signed in to Pinwall at least once. The owner adds them
+    by email.
+  - **No pending invitations, no mail and no invite links.** If nobody has that email yet, Pinwall
+    says to ask the person to sign in once first.
+  - **Several accounts with the same email.** When several active accounts share the email (the
+    local owner account and an OIDC account can), the dialog lists them by name and sign-in method,
+    and the owner picks one (builder's call).
+  - **Only the owner manages members.** The owner adds, removes and changes roles. A member can
+    leave a project.
+  - **Email lookups are rate-limited,** because the answer shows whether an email has an account.
+- **The access predicate.** It is written once: "projects this viewer owns or is a member of". The
+  role then decides what the viewer may change (§4.3).
+- **Project members exist only in `personal` mode (builder's call).** In `team` mode everyone sees
+  everything already, so the members UI and API are hidden there. Stored memberships stay, and
+  apply again if the mode goes back to `personal`.
+- **Project instructions** for agents stay per project, as in 1.0. Editors' and viewers' agents read
+  them. Only the owner edits them.
 
 ### 4.2 Default projects (builder's call)
 
@@ -102,12 +118,26 @@ share-link settings apply in both modes.
 
 ### 4.3 What "see" and "change" mean
 
-**In `personal` mode:**
-- The space owner can do everything that a 1.0 member could do to their own work, plus what 1.0
-  reserved for the publisher or an admin: delete, restore, rename, archive, move between their own
-  projects, and manage share links.
-- Nobody else can do any of it through member routes, not even an admin.
+**In `personal` mode,** per project:
+
+| Action | Owner | Editor | Viewer | Anyone else (admins included) |
+| --- | --- | --- | --- | --- |
+| See the project, its artifacts, versions, files, comments; search; Recent; live events | yes | yes | yes | no (not found) |
+| Comment, reply, resolve, reopen; edit or delete own comments | yes | yes | yes | no |
+| Publish a new artifact or version, restore a version | yes | yes | no | no |
+| Rename, retag or delete an artifact or version | yes | only what they published | no | no |
+| Delete other people's comments | yes | no | no | no |
+| Create share links (subject to §6) | yes | yes | no | no |
+| Revoke share links | any in the project | their own | no | no |
+| Rename or archive the project, edit its instructions | yes | no | no | no |
+| Add, remove or change members | yes | leave only | leave only | no |
+
 - An artifact can move only between projects that the same person owns.
+- **When a member is removed or leaves:**
+  - their grants for the project's artifacts, their live streams and their unused upload URLs end,
+    as when someone loses sight of a space (§5);
+  - the share links they made on the project's artifacts are revoked;
+  - their comments stay.
 
 **In `team` mode:** the 1.0 rules apply unchanged.
 
@@ -147,8 +177,8 @@ The roadmap lists each of these with its file and line in the 1.0 code. Required
 4. **Live events**:
    - Subscribing to an artifact's stream requires that the viewer can see the artifact.
    - A stream that carries events for many artifacts filters each event per subscriber.
-   - When a person loses sight of an artifact (a transfer, a block, Revoke now), their open streams
-     for it end.
+   - When a person loses sight of an artifact (a transfer, removal from a project, a block, Revoke
+     now), their open streams for it end.
 5. **Content grants:**
    - A member gets a grant only through a checked route.
    - A grant keeps serving only while its user can still see the version's artifact (builder's call:
@@ -193,8 +223,8 @@ A new setting, `PINWALL_SHARE_LINKS`, controls who may **expose content outside 
   can be revoked.
 - **Open raw links.** `/a/:id/raw`, `/a/:id/v/:n/raw` and the viewer's "Open original" answer with
   a page that explains the restriction.
-- **Have their pages open as a top-level page.** Their review grants serve only inside Pinwall's
-  viewer:
+- **Have pages open as a top-level page.** The review grants they are given, for any artifact they
+  can see, serve only inside Pinwall's viewer:
   - a top-level load (`Sec-Fetch-Dest: document`, or a request without fetch metadata) is refused;
   - every response carries `Content-Security-Policy: frame-ancestors 'self' <app origin>`.
 
@@ -309,6 +339,8 @@ project A owns to B, in one transaction. It runs in either mode. §7 says why it
   §5.
 - Share links keep working. They belong to the artifact, and their maker's own access is still
   checked as in 1.0.
+- Project members stay members of the moved projects. If B was a member of one, that membership is
+  dropped, because B now owns the project.
 
 ### 8.4 Switching an existing team installation to `personal` (builder's call)
 
@@ -357,7 +389,9 @@ Ownership is stored by `users.id`, so the re-key and the transfer can happen in 
   easy to predict and to explain. Old versions free space when they are deleted.
 - **Whose usage a version counts toward:**
   - in `personal` mode, the owner of the project it is in, so a transfer moves the usage with the
-    space;
+    space. That includes what editors publish there: the owner chooses the editors and can remove
+    them. An editor's publish is checked against the owner's quota, and the error says it is the
+    project owner's space that is full;
   - in `team` mode, the person who published it (`versions.created_by`), because projects are
     shared there. Nobody can fill another person's quota, and nobody escapes theirs by publishing
     into the shared default project.
@@ -392,8 +426,14 @@ These limits also fix the 1.0 deferred item "preview and raw-link calls not rate
 ## 10. What people see
 
 - **A new person** lands on an empty library with three ways to start: connect an agent, drop a file
-  or a folder, or create a project. The sidebar keeps its 1.0 labels. "All artifacts" means all of
-  *your* artifacts.
+  or a folder, or create a project. The sidebar keeps its 1.0 labels. "All artifacts" means
+  everything the person can see.
+- **Projects shared with the person** appear in the sidebar under **Shared with me**, with the
+  owner's name and the person's role.
+- **Viewers** do not get the upload or publish controls.
+- **Members panel** (on the project page, for the owner): add by email with a role, change a role,
+  remove a member. Editors and viewers see the member list with names only. They get a **Leave
+  project** action.
 - **Settings → Usage** (new) shows stored bytes and artifacts against the person's limits. With D8-A
   it also offers **Delete all my content**.
 - **Share dialog:** when the person may not create links, the dialog shows the reason instead of the
@@ -456,8 +496,30 @@ These limits also fix the 1.0 deferred item "preview and raw-link calls not rate
    --confirm` has run.
 8. **On `pinwall.happybooth.vn`:** after the transfer, the owner's OIDC account sees all 4
    artifacts, and a second Google account sees none of them.
+9. **Project members:**
+   - after being added as a viewer, the second account sees that project only, comments, and cannot
+     publish;
+   - as an editor, it publishes there, and that counts toward the owner's quota;
+   - after removal, its open review tab loses the content, its stream ends and its links in that
+     project answer "gone";
+   - none of this works in another of the owner's projects.
 
 ## 12. Decisions for the owner
+
+**Answers given on 2026-11-13:**
+- D1-A: private, with moderation tools.
+- D2-A: transfer by CLI.
+- **D3-B, project members in v1.1:**
+  - editor and viewer roles;
+  - added by the email of an existing user;
+  - managed by the owner only.
+- D4-A, with approval through a switch in Pinwall.
+- D5: the recommended values.
+- D6-A: keep `team` mode as the default.
+- D7: v1.1.0.
+- D8-A: abuse contact, links, and self-service deletion.
+
+The options are kept below for the record.
 
 ### D1. Can admins see everyone's content?
 
@@ -479,8 +541,8 @@ These limits also fix the 1.0 deferred item "preview and raw-link calls not rate
 
 | Option | What it means |
 | --- | --- |
-| **A. Personal projects only in v1.1 (recommended)** | Each person's own projects, a default project each, instructions per project as today. Sharing only through share links. Project members come in v1.2 without a data migration (§4.1). |
-| B. Project members in v1.1 | Invite another Pinwall user to a project as editor or viewer. A larger IDOR surface, member-management UI, and a later release. |
+| A. Personal projects only in v1.1 (was recommended) | Each person's own projects, a default project each, instructions per project as today. Sharing only through share links. Project members come in v1.2 without a data migration (§4.1). |
+| **B. Project members in v1.1 (chosen)** | Invite another Pinwall user to a project as editor or viewer. A larger IDOR surface, member-management UI, and a later release. |
 
 ### D4. Exposing content outside Pinwall on an open instance
 
@@ -566,12 +628,14 @@ share all content.
 
 ## 14. Non-goals for v1.1
 
-- Project members, invitations and teams inside one instance (D3).
+- Pending invitations, invite links, and mail to new members.
+- Editors who manage members.
+- Teams, or several organizations, inside one instance.
 - Admin browsing of private content, and an audit table (D1).
 - A sign-up form in Pinwall. Sign-up happens at the identity provider.
 - Automatic abuse detection, and calls to outside reputation services (that would be phoning home,
   an anti-goal).
-- Per-email allowlists, notifications, billing, several organizations in one instance.
+- Per-email allowlists, notifications, billing.
 
 ## 15. Anti-goals
 
