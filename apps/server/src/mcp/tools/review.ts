@@ -5,6 +5,7 @@ import {
   type ShareLink,
 } from '@pinwall/shared';
 import { z } from 'zod';
+import { enforceRateLimit, RATE_RULES } from '../../auth/rate-limits.ts';
 import type { ArtifactRow } from '../../db/schema.ts';
 import type { AppDeps } from '../../deps.ts';
 import { getArtifact } from '../../domain/artifacts.ts';
@@ -317,6 +318,7 @@ export const reviewTools: ToolModule = (server, ctx) => {
       annotations: WRITES,
     },
     runTool(ctx, async (a: z.output<typeof CreateShareLinkIn>) => {
+      await enforceRateLimit(ctx.c, RATE_RULES.shareLinkCreate, user.id);
       const { row, token } = await createShareLink(deps, user, a.artifact_id, {
         versionId: a.version_id ?? null,
         password: a.password ?? null,

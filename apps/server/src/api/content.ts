@@ -4,6 +4,7 @@ import { ContentGrant, ErrorBody, PreviewQuery } from '@pinwall/shared';
 import type { MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../app.ts';
 import { authOf, requireAuth } from '../auth/guards.ts';
+import { perUser, RATE_RULES } from '../auth/rate-limits.ts';
 import { contentUrl, createGrant } from '../content/grants.ts';
 import { hasRasterSignature, isRasterImage, RASTER_SIGNATURE_BYTES } from '../content/mime.ts';
 import { THUMBNAIL_CSP } from '../content/raw-links.ts';
@@ -34,8 +35,8 @@ const previewRoute = createRoute({
   tags: ['versions'],
   summary: 'Get a short-lived URL to the files of a version',
   description:
-    'Issues a new content URL for version `n`, valid until `expires_at` (`PINWALL_PREVIEW_TTL`, and never past the end of your identity-provider access). `mode=review` (the default) is what the review page frames and counts as opening the artifact; `mode=raw` serves the stored files as they are. The URL depends on the isolation mode the server runs in, so do not store it: link to the artifact instead.',
-  middleware: [requireAuth] as MiddlewareHandler<AppEnv>[],
+    'Issues a new content URL for version `n`, valid until `expires_at` (`PINWALL_PREVIEW_TTL`, and never past the end of your identity-provider access). `mode=review` (the default) is what the review page frames and counts as opening the artifact; `mode=raw` serves the stored files as they are. The URL depends on the isolation mode the server runs in, so do not store it: link to the artifact instead. Limited to 600 previews and raw links per user per hour.',
+  middleware: [requireAuth, perUser(RATE_RULES.grant)] as MiddlewareHandler<AppEnv>[],
   security,
   request: { params: IdParam.extend({ n: VersionNumber }), query: PreviewQuery },
   responses: {
@@ -47,6 +48,7 @@ const previewRoute = createRoute({
     ...authErrors,
     404: error('The artifact or the version does not exist (`not_found`)'),
     410: error('The artifact or the version was deleted (`gone`)'),
+    429: error('Over the limit of previews and raw links (`rate_limited`)'),
   },
 });
 

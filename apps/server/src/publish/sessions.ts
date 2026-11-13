@@ -1,5 +1,4 @@
 import type { PublishResult, PublishSession } from '@pinwall/shared';
-import type { RateRule } from '../auth/rate-limits.ts';
 import { hasAccess } from '../auth/roles.ts';
 import type { Config } from '../config/types.ts';
 import type { UserRow, VersionSource } from '../db/schema.ts';
@@ -14,13 +13,6 @@ import { ingestUpload, type PublishOutcome, publishLinks, type UploadInput } fro
 
 /** How long an upload URL remembers what became of it, so a retry learns the outcome. */
 export const UPLOAD_RECEIPT_TTL_MS = 86_400_000;
-
-/** Upload URLs one user may ask for. */
-export const PUBLISH_SESSION_RATE: RateRule = {
-  name: 'publish-session',
-  limit: 60,
-  windowMs: 600_000,
-};
 
 /** What an upload URL publishes, and as whom; stored under the hash of its token. */
 export interface UploadSession {

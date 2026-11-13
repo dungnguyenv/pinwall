@@ -2,6 +2,7 @@ import type { ArtifactSummary } from '@pinwall/shared';
 import { z } from 'zod';
 import { toArtifactSummary } from '../../api/artifacts.ts';
 import { type SpaceFields, spaceFieldsOf } from '../../api/projects.ts';
+import { enforceRateLimit, RATE_RULES } from '../../auth/rate-limits.ts';
 import type { ProjectRow, VersionRow } from '../../db/schema.ts';
 import type { AppDeps } from '../../deps.ts';
 import { getArtifact, listArtifacts, SEARCH_MAX_CHARS } from '../../domain/artifacts.ts';
@@ -285,6 +286,7 @@ export const libraryTools: ToolModule = (server, ctx) => {
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     runTool(ctx, async (a: z.output<typeof CreateProjectIn>) => {
+      await enforceRateLimit(ctx.c, RATE_RULES.projectCreate, auth.user.id);
       const row = await createProject(deps, auth.user, {
         name: a.name,
         ...(a.instructions === undefined ? {} : { instructions: a.instructions }),

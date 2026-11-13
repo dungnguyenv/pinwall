@@ -1,6 +1,7 @@
 import type { Context, Hono } from 'hono';
 import type { AppEnv } from '../app.ts';
 import { safeReturnTo } from '../auth/oidc/return-to.ts';
+import { enforceRateLimit, RATE_RULES } from '../auth/rate-limits.ts';
 import { resolveAuth } from '../auth/resolve.ts';
 import { bearerResolvers } from '../auth/resolvers.ts';
 import { getArtifact } from '../domain/artifacts.ts';
@@ -40,8 +41,9 @@ export function mountRawLinks(app: Hono<AppEnv>): void {
  * when `n` is null. The link's query (`?source` of a Markdown file, say) goes along. The answer
  * depends on who asks, so nothing caches it. A missing artifact or version is 404 and a deleted
  * one 410, through the app's error pages, but only once the caller is known: until then nobody
- * learns whether the artifact exists. Someone `mayExpose` refuses gets 403 (`notApproved`), a
- * page that explains it in a browser, before the artifact is looked up.
+ * learns whether the artifact exists. Each request counts against the person's `grant` allowance
+ * (429, a page in a browser), and someone `mayExpose` refuses gets 403 (`notApproved`), a page
+ * that explains it in a browser: both before the artifact is looked up.
  */
 async function redirectToRaw(c: Context<AppEnv>, n: string | null): Promise<Response> {
   const { deps, auth } = c.var;
@@ -55,6 +57,7 @@ async function redirectToRaw(c: Context<AppEnv>, n: string | null): Promise<Resp
       302,
     );
   }
+  await enforceRateLimit(c, RATE_RULES.grant, auth.user.id);
   if (!mayExpose(deps.config, auth.user)) throw notApproved('rawLink');
 
   const { db } = deps.db;

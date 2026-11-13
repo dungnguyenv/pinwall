@@ -12,6 +12,7 @@ import type { MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import type { AppEnv } from '../app.ts';
 import { authOf, requireAuth } from '../auth/guards.ts';
+import { perUser, RATE_RULES } from '../auth/rate-limits.ts';
 import type { VersionFileRow, VersionRow } from '../db/schema.ts';
 import { getArtifact } from '../domain/artifacts.ts';
 import { deleteVersion } from '../domain/deletion.ts';
@@ -107,8 +108,12 @@ const restoreRoute = createRoute({
   tags: ['versions'],
   summary: 'Restore an older version',
   description:
-    'Copies version `n` into a new version on top of the current one, so history is kept. `expected_version_id` names the current version the caller saw; if a newer one exists the request fails with `version_conflict`.',
-  middleware: [requireAuth, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
+    'Copies version `n` into a new version on top of the current one, so history is kept. `expected_version_id` names the current version the caller saw; if a newer one exists the request fails with `version_conflict`. Counts toward the limit of 60 publishes per user per 10 minutes, shared by every way to publish.',
+  middleware: [
+    requireAuth,
+    perUser(RATE_RULES.publish),
+    jsonBodyLimit,
+  ] as MiddlewareHandler<AppEnv>[],
   security,
   request: {
     params: VersionParams,
@@ -124,6 +129,7 @@ const restoreRoute = createRoute({
     ...missing,
     409: error('The artifact has a newer version than `expected_version_id` (`version_conflict`)'),
     413: error('The copy, counted in full, does not fit in the space it fills (`quota_exceeded`)'),
+    429: error('Over the limit shared by every way to publish (`rate_limited`)'),
   },
 });
 

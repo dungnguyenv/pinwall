@@ -44,6 +44,10 @@ test('the rules have the documented limits', () => {
     password: { name: 'password', limit: 10, windowMs: 900_000 },
     passwordGlobal: { name: 'password-global', limit: 100, windowMs: 3_600_000 },
     passkey: { name: 'passkey', limit: 30, windowMs: 900_000 },
+    publish: { name: 'publish', limit: 60, windowMs: 600_000 },
+    grant: { name: 'grant', limit: 600, windowMs: 3_600_000 },
+    shareLinkCreate: { name: 'share-link-create', limit: 30, windowMs: 3_600_000 },
+    projectCreate: { name: 'project-create', limit: 30, windowMs: 3_600_000 },
   });
 });
 

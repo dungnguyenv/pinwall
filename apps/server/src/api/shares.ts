@@ -9,6 +9,7 @@ import {
 import type { MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../app.ts';
 import { authOf, requireAuth } from '../auth/guards.ts';
+import { perUser, RATE_RULES } from '../auth/rate-limits.ts';
 import {
   createShareLink,
   listShareLinks,
@@ -64,8 +65,12 @@ const createLinkRoute = createRoute({
   tags: ['share links'],
   summary: 'Make a share link',
   description:
-    "A link to version `version_id`, or following the current version without it; behind `password` (8 to 256 characters) or open to anyone with it; until `expires_at` (in the future) or until revoked. Any member can make one; in personal mode, the project's owner or an editor. The answer holds the token and the link URL: they are shown this once and cannot be read again.",
-  middleware: [requireAuth, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
+    "A link to version `version_id`, or following the current version without it; behind `password` (8 to 256 characters) or open to anyone with it; until `expires_at` (in the future) or until revoked. Any member can make one; in personal mode, the project's owner or an editor. The answer holds the token and the link URL: they are shown this once and cannot be read again. Limited to 30 per user per hour.",
+  middleware: [
+    requireAuth,
+    perUser(RATE_RULES.shareLinkCreate),
+    jsonBodyLimit,
+  ] as MiddlewareHandler<AppEnv>[],
   security,
   request: {
     params: IdParam,
@@ -84,6 +89,7 @@ const createLinkRoute = createRoute({
       'With `PINWALL_SHARE_LINKS=approved`, someone neither an admin nor approved (`forbidden`, `details.reason` `share_links_not_approved`); in personal mode, a viewer of the project (`forbidden`, `details.reason` `role`); or a cross-site request with the session cookie (`forbidden`)',
     ),
     ...missingArtifact,
+    429: error('Over 30 new links per hour (`rate_limited`)'),
   },
 });
 

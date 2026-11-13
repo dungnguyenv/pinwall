@@ -2,6 +2,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../app.ts';
 import { clientIp } from '../http/client-ip.ts';
 import { rateLimited } from '../lib/errors.ts';
+import { authOf } from './guards.ts';
 
 /** At most `limit` attempts per `windowMs` for each key; `name` keeps rules' counters apart. */
 export interface RateRule {
@@ -15,11 +16,22 @@ export const RATE_RULES: {
   password: RateRule;
   passwordGlobal: RateRule;
   passkey: RateRule;
+  publish: RateRule;
+  grant: RateRule;
+  shareLinkCreate: RateRule;
+  projectCreate: RateRule;
 } = {
   setup: { name: 'setup', limit: 10, windowMs: 900_000 },
   password: { name: 'password', limit: 10, windowMs: 900_000 },
   passwordGlobal: { name: 'password-global', limit: 100, windowMs: 3_600_000 },
   passkey: { name: 'passkey', limit: 30, windowMs: 900_000 },
+  // The rules below are per person (keyed by user id), over REST and MCP alike. `publish` counts
+  // publish sessions, inline publishes, web uploads and restores; `grant`, the preview, review
+  // and raw-link grants.
+  publish: { name: 'publish', limit: 60, windowMs: 600_000 },
+  grant: { name: 'grant', limit: 600, windowMs: 3_600_000 },
+  shareLinkCreate: { name: 'share-link-create', limit: 30, windowMs: 3_600_000 },
+  projectCreate: { name: 'project-create', limit: 30, windowMs: 3_600_000 },
 };
 
 /**
@@ -52,6 +64,19 @@ export function rateLimit(
 ): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     await enforceRateLimit(c, rule, typeof key === 'function' ? key(c) : key);
+    await next();
+  };
+}
+
+/**
+ * `enforceRateLimit` as route middleware for the signed-in person: one attempt of `rule`, keyed by
+ * their user id, so it follows them across sessions, tokens and addresses. Put it after
+ * `requireAuth` and before anything that reads the body or looks an id up, so a refusal says
+ * nothing about what the request named.
+ */
+export function perUser(rule: RateRule): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    await enforceRateLimit(c, rule, authOf(c).user.id);
     await next();
   };
 }

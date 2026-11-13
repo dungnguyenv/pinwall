@@ -13,7 +13,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
 import type { AppEnv } from '../app.ts';
 import { authOf, requireAuth } from '../auth/guards.ts';
-import { enforceRateLimit } from '../auth/rate-limits.ts';
+import { perUser, RATE_RULES } from '../auth/rate-limits.ts';
 import type { PublishTarget } from '../domain/versions.ts';
 import { badRequest } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
@@ -27,11 +27,7 @@ import {
   type PublishOutcome,
 } from '../publish/ingest.ts';
 import { IngestBudget, limitExceeded } from '../publish/limits.ts';
-import {
-  createPublishSession,
-  PUBLISH_SESSION_RATE,
-  toPublishResult,
-} from '../publish/sessions.ts';
+import { createPublishSession, toPublishResult } from '../publish/sessions.ts';
 import {
   type FormPart,
   type FormReader,
@@ -86,12 +82,6 @@ export function messageOf(message: string | undefined): string | null {
   return message === undefined || message.trim() === '' ? null : message;
 }
 
-/** Counts the attempt against the caller's own allowance, before the body is read. */
-const sessionRateLimit: MiddlewareHandler<AppEnv> = async (c, next) => {
-  await enforceRateLimit(c, PUBLISH_SESSION_RATE, authOf(c).user.id);
-  await next();
-};
-
 /**
  * Inline files arrive JSON-escaped, which can double their size; past twice the inline limit
  * plus room for the rest of the body, the request cannot be within the limit.
@@ -112,8 +102,12 @@ const createSessionRoute = createRoute({
   tags: ['publishing'],
   summary: 'Create a one-time upload URL',
   description:
-    'Returns an upload URL that publishes one request body to the target, and ready-to-run commands for it. The URL needs no other credential, works once, and expires after `PINWALL_UPLOAD_SESSION_TTL`. The body of `POST <upload_url>` is a tar, tar.gz or zip archive (told by its bytes), or a single file: HTML or Markdown by its Content-Type, anything else named with `?filename=`. Limited to 60 per user per 10 minutes.',
-  middleware: [requireAuth, sessionRateLimit, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
+    'Returns an upload URL that publishes one request body to the target, and ready-to-run commands for it. The URL needs no other credential, works once, and expires after `PINWALL_UPLOAD_SESSION_TTL`. The body of `POST <upload_url>` is a tar, tar.gz or zip archive (told by its bytes), or a single file: HTML or Markdown by its Content-Type, anything else named with `?filename=`. Counts toward the limit of 60 publishes per user per 10 minutes, shared by every way to publish.',
+  middleware: [
+    requireAuth,
+    perUser(RATE_RULES.publish),
+    jsonBodyLimit,
+  ] as MiddlewareHandler<AppEnv>[],
   security,
   request: {
     body: {
@@ -127,7 +121,7 @@ const createSessionRoute = createRoute({
     ...authErrors,
     ...targetErrors,
     413: error('The space the publish fills is already full (`quota_exceeded`)'),
-    429: error('Too many upload URLs (`rate_limited`)'),
+    429: error('Over the limit shared by every way to publish (`rate_limited`)'),
   },
 });
 
@@ -137,8 +131,12 @@ const inlineRoute = createRoute({
   tags: ['publishing'],
   summary: 'Publish text files given inline',
   description:
-    'Publishes text files (HTML, Markdown, CSS, JavaScript, SVG, JSON and other text types) given as strings, up to `PINWALL_MAX_INLINE_BYTES` of UTF-8 in all. For anything larger or binary, use an upload URL.',
-  middleware: [requireAuth, inlineBodyLimit] as MiddlewareHandler<AppEnv>[],
+    'Publishes text files (HTML, Markdown, CSS, JavaScript, SVG, JSON and other text types) given as strings, up to `PINWALL_MAX_INLINE_BYTES` of UTF-8 in all. For anything larger or binary, use an upload URL. Counts toward the limit of 60 publishes per user per 10 minutes, shared by every way to publish.',
+  middleware: [
+    requireAuth,
+    perUser(RATE_RULES.publish),
+    inlineBodyLimit,
+  ] as MiddlewareHandler<AppEnv>[],
   security,
   request: {
     body: { required: true, content: { 'application/json': { schema: InlinePublishRequest } } },
@@ -151,6 +149,7 @@ const inlineRoute = createRoute({
     413: error(
       'Over the inline limit or another publishing limit (`payload_too_large`), or the version does not fit in the space it fills (`quota_exceeded`)',
     ),
+    429: error('Over the limit shared by every way to publish (`rate_limited`)'),
   },
 });
 
@@ -160,8 +159,8 @@ const uploadRoute = createRoute({
   tags: ['publishing'],
   summary: 'Publish files uploaded from a browser',
   description:
-    'A `multipart/form-data` body, read while it streams: a `target` field (the JSON of a publish target) and an optional `message` first, then the files as `file` parts. To publish a folder, put a `path` field before each `file` part with its path in the folder; without `path` fields each part is stored under its filename. A `.zip`, `.tar`, `.tgz` or `.tar.gz` part sent first and without a `path` is unpacked, and must then be the only file. Every file part counts toward `PINWALL_MAX_FILES`, and the upload stops at the part that crosses a limit.',
-  middleware: [requireAuth] as MiddlewareHandler<AppEnv>[],
+    'A `multipart/form-data` body, read while it streams: a `target` field (the JSON of a publish target) and an optional `message` first, then the files as `file` parts. To publish a folder, put a `path` field before each `file` part with its path in the folder; without `path` fields each part is stored under its filename. A `.zip`, `.tar`, `.tgz` or `.tar.gz` part sent first and without a `path` is unpacked, and must then be the only file. Every file part counts toward `PINWALL_MAX_FILES`, and the upload stops at the part that crosses a limit. Counts toward the limit of 60 publishes per user per 10 minutes, shared by every way to publish.',
+  middleware: [requireAuth, perUser(RATE_RULES.publish)] as MiddlewareHandler<AppEnv>[],
   security,
   request: {
     body: {
@@ -194,6 +193,7 @@ const uploadRoute = createRoute({
       'Over a publishing limit (`payload_too_large`), or the version does not fit in the space it fills (`quota_exceeded`)',
     ),
     415: error('A single archive part that is not a tar, tar.gz or zip'),
+    429: error('Over the limit shared by every way to publish (`rate_limited`)'),
   },
 });
 

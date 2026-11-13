@@ -5,16 +5,12 @@ import {
 } from '@pinwall/shared';
 import { z } from 'zod';
 import { messageOf, toPublishTarget } from '../../api/publish.ts';
-import { enforceRateLimit } from '../../auth/rate-limits.ts';
+import { enforceRateLimit, RATE_RULES } from '../../auth/rate-limits.ts';
 import type { PublishTarget } from '../../domain/versions.ts';
 import { badRequest } from '../../lib/errors.ts';
 import { t } from '../../lib/i18n.ts';
 import { ingestInline } from '../../publish/ingest.ts';
-import {
-  createPublishSession,
-  PUBLISH_SESSION_RATE,
-  toPublishResult,
-} from '../../publish/sessions.ts';
+import { createPublishSession, toPublishResult } from '../../publish/sessions.ts';
 import { DESCRIPTIONS, FIELDS, fillDescription } from '../descriptions.ts';
 import { formatBytes, oneLine } from '../format.ts';
 import { runTool } from '../results.ts';
@@ -104,8 +100,8 @@ export function targetFromArgs(a: TargetArgs): PublishTarget {
 /**
  * The publish tools: a one-time upload URL with the shell command that uses it, and an inline
  * publish of text files for clients that cannot run commands. Both go through the services the
- * REST API uses, so permissions, the shared `PUBLISH_SESSION_RATE`, path and size checks and the
- * optimistic version check are the same as for an HTTP publish.
+ * REST API uses, so permissions, the `publish` allowance every way to publish shares, path and
+ * size checks and the optimistic version check are the same as for an HTTP publish.
  */
 export const publishTools: ToolModule = (server, ctx) => {
   const { deps, auth } = ctx;
@@ -127,7 +123,7 @@ export const publishTools: ToolModule = (server, ctx) => {
       annotations: WRITES,
     },
     runTool(ctx, async (a: z.output<typeof CreatePublishSessionIn>) => {
-      await enforceRateLimit(ctx.c, PUBLISH_SESSION_RATE, user.id);
+      await enforceRateLimit(ctx.c, RATE_RULES.publish, user.id);
       const target = targetFromArgs(a);
       const session = await createPublishSession(deps, user, {
         target,
@@ -166,7 +162,7 @@ export const publishTools: ToolModule = (server, ctx) => {
       annotations: WRITES,
     },
     runTool(ctx, async (a: z.output<typeof PublishInlineIn>) => {
-      await enforceRateLimit(ctx.c, PUBLISH_SESSION_RATE, user.id);
+      await enforceRateLimit(ctx.c, RATE_RULES.publish, user.id);
       const target = targetFromArgs(a);
       const outcome = await ingestInline(deps, target, a.files, {
         actor: user,

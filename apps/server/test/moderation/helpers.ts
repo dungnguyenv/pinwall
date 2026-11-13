@@ -1,4 +1,5 @@
 import { buildApp } from '../../src/app.ts';
+import type { RateRule } from '../../src/auth/rate-limits.ts';
 import type { Config, Visibility } from '../../src/config/types.ts';
 import type { DbDialect } from '../../src/db/connect.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
@@ -64,4 +65,19 @@ export async function setQuota(
   if (q.artifacts !== undefined) changes.quota_artifacts = q.artifacts;
   if (Object.keys(changes).length === 0) return;
   await ctx.deps.db.db.updateTable('users').set(changes).where('id', '=', userId).execute();
+}
+
+/**
+ * Uses up `n` attempts of `rule` for `key` (a user id), as `n` requests would, so a test can stand
+ * at the edge of a limit without sending hundreds of them.
+ */
+export async function exhaustRate(
+  ctx: TestContext,
+  rule: RateRule,
+  key: string,
+  n: number,
+): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    await ctx.deps.rateLimiter.consume(`${rule.name}:${key}`, rule.limit, rule.windowMs);
+  }
 }

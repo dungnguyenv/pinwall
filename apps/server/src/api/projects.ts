@@ -10,6 +10,7 @@ import type { MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import type { AppEnv } from '../app.ts';
 import { authOf, requireAuth } from '../auth/guards.ts';
+import { perUser, RATE_RULES } from '../auth/rate-limits.ts';
 import type { ProjectRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import {
@@ -68,8 +69,12 @@ const createProjectRoute = createRoute({
   tags: ['projects'],
   summary: 'Create a project',
   description:
-    'Projects group artifacts. `instructions` is free text an agent reads before it publishes into the project.',
-  middleware: [requireAuth, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
+    'Projects group artifacts. `instructions` is free text an agent reads before it publishes into the project. Limited to 30 per user per hour.',
+  middleware: [
+    requireAuth,
+    perUser(RATE_RULES.projectCreate),
+    jsonBodyLimit,
+  ] as MiddlewareHandler<AppEnv>[],
   security,
   request: {
     body: { required: true, content: { 'application/json': { schema: CreateProjectRequest } } },
@@ -78,6 +83,7 @@ const createProjectRoute = createRoute({
     201: { description: 'The new project', content: { 'application/json': { schema: Project } } },
     400: error('Invalid fields'),
     ...authErrors,
+    429: error('Over 30 new projects per hour (`rate_limited`)'),
   },
 });
 
