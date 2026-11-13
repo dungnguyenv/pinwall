@@ -6,6 +6,7 @@ import {
   contentBaseUrl,
   contentUrl,
   createGrant,
+  EXPIRED_GRANT_RETENTION_MS,
   purgeExpiredGrants,
   resolveGrant,
 } from '../../src/content/grants.ts';
@@ -317,10 +318,18 @@ describe.each(dialects)('content grants on %s', (dialect) => {
     expect(ended).toEqual([fromLink, forMember, onV1, onV2].map(inTokenOrder));
   });
 
-  test('purge removes only expired grants', async () => {
+  test('purge removes a grant once it has been expired for the retention, not before', async () => {
     const short = await raw({ ttlMs: 1_000 });
-    const long = await raw();
-    clock.advance(999);
+    const long = await raw({ user: null, ttlMs: 2 * EXPIRED_GRANT_RETENTION_MS });
+    clock.advance(1_000);
+    // Expired and kept: it still answers 410 (expired), and look-up can still name it.
+    expect(await purgeExpiredGrants(ctx.deps)).toBe(0);
+    expect(await failure(resolveGrant(ctx.deps, short.token))).toEqual({
+      status: 410,
+      message: t('content.expired.message'),
+      details: { expired: true },
+    });
+    clock.advance(EXPIRED_GRANT_RETENTION_MS - 1);
     expect(await purgeExpiredGrants(ctx.deps)).toBe(0);
     clock.advance(1);
     expect(await purgeExpiredGrants(ctx.deps)).toBe(1);

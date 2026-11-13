@@ -7,9 +7,14 @@ import {
 } from '@pinwall/shared';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { loadConfig } from '../../src/config/load.ts';
-import { createGrant } from '../../src/content/grants.ts';
+import {
+  createGrant,
+  EXPIRED_GRANT_RETENTION_MS,
+  purgeExpiredGrants,
+} from '../../src/content/grants.ts';
 import { parseReportedUrl } from '../../src/domain/moderation.ts';
 import { createShareLink, revokeShareLink } from '../../src/domain/shares.ts';
+import type { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { hashSecret, newContentToken, newSecret } from '../../src/lib/ids.ts';
 import { apiInit } from '../helpers/auth.ts';
@@ -345,6 +350,100 @@ describe.each(dialects)('admin moderation on %s', (dialect) => {
         url: `${u.origin}/c/${u.aGrantOnV1}/index.html`,
       });
       expect(single.status).toBe(404);
+    });
+
+    test('look-up names who a content URL belongs to for 30 days after its grant expired', async () => {
+      // A context of its own: the clock moves by a month, past every session.
+      const own = await moderationContext(dialect, mode);
+      try {
+        const f = await spacesFixture(own);
+        const { A, X } = f.people;
+        const clock = own.deps.clock as FixedClock;
+        /** X's look-up, by API token, as an admin who signed in again today. */
+        const lookup = async (url: string) => {
+          await own.deps.db.db
+            .updateTable('users')
+            .set({ idp_checked_at: clock.now() })
+            .where('id', '=', X.user.id)
+            .execute();
+          const res = await own.request(
+            '/api/v1/admin/lookup',
+            apiInit(own, { bearer: X.token, body: { url } }),
+          );
+          return { status: res.status, body: (await res.json()) as unknown };
+        };
+        const grant = await createGrant(own.deps, {
+          versionId: f.ids.pV1,
+          mode: 'raw',
+          user: A.user,
+          ttlMs: 60_000,
+        });
+        const url = contentUrlIn(own, grant.token, 'index.html');
+
+        // Expired a moment short of the retention: still refused, still kept, still named.
+        clock.set(grant.expires_at + EXPIRED_GRANT_RETENTION_MS - 1);
+        expect(await purgeExpiredGrants(own.deps)).toBe(0);
+        const served = await fetchContent(own, grant.token, 'index.html');
+        expect(served.status).toBe(410);
+        expect(await served.text()).toContain(t('content.expired.message'));
+        const kept = await lookup(url);
+        expect(kept.status, JSON.stringify(kept.body)).toBe(200);
+        expect(AdminLookup.parse(kept.body)).toEqual({
+          kind: 'content_grant',
+          artifact: {
+            id: f.ids.p,
+            name: expect.any(String),
+            project: { id: f.ids.P, name: 'P' },
+            owner: personOf(A),
+          },
+          version: { id: f.ids.pV1, number: 1, published_by: personOf(A) },
+          share_link: null,
+          grant: { mode: 'raw', expires_at: grant.expires_at, holder: personOf(A) },
+        });
+
+        // Once the retention is over, the hourly purge deletes it: nothing to name any more.
+        clock.advance(1);
+        expect(await purgeExpiredGrants(own.deps)).toBe(1);
+        expect(await lookup(url)).toEqual({
+          status: 404,
+          body: { error: { code: 'not_found', message: t('moderation.lookup.unknown') } },
+        });
+        expect((await fetchContent(own, grant.token, 'index.html')).status).toBe(404);
+      } finally {
+        await own.close();
+      }
+    });
+
+    test('an expired grant whose content was revoked or deleted names no one', async () => {
+      const { A, X } = fx.people;
+      const clock = ctx.deps.clock as FixedClock;
+      const expired = async (versionId: string, shareLinkId: string | null = null) => {
+        const grant = await createGrant(ctx.deps, {
+          versionId,
+          mode: 'raw',
+          user: shareLinkId === null ? A.user : null,
+          shareLinkId,
+          ttlMs: 1,
+        });
+        return contentUrlIn(ctx, grant.token, 'index.html');
+      };
+      const fromLink = await expired(fx.ids.pV2, fx.ids.pLink);
+      const onQ = await expired(fx.ids.qV2);
+      clock.advance(1);
+      try {
+        expect((await api(ctx, X).del(`/admin/share-links/${fx.ids.pLink}`)).status).toBe(204);
+        expect((await api(ctx, X).del(`/admin/artifacts/${fx.ids.q}`)).status).toBe(204);
+        for (const url of [fromLink, onQ]) {
+          const r = await api(ctx, X).post('/admin/lookup', { url });
+          expect({ url, status: r.status, keys: keysIn(r.body) }).toEqual({
+            url,
+            status: 404,
+            keys: ['error', 'code', 'message'],
+          });
+        }
+      } finally {
+        clock.set(T);
+      }
     });
 
     test("a share link's grant is looked up with the link it was made from, and no holder", async () => {
