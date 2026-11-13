@@ -271,7 +271,8 @@ function commentShare(c: Context<AppEnv>, token: string): Promise<ShareState> {
   return resolveCommentShare(c.var.deps, token, readUnlockCookie(c));
 }
 
-function scopeOf(s: ShareState): ShareScope {
+/** Link `s`'s `ShareScope` (not a spaces `Scope`): its artifact, up to the version it shows. */
+function shareScopeOf(s: ShareState): ShareScope {
   return { artifactId: s.artifact.id, maxVersionNumber: s.version.number };
 }
 
@@ -416,7 +417,7 @@ export function registerSharePublicRoutes(api: OpenAPIHono<AppEnv>): void {
     const { token, id } = c.req.valid('param');
     const s = await commentShare(c, token);
     await limitNewComment(c, s);
-    await getSharedComment(deps.db.db, scopeOf(s), id);
+    await getSharedComment(deps.db.db, shareScopeOf(s), id);
     const { guest_name, body } = c.req.valid('json');
     const { thread, comment } = await addReply(deps, guestWriter(s, guest_name), id, body);
     const guestToken = await issueGuestToken(deps, comment.id, s.link.id);
@@ -436,7 +437,7 @@ export function registerSharePublicRoutes(api: OpenAPIHono<AppEnv>): void {
     const { token, id } = c.req.valid('param');
     const s = await commentShare(c, token);
     await limitChange(c, s);
-    await getSharedComment(deps.db.db, scopeOf(s), id);
+    await getSharedComment(deps.db.db, shareScopeOf(s), id);
     const guestToken = c.req.valid('header')[GUEST_TOKEN_HEADER];
     const { body } = c.req.valid('json');
     const { comment } = await editComment(deps, guestChanger(s, guestToken), id, body);
@@ -448,7 +449,7 @@ export function registerSharePublicRoutes(api: OpenAPIHono<AppEnv>): void {
     const { token, id } = c.req.valid('param');
     const s = await commentShare(c, token);
     await limitChange(c, s);
-    await getSharedComment(deps.db.db, scopeOf(s), id);
+    await getSharedComment(deps.db.db, shareScopeOf(s), id);
     const guestToken = c.req.valid('header')[GUEST_TOKEN_HEADER];
     await deleteComment(deps, guestChanger(s, guestToken), id);
     return c.body(null, 204, noStore);
