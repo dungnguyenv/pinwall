@@ -119,7 +119,16 @@ export function UsagePage() {
   const limits = me.limits ?? { bytes: null, artifacts: null };
   const bytesTone = toneOf(usage.bytes, limits.bytes);
   const artifactsTone = toneOf(usage.artifacts, limits.artifacts);
-  const full = bytesTone === 'danger' || artifactsTone === 'danger';
+  // Files are shown only under a files limit: without one they are no concern of the person's.
+  const files =
+    typeof limits.files === 'number'
+      ? {
+          used: usage.files ?? 0,
+          limit: limits.files,
+          tone: toneOf(usage.files ?? 0, limits.files),
+        }
+      : null;
+  const full = [bytesTone, artifactsTone, files?.tone].includes('danger');
 
   return (
     <>
@@ -150,6 +159,15 @@ export function UsagePage() {
             }
             tone={artifactsTone}
           />
+          {files ? (
+            <Meter
+              label={t('web.usage.files')}
+              used={files.used}
+              limit={files.limit}
+              text={t('web.usage.filesOf', { count: files.used, limit: files.limit })}
+              tone={files.tone}
+            />
+          ) : null}
           {full ? (
             <p className="flex items-start gap-2 rounded-md bg-danger-soft px-3 py-2 text-danger text-sm">
               <CircleAlert aria-hidden="true" className="mt-px size-4 shrink-0" />

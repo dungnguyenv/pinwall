@@ -60,6 +60,40 @@ test('a null limit reads as no limit, as plain figures with no meter', async () 
   expect(screen.queryByText(t('web.usage.full'))).not.toBeInTheDocument();
 });
 
+const filesMeter = () => screen.getByRole('meter', { name: t('web.usage.files') });
+
+test('a files limit adds a meter of its own', async () => {
+  renderRoute('/settings/usage', {
+    me: withUsage({ usage: { ...USAGE, files: 46_000 }, limits: { ...LIMITS, files: 50_000 } }),
+  });
+
+  expect(await screen.findByText('46000 of 50000 files')).toBeInTheDocument();
+  expect(filesMeter()).toHaveAttribute('aria-valuenow', '46000');
+  expect(filesMeter()).toHaveAttribute('aria-valuemax', '50000');
+  expect(filesMeter()).toHaveAttribute('data-tone', 'warning');
+  expect(screen.queryByText(t('web.usage.full'))).not.toBeInTheDocument();
+});
+
+test('a space at its files limit is full', async () => {
+  renderRoute('/settings/usage', {
+    me: withUsage({ usage: { ...USAGE, files: 50_000 }, limits: { ...LIMITS, files: 50_000 } }),
+  });
+
+  expect(await screen.findByText(t('web.usage.full'))).toBeInTheDocument();
+  expect(filesMeter()).toHaveAttribute('data-tone', 'danger');
+  expect(storageMeter()).toHaveAttribute('data-tone', 'normal');
+});
+
+test('without a files limit the files are not shown', async () => {
+  renderRoute('/settings/usage', {
+    me: withUsage({ usage: { ...USAGE, files: 30 }, limits: { ...LIMITS, files: null } }),
+  });
+
+  expect(await screen.findByText('120 MB of 500 MB')).toBeInTheDocument();
+  expect(screen.queryByText(t('web.usage.files'))).not.toBeInTheDocument();
+  expect(screen.getAllByRole('meter')).toHaveLength(2);
+});
+
 test('one limit set and the other not: a meter for the one, figures for the other', async () => {
   renderRoute('/settings/usage', {
     me: withUsage({
