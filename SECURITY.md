@@ -113,7 +113,8 @@ Every release image is signed with [cosign](https://github.com/sigstore/cosign) 
 key, by the release workflow of this repository, and carries build provenance and an SBOM of each
 platform's image as attestations. Take the image's digest from the release notes, or from `docker buildx imagetools
 inspect ghcr.io/dungnguyenv/pinwall:<version>`, and check that the release workflow signed it for
-that version's tag:
+that version's tag. Use cosign 3 or later: the workflow stores the signature in Sigstore's newer
+bundle format, which cosign 2 does not find (it reports "no signatures found").
 
 ```sh
 cosign verify ghcr.io/dungnguyenv/pinwall@sha256:<digest> \

@@ -15,8 +15,8 @@ page. Where the 1.1.0 candidate stands:
 
 1. **Every automated suite, at the tag candidate:** `pnpm lint`, `pnpm typecheck`,
    `pnpm test:integration`, `pnpm test:e2e`, `pnpm test:e2e:keycloak` and `pnpm test:acceptance`,
-   recorded in [Automated runs](#automated-runs). Not run yet: it is part of the final review of the
-   candidate.
+   recorded in [Automated runs](#automated-runs). Done: locally on the fix waves of the final
+   review, and on GitHub Actions at `c2700b1`, the tagged commit.
 2. **[claude-code](#claude-code) on a 1.1.0 image in `personal` mode,** with
    `-e PINWALL_VISIBILITY=personal` added to the `docker run` of its first step. Done on
    2026-11-14 at `5fc357c` (see [Results](#results)).
@@ -60,6 +60,10 @@ the date, the commit, what ran, who ran it and the outcome. Keep older rows.
 | 2026-11-12 | `3df932a` | `pnpm lint`, `pnpm typecheck`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm test:e2e:keycloak`, `pnpm test:acceptance` | controller | pass |
 | 2026-11-12 | `a132d03` | GitHub Actions CI on `main` (all seven jobs) | GitHub Actions | pass |
 | 2026-11-12 | `610f611` (`v1.0.0-rc.1`) | `release.yml` rehearsal: tag check, CI, image for amd64 and arm64, cosign signature, provenance and SBOM attestations, chart push, GitHub pre-release. Afterwards: `cosign verify` with the documented identity, `gh attestation verify` for the provenance and the SBOMs, the chart pulled with the image digest in its values | controller | pass |
+| 2026-11-14 | `22f2d0b` | `pnpm lint`, `pnpm typecheck`, `pnpm test:integration`, `pnpm test:e2e`, `pnpm test:e2e:keycloak`, `pnpm test:acceptance` (21 items) | controller | pass |
+| 2026-11-14 | `d242f7f` | `pnpm lint`, `pnpm typecheck`, `pnpm test:integration`, `pnpm test:e2e`, on Node 24 | controller | pass |
+| 2026-11-14 | `c2700b1` | GitHub Actions CI on `main` (all seven jobs) | GitHub Actions | pass |
+| 2026-11-14 | `c2700b1` (`v1.1.0`) | `release.yml`: tag check, CI, image for amd64 and arm64, cosign signature, provenance and SBOM attestations, chart push, GitHub release. Afterwards: `1.1.0`, `1.1`, `1` and `latest` all give `sha256:dfca1b37…749f`; `cosign verify` (cosign 3) with the documented identity; `gh attestation verify` for the provenance and both SPDX SBOMs; the chart's values carry that digest; `version` prints `1.1.0` | controller | pass |
 
 ## Results
 
