@@ -1,13 +1,14 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { PublishSession } from '@pinwall/shared';
 import { sql } from 'kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { loadConfig } from '../../src/config/load.ts';
 import { createProject } from '../../src/domain/projects.ts';
 import { limitsOf, usageOf } from '../../src/domain/usage.ts';
 import type { PublishTarget } from '../../src/domain/versions.ts';
 import { formatBytes } from '../../src/lib/format.ts';
 import { t } from '../../src/lib/i18n.ts';
+import { makeTar } from '../helpers/archives.ts';
 import { referencedShas } from '../helpers/backup.ts';
 import type { TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
@@ -25,12 +26,19 @@ import {
 import { contextWith, moderationContext, setQuota } from './helpers.ts';
 
 test('the loader reads the quota settings', () => {
-  expect(loadConfig({}).quota).toEqual({ bytes: 0, artifacts: 0 });
+  expect(loadConfig({}).quota).toEqual({ bytes: 0, artifacts: 0, files: 0 });
   expect(
-    loadConfig({ PINWALL_QUOTA_BYTES: '500MB', PINWALL_QUOTA_ARTIFACTS: '200' }).quota,
-  ).toEqual({ bytes: 500_000_000, artifacts: 200 });
+    loadConfig({
+      PINWALL_QUOTA_BYTES: '500MB',
+      PINWALL_QUOTA_ARTIFACTS: '200',
+      PINWALL_QUOTA_FILES: '50000',
+    }).quota,
+  ).toEqual({ bytes: 500_000_000, artifacts: 200, files: 50_000 });
   expect(() => loadConfig({ PINWALL_QUOTA_ARTIFACTS: '-1' })).toThrow(
     /PINWALL_QUOTA_ARTIFACTS: must be a whole number/,
+  );
+  expect(() => loadConfig({ PINWALL_QUOTA_FILES: '1.5' })).toThrow(
+    /PINWALL_QUOTA_FILES: must be a whole number/,
   );
 });
 
@@ -77,6 +85,44 @@ function bytesRefusal(o: {
   };
 }
 
+/** What a refusal over the files quota answers, as REST sends it. */
+function filesRefusal(o: { used: number; limit: number; owner: Person; other: boolean }) {
+  const counts = { used: o.used, limit: o.limit };
+  return {
+    error: {
+      code: 'quota_exceeded',
+      message: o.other
+        ? t('quota.files.other', { ...counts, owner: o.owner.user.name ?? '' })
+        : t('quota.files.own', counts),
+      details: {
+        used_files: o.used,
+        limit_files: o.limit,
+        space_owner: { id: o.owner.user.id, name: o.owner.user.name },
+      },
+    },
+  };
+}
+
+/** What an upload refused while it streams answers: `size` is what it declared or sent. */
+function uploadRefusal(o: { used: number; limit: number; size: number; owner: Person }) {
+  return {
+    error: {
+      code: 'quota_exceeded',
+      message: t('quota.bytes.upload.own', {
+        left: formatBytes(o.limit - o.used),
+        used: formatBytes(o.used),
+        limit: formatBytes(o.limit),
+      }),
+      details: {
+        used_bytes: o.used,
+        limit_bytes: o.limit,
+        needed_bytes: o.size,
+        space_owner: { id: o.owner.user.id, name: o.owner.user.name },
+      },
+    },
+  };
+}
+
 /** The ways to publish a new version of p as its owner, each refused over the bytes quota. */
 const PATHS = ['upload URL', 'inline', 'web upload', 'restore', 'MCP publish_inline'] as const;
 
@@ -104,6 +150,17 @@ describe.each(dialects)('quotas on %s', (dialect) => {
         .where('artifact_id', 'in', artifactIds)
         .execute();
       return rows.reduce((sum, row) => sum + row.total_bytes, 0);
+    }
+
+    /** The `version_files` rows of every version of `artifactIds`. */
+    async function fileRowsOf(artifactIds: string[]): Promise<number> {
+      const rows = await db()
+        .selectFrom('version_files')
+        .innerJoin('versions', 'versions.id', 'version_files.version_id')
+        .select('version_files.path')
+        .where('versions.artifact_id', 'in', artifactIds)
+        .execute();
+      return rows.length;
     }
 
     /** Version `n` of p's size. */
@@ -209,14 +266,59 @@ describe.each(dialects)('quotas on %s', (dialect) => {
       return PublishSession.parse(r.body).upload_url;
     }
 
-    /** Sends `html` to an upload URL, as the documented single-file command does. */
-    async function upload(url: string, html: string): Promise<Reply> {
-      const res = await ctx.request(url, {
-        method: 'POST',
-        body: html,
-        headers: { 'content-type': 'text/html' },
-      });
+    /** Sends `html` to an upload URL, as the documented single-file command does, on `c`. */
+    async function upload(url: string, html: string, c: TestContext = ctx): Promise<Reply> {
+      return send(c, url, { method: 'POST', body: html, headers: { 'content-type': 'text/html' } });
+    }
+
+    /** A request to `c`, with its JSON answer. */
+    async function send(c: TestContext, url: string, init: RequestInit): Promise<Reply> {
+      const res = await c.request(url, init);
       return { status: res.status, headers: res.headers, body: await res.json() };
+    }
+
+    /** The context with the instance's files quota set to `files`. */
+    const withFilesQuota = (files: number) =>
+      contextWith(ctx, { quota: { ...ctx.deps.config.quota, files } });
+
+    /** A web upload of `form` as a browser sends it, with its Content-Length. */
+    async function webUpload(c: TestContext, person: Person, form: FormData): Promise<Reply> {
+      const encoded = new Response(form);
+      const body = Buffer.from(await encoded.arrayBuffer());
+      return send(c, '/api/v1/publish/upload', {
+        method: 'POST',
+        body,
+        headers: {
+          cookie: person.cookie,
+          origin: c.deps.config.publicOrigin,
+          'content-type': encoded.headers.get('content-type') ?? '',
+          'content-length': String(body.length),
+        },
+      });
+    }
+
+    /** A body that sends `chunks` one at a time, only as they are read, and counts what it sent. */
+    function countedStream(chunks: Buffer[]): {
+      body: ReadableStream<Uint8Array>;
+      sent: () => number;
+    } {
+      let next = 0;
+      let sent = 0;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            const chunk = chunks[next++];
+            if (chunk === undefined) {
+              controller.close();
+              return;
+            }
+            sent += chunk.length;
+            controller.enqueue(chunk);
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      return { body, sent: () => sent };
     }
 
     /** `person`'s inline publish of `html` to `target`, over REST on `c`. */
@@ -231,12 +333,31 @@ describe.each(dialects)('quotas on %s', (dialect) => {
       const { A, E } = fx.people;
       const { p, q, e } = fx.ids;
       if (mode === 'personal') {
-        expect(await usage(A)).toEqual({ bytes: await bytesOf([p, q, e]), artifacts: 3 });
-        expect(await usage(E)).toEqual({ bytes: 0, artifacts: 0 });
+        expect(await usage(A)).toEqual({
+          bytes: await bytesOf([p, q, e]),
+          artifacts: 3,
+          files: await fileRowsOf([p, q, e]),
+        });
+        expect(await usage(E)).toEqual({ bytes: 0, artifacts: 0, files: 0 });
       } else {
-        expect(await usage(A)).toEqual({ bytes: await bytesOf([p, q]), artifacts: 2 });
-        expect(await usage(E)).toEqual({ bytes: await bytesOf([e]), artifacts: 1 });
+        expect(await usage(A)).toEqual({
+          bytes: await bytesOf([p, q]),
+          artifacts: 2,
+          files: await fileRowsOf([p, q]),
+        });
+        expect(await usage(E)).toEqual({
+          bytes: await bytesOf([e]),
+          artifacts: 1,
+          files: await fileRowsOf([e]),
+        });
       }
+      // A restore copies the files of the version it restores, and they count again.
+      const r = await spacesClient(ctx, A.cookie).post(`/artifacts/${p}/versions/1/restore`, {
+        expected_version_id: fx.ids.pV2,
+      });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      const owned = mode === 'personal' ? [p, q, e] : [p, q];
+      expect((await usage(A)).files).toBe(await fileRowsOf(owned));
     });
 
     test('limitsOf: admins have none, an override replaces the default, 0 means none', async () => {
@@ -244,6 +365,7 @@ describe.each(dialects)('quotas on %s', (dialect) => {
       const config = loadConfig({
         PINWALL_QUOTA_BYTES: '500MB',
         PINWALL_QUOTA_ARTIFACTS: '200',
+        PINWALL_QUOTA_FILES: '50000',
       });
       const rowOf = (person: Person) =>
         db()
@@ -251,18 +373,36 @@ describe.each(dialects)('quotas on %s', (dialect) => {
           .selectAll()
           .where('id', '=', person.user.id)
           .executeTakeFirstOrThrow();
+      const none = { bytes: null, artifacts: null, files: null };
 
-      expect(limitsOf(config, await rowOf(E))).toEqual({ bytes: 500_000_000, artifacts: 200 });
-      expect(limitsOf(config, await rowOf(X))).toEqual({ bytes: null, artifacts: null });
+      expect(limitsOf(config, await rowOf(E))).toEqual({
+        bytes: 500_000_000,
+        artifacts: 200,
+        files: 50_000,
+      });
+      expect(limitsOf(config, await rowOf(X))).toEqual(none);
       await setQuota(ctx, X.user.id, { bytes: 10, artifacts: 1 });
-      expect(limitsOf(config, await rowOf(X))).toEqual({ bytes: null, artifacts: null });
+      expect(limitsOf(config, await rowOf(X))).toEqual(none);
 
+      // The files limit has no override: it stays the instance's.
       await setQuota(ctx, E.user.id, { bytes: 0 });
-      expect(limitsOf(config, await rowOf(E))).toEqual({ bytes: null, artifacts: 200 });
+      expect(limitsOf(config, await rowOf(E))).toEqual({
+        bytes: null,
+        artifacts: 200,
+        files: 50_000,
+      });
       await setQuota(ctx, E.user.id, { bytes: null, artifacts: 5 });
-      expect(limitsOf(config, await rowOf(E))).toEqual({ bytes: 500_000_000, artifacts: 5 });
+      expect(limitsOf(config, await rowOf(E))).toEqual({
+        bytes: 500_000_000,
+        artifacts: 5,
+        files: 50_000,
+      });
       // Without an instance limit, an override still sets one.
-      expect(limitsOf(ctx.deps.config, await rowOf(E))).toEqual({ bytes: null, artifacts: 5 });
+      expect(limitsOf(ctx.deps.config, await rowOf(E))).toEqual({
+        bytes: null,
+        artifacts: 5,
+        files: null,
+      });
     });
 
     test.each(PATHS)(
@@ -309,7 +449,13 @@ describe.each(dialects)('quotas on %s', (dialect) => {
         }
         if (reply !== null) {
           expect(reply.status, JSON.stringify(reply.body)).toBe(413);
-          expect(reply.body).toEqual(bytesRefusal({ used, limit, needed, owner: A, other: false }));
+          // An upload's size is known only as it arrives: it stops at the bytes over what is left.
+          const streamed = path === 'upload URL' || path === 'web upload';
+          expect(reply.body).toEqual(
+            streamed
+              ? uploadRefusal({ used, limit, size: needed, owner: A })
+              : bytesRefusal({ used, limit, needed, owner: A, other: false }),
+          );
         }
         await expectNothingLeft(before);
       },
@@ -535,7 +681,7 @@ describe.each(dialects)('quotas on %s', (dialect) => {
 
     test('admins are exempt, and a per-person override applies', async () => {
       const { E, X } = fx.people;
-      const limited = contextWith(ctx, { quota: { bytes: 1, artifacts: 0 } });
+      const limited = contextWith(ctx, { quota: { bytes: 1, artifacts: 0, files: 0 } });
 
       const byX = await inline(limited, X, {}, page('By X'));
       expect(byX.status, JSON.stringify(byX.body)).toBe(201);
@@ -573,6 +719,253 @@ describe.each(dialects)('quotas on %s', (dialect) => {
       const restored = await restore();
       expect(restored.status, JSON.stringify(restored.body)).toBe(201);
       expect(await usage(A)).toMatchObject({ bytes: used + v1 });
+    });
+
+    test('an upload declared larger than what is left is refused before a byte is stored', async () => {
+      const { A } = fx.people;
+      const used = (await usage(A)).bytes;
+      const limit = used + 100;
+      await setQuota(ctx, A.user.id, { bytes: limit });
+      const onp = { artifact_id: fx.ids.p, expected_version_id: fx.ids.pV2 };
+      const html = page('Declared too large', 1000);
+      const before = await written();
+      const spool = vi.spyOn(ctx.deps.blobs, 'spool');
+      const put = vi.spyOn(ctx.deps.blobs, 'put');
+      try {
+        const url = await uploadUrl(A, onp);
+        const viaUrl = await send(ctx, url, {
+          method: 'POST',
+          body: html,
+          headers: { 'content-type': 'text/html', 'content-length': '1000' },
+        });
+        expect(viaUrl.status, JSON.stringify(viaUrl.body)).toBe(413);
+        expect(viaUrl.body).toEqual(uploadRefusal({ used, limit, size: 1000, owner: A }));
+
+        const form = uploadForm(onp, html);
+        const size = (await new Response(form).arrayBuffer()).byteLength;
+        const viaWeb = await webUpload(ctx, A, form);
+        expect(viaWeb.status, JSON.stringify(viaWeb.body)).toBe(413);
+        // The form's own fields count: the request's size alone is what is refused.
+        expect(viaWeb.body).toEqual(uploadRefusal({ used, limit, size, owner: A }));
+
+        expect(spool).not.toHaveBeenCalled();
+        expect(put).not.toHaveBeenCalled();
+      } finally {
+        spool.mockRestore();
+        put.mockRestore();
+      }
+      await expectNothingLeft(before);
+    });
+
+    test('an upload that declares no size stops once it is over what is left', async () => {
+      const { A } = fx.people;
+      const used = (await usage(A)).bytes;
+      const limit = used + 100_000;
+      await setQuota(ctx, A.user.id, { bytes: limit });
+      const onp = { artifact_id: fx.ids.p, expected_version_id: fx.ids.pV2 };
+      const chunk = Buffer.alloc(65_536, ' ');
+      const chunks = [Buffer.from(page('Streamed too large')), ...Array(64).fill(chunk)];
+      const total = chunks.reduce((sum, c) => sum + c.length, 0);
+      const stream = countedStream(chunks);
+      const before = await written();
+
+      const res = await ctx.app.request(await uploadUrl(A, onp), {
+        method: 'POST',
+        body: stream.body,
+        headers: { 'content-type': 'text/html' },
+        duplex: 'half',
+      } as RequestInit);
+      expect(res.status).toBe(413);
+      const body = (await res.json()) as { error: { details: { needed_bytes: number } } };
+      const size = body.error.details.needed_bytes;
+      expect(body).toEqual(uploadRefusal({ used, limit, size, owner: A }));
+      // It stopped at the chunk that went over, not at the end of the body.
+      expect(size).toBeGreaterThan(100_000);
+      expect(size).toBeLessThan(100_000 + 2 * chunk.length);
+      expect(stream.sent()).toBeLessThan(total / 4);
+      await expectNothingLeft(before);
+    });
+
+    test('an inline publish larger than what is left is refused before anything is stored', async () => {
+      const { A } = fx.people;
+      const used = (await usage(A)).bytes;
+      await setQuota(ctx, A.user.id, { bytes: used + 10 });
+      const onp = { artifact_id: fx.ids.p, expected_version_id: fx.ids.pV2 };
+      const html = page('Inline too large');
+      const before = await written();
+      const put = vi.spyOn(ctx.deps.blobs, 'put');
+      try {
+        const r = await inline(ctx, A, onp, html);
+        expect(r.status, JSON.stringify(r.body)).toBe(413);
+        expect(r.body).toEqual(
+          bytesRefusal({
+            used,
+            limit: used + 10,
+            needed: Buffer.byteLength(html),
+            owner: A,
+            other: false,
+          }),
+        );
+        expect(put).not.toHaveBeenCalled();
+      } finally {
+        put.mockRestore();
+      }
+      await expectNothingLeft(before);
+    });
+
+    test.each(PATHS)(
+      '%s over the files quota is refused with quota_exceeded and leaves nothing',
+      async (path) => {
+        const { A } = fx.people;
+        const { p, pV2 } = fx.ids;
+        const used = (await usage(A)).files;
+        // Room for one more file: each way below adds two or more.
+        const limited = withFilesQuota(used + 1);
+        const api = spacesClient(limited, A.cookie);
+        const onp = { artifact_id: p, expected_version_id: pV2 };
+        const two = [
+          { path: 'index.html', content: page(`A ${path} by A`) },
+          { path: 'style.css', content: 'p { color: teal }' },
+        ];
+        const expected = filesRefusal({ used, limit: used + 1, owner: A, other: false });
+        const before = await written();
+
+        let reply: Reply | null = null;
+        if (path === 'upload URL') {
+          const tar = await makeTar(two.map((f) => ({ name: f.path, body: f.content })));
+          reply = await send(limited, await uploadUrl(A, onp), { method: 'POST', body: tar });
+        } else if (path === 'inline') {
+          reply = await api.post('/publish/inline', { target: onp, files: two });
+        } else if (path === 'web upload') {
+          const form = new FormData();
+          form.append('target', JSON.stringify(onp));
+          for (const f of two) form.append('file', new File([f.content], f.path));
+          reply = await api.form('/publish/upload', form);
+        } else if (path === 'restore') {
+          // Version 1 of p holds three files.
+          reply = await api.post(`/artifacts/${p}/versions/1/restore`, {
+            expected_version_id: pV2,
+          });
+        } else {
+          const agent = await connectMcp(limited, { bearer: A.token });
+          try {
+            const r = (await agent.callTool({
+              name: 'publish_inline',
+              arguments: { ...onp, files: two },
+            })) as CallToolResult;
+            expect(r.isError).toBe(true);
+            expect(toolText(r)).toContain(expected.error.message);
+            expect(toolText(r)).toContain(JSON.stringify(expected.error.details));
+          } finally {
+            await agent.close();
+          }
+        }
+        if (reply !== null) {
+          expect(reply.status, JSON.stringify(reply.body)).toBe(413);
+          expect(reply.body).toEqual(expected);
+        }
+        await expectNothingLeft(before);
+
+        // A version of one file fits exactly.
+        const one = await inline(limited, A, onp, page('One file'));
+        expect(one.status, JSON.stringify(one.body)).toBe(201);
+        expect((await usage(A)).files).toBe(used + 1);
+      },
+    );
+
+    test('a space with no file left refuses a publish before any byte is read', async () => {
+      const { A } = fx.people;
+      const used = (await usage(A)).files;
+      const limited = withFilesQuota(used);
+      const refusal = filesRefusal({ used, limit: used, owner: A, other: false });
+      const session = await spacesClient(limited, A.cookie).post('/publish-sessions', {
+        target: { project_id: fx.ids.P },
+      });
+      expect(session.status, JSON.stringify(session.body)).toBe(413);
+      expect(session.body).toEqual(refusal);
+    });
+
+    test('an archive stops at the first file over the files left', async () => {
+      const { A } = fx.people;
+      const used = (await usage(A)).files;
+      const limited = withFilesQuota(used + 1);
+      const entries = Array.from({ length: 400 }, (_, i) => ({
+        name: i === 0 ? 'index.html' : `part-${i}.txt`,
+        body: i === 0 ? page('Many files') : `Part ${i} `.repeat(1000),
+      }));
+      const tar = await makeTar(entries);
+      const chunks: Buffer[] = [];
+      for (let at = 0; at < tar.length; at += 16_384) chunks.push(tar.subarray(at, at + 16_384));
+      const stream = countedStream(chunks);
+      const url = await uploadUrl(A, { project_id: fx.ids.P });
+      const before = await written();
+
+      const res = await limited.app.request(url, {
+        method: 'POST',
+        body: stream.body,
+        duplex: 'half',
+      } as RequestInit);
+      expect(res.status).toBe(413);
+      expect(await res.json()).toEqual(
+        filesRefusal({ used, limit: used + 1, owner: A, other: false }),
+      );
+      expect(stream.sent()).toBeLessThan(tar.length / 4);
+      await expectNothingLeft(before);
+    });
+
+    test('two publishes at the edge of the files quota at once: exactly one commits', async () => {
+      const { A, E } = fx.people;
+      const used = (await usage(A)).files;
+      const limited = withFilesQuota(used + 1);
+      const intoP = { project_id: fx.ids.P };
+      // In team mode E's publish would count toward E, so both are A's there.
+      const second = mode === 'personal' ? E : A;
+      const urls = [await uploadUrl(A, intoP), await uploadUrl(second, intoP)];
+
+      const both = () =>
+        Promise.all(urls.map((url, i) => upload(url, page(`One file ${i}`), limited)));
+      // As for the bytes: on Postgres both have passed every check before the commit's lock.
+      const replies =
+        dialect === 'postgres' ? await releasedTogether([fx.ids.P], both) : await both();
+      expect(
+        replies.map((r) => r.status).sort(),
+        JSON.stringify(replies.map((r) => r.body)),
+      ).toEqual([201, 413]);
+      expect(replies.find((r) => r.status === 413)?.body).toMatchObject({
+        error: {
+          code: 'quota_exceeded',
+          details: { used_files: used + 1, limit_files: used + 1 },
+        },
+      });
+      expect((await usage(A)).files).toBe(used + 1);
+      expect(await storedBlobs()).toEqual(await referencedShas(ctx.deps));
+    });
+
+    test("files: an editor's publish counts toward its space, and admins are exempt", async () => {
+      const { A, E, X } = fx.people;
+      const used = (await usage(A)).files;
+      const limited = withFilesQuota(used);
+      const intoP = { project_id: fx.ids.P };
+      const two = [
+        { path: 'index.html', content: page('Two files') },
+        { path: 'notes.md', content: '# Notes' },
+      ];
+      const byE = await spacesClient(limited, E.cookie).post('/publish/inline', {
+        target: intoP,
+        files: two,
+      });
+      if (mode === 'personal') {
+        expect(byE.status, JSON.stringify(byE.body)).toBe(413);
+        expect(byE.body).toEqual(filesRefusal({ used, limit: used, owner: A, other: true }));
+      } else {
+        // In team mode E's version counts toward E, who has room.
+        expect(byE.status, JSON.stringify(byE.body)).toBe(201);
+      }
+      const byX = await spacesClient(withFilesQuota(1), X.cookie).post('/publish/inline', {
+        target: {},
+        files: two,
+      });
+      expect(byX.status, JSON.stringify(byX.body)).toBe(201);
     });
   });
 });

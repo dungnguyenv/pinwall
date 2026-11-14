@@ -113,7 +113,7 @@ const createSessionRoute = createRoute({
   tags: ['publishing'],
   summary: 'Create a one-time upload URL',
   description:
-    'Returns an upload URL that publishes one request body to the target, and ready-to-run commands for it. The URL needs no other credential, works once, and expires after `PINWALL_UPLOAD_SESSION_TTL`. The body of `POST <upload_url>` is a tar, tar.gz or zip archive (told by its bytes), or a single file: HTML or Markdown by its Content-Type, anything else named with `?filename=`. Counts toward the limit of 60 publishes per user per 10 minutes, shared by every way to publish.',
+    'Returns an upload URL that publishes one request body to the target, and ready-to-run commands for it. The URL needs no other credential, works once, and expires after `PINWALL_UPLOAD_SESSION_TTL`. The body of `POST <upload_url>` is a tar, tar.gz or zip archive (told by its bytes), or a single file: HTML or Markdown by its Content-Type, anything else named with `?filename=`. With a quota, a body whose `Content-Length` is larger than what is left in the space is refused before it is read, and one that goes over the bytes or files left while it streams stops there (`quota_exceeded`). Counts toward the limit of 60 publishes per user per 10 minutes, shared by every way to publish.',
   middleware: [
     requireAuth,
     perUser(RATE_RULES.publish),
@@ -172,7 +172,7 @@ const uploadRoute = createRoute({
   tags: ['publishing'],
   summary: 'Publish files uploaded from a browser',
   description:
-    'A `multipart/form-data` body, read while it streams: a `target` field (the JSON of a publish target) and an optional `message` first, then the files as `file` parts. To publish a folder, put a `path` field before each `file` part with its path in the folder; without `path` fields each part is stored under its filename. A `.zip`, `.tar`, `.tgz` or `.tar.gz` part sent first and without a `path` is unpacked, and must then be the only file. Every file part counts toward `PINWALL_MAX_FILES`, and the upload stops at the part that crosses a limit. Counts toward the limit of 60 publishes per user per 10 minutes, shared by every way to publish.',
+    'A `multipart/form-data` body, read while it streams: a `target` field (the JSON of a publish target) and an optional `message` first, then the files as `file` parts. To publish a folder, put a `path` field before each `file` part with its path in the folder; without `path` fields each part is stored under its filename. A `.zip`, `.tar`, `.tgz` or `.tar.gz` part sent first and without a `path` is unpacked, and must then be the only file. Every file part counts toward `PINWALL_MAX_FILES`, and the upload stops at the part that crosses a limit. With a quota, a declared `Content-Length` larger than what is left in the space is refused before any file is stored, and the upload stops as soon as its files go over the bytes or files left. Counts toward the limit of 60 publishes per user per 10 minutes, shared by every way to publish.',
   middleware: [requireAuth, perUser(RATE_RULES.publish)] as MiddlewareHandler<AppEnv>[],
   security,
   request: {
@@ -243,7 +243,10 @@ async function publishWebUpload(
   opts: Omit<PublishOptions, 'message'>,
 ): Promise<PublishOutcome> {
   const { deps } = c.var;
-  const budget = new IngestBudget(deps.config.limits);
+  const budget = new IngestBudget(
+    deps.config.limits,
+    declaredLength(c.req.header('content-length')),
+  );
   let opened: OpenedUpload;
   try {
     opened = await openWebUpload(c, budget);

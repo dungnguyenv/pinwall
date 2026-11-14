@@ -30,10 +30,16 @@ export const WhoamiOut = z.object({
   /** Sent only in `personal` mode, where each person has a space of their own. */
   visibility: z.literal('personal').optional(),
   /** What the caller's space holds. Sent, with `quota`, in `personal` mode or when a quota applies. */
-  usage: z.object({ bytes: z.number().int(), artifacts: z.number().int() }).optional(),
+  usage: z
+    .object({ bytes: z.number().int(), artifacts: z.number().int(), files: z.number().int() })
+    .optional(),
   /** What the caller may store; `null` is no limit. */
   quota: z
-    .object({ bytes: z.number().int().nullable(), artifacts: z.number().int().nullable() })
+    .object({
+      bytes: z.number().int().nullable(),
+      artifacts: z.number().int().nullable(),
+      files: z.number().int().nullable(),
+    })
     .optional(),
   /** Whether the caller may create share links. Sent only when links need an admin's approval. */
   can_create_share_links: z.boolean().optional(),

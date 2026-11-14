@@ -24,12 +24,23 @@ export const Me = z.object({
   can_create_share_links: z.boolean().optional(),
   /**
    * What this person's space holds. Sent, with `limits`, in `personal` mode or when a quota
-   * applies to them; absent means there is no quota to show.
+   * applies to them; absent means there is no quota to show. `files` (the files of all their
+   * versions) is optional in the schema and always sent.
    */
-  usage: z.object({ bytes: z.number().int(), artifacts: z.number().int() }).optional(),
-  /** What this person may store; `null` is no limit. Sent with `usage`. */
+  usage: z
+    .object({
+      bytes: z.number().int(),
+      artifacts: z.number().int(),
+      files: z.number().int().optional(),
+    })
+    .optional(),
+  /** What this person may store; `null` is no limit. Sent with `usage`, `files` always included. */
   limits: z
-    .object({ bytes: z.number().int().nullable(), artifacts: z.number().int().nullable() })
+    .object({
+      bytes: z.number().int().nullable(),
+      artifacts: z.number().int().nullable(),
+      files: z.number().int().nullable().optional(),
+    })
     .optional(),
 });
 export type Me = z.infer<typeof Me>;

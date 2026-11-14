@@ -513,6 +513,7 @@ export function loadConfig(
   const quota = {
     bytes: r.read('PINWALL_QUOTA_BYTES', custom(parseSize).pipe(z.number().min(0))) ?? 0,
     artifacts: r.read('PINWALL_QUOTA_ARTIFACTS', wholeNumber(0)) ?? 0,
+    files: r.read('PINWALL_QUOTA_FILES', wholeNumber(0)) ?? 0,
   };
   const ttl = {
     sessionMs: r.read('PINWALL_SESSION_TTL', positiveDuration) ?? 30 * DAY_MS,

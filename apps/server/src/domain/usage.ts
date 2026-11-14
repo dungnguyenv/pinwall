@@ -10,16 +10,21 @@ import { AppError } from '../lib/errors.ts';
 import { formatBytes } from '../lib/format.ts';
 import { t } from '../lib/i18n.ts';
 
-/** What a person's space holds: the size of its versions, each counted in full, and its artifacts. */
+/**
+ * What a person's space holds: the size of its versions and their files, each version counted in
+ * full, and its artifacts.
+ */
 export interface Usage {
   bytes: number;
   artifacts: number;
+  files: number;
 }
 
 /** null = no limit. */
 export interface QuotaLimits {
   bytes: number | null;
   artifacts: number | null;
+  files: number | null;
 }
 
 /** Whose space a publish fills, and what it adds. projectId null: the publisher's own default. */
@@ -28,21 +33,41 @@ export interface QuotaNeed {
   actor: UserRow;
   bytes: number;
   artifacts: number;
+  files: number;
+}
+
+/**
+ * What was left in the space a publish fills when `checkQuota` looked, for the publish to be held
+ * to while its files arrive (`IngestBudget.holdTo`): the bytes and the files it may add, null for
+ * no limit. The commit checks again, under the space's lock.
+ */
+export interface QuotaRoom {
+  bytes: number | null;
+  files: number | null;
+  /** The 413 for an upload larger than `bytes`: `size` is its declared size or what has arrived. */
+  uploadTooLarge(size: number): AppError;
+  /** The 413 for a version with more files than `files`. */
+  tooManyFiles(): AppError;
 }
 
 /**
  * What `userId`'s space holds. In personal mode, every version and artifact in the projects they
  * own, editors' publishes included, so the usage moves with the projects; in team mode, where
- * projects are shared, the versions and artifacts they published (`created_by`).
+ * projects are shared, the versions and artifacts they published (`created_by`). The files are
+ * the `version_files` rows of those versions, read as the sum of their `file_count`, which is
+ * each version's number of rows.
  */
 export async function usageOf(db: Db, config: Config, userId: string): Promise<Usage> {
   if (config.visibility === 'personal') {
-    const bytes = await db
+    const versions = await db
       .selectFrom('versions')
       .innerJoin('artifacts', 'artifacts.id', 'versions.artifact_id')
       .innerJoin('projects', 'projects.id', 'artifacts.project_id')
       .where('projects.owner_id', '=', userId)
-      .select((eb) => eb.fn.sum<number | string | null>('versions.total_bytes').as('n'))
+      .select((eb) => [
+        eb.fn.sum<number | string | null>('versions.total_bytes').as('bytes'),
+        eb.fn.sum<number | string | null>('versions.file_count').as('files'),
+      ])
       .executeTakeFirstOrThrow();
     const artifacts = await db
       .selectFrom('artifacts')
@@ -50,19 +75,22 @@ export async function usageOf(db: Db, config: Config, userId: string): Promise<U
       .where('projects.owner_id', '=', userId)
       .select((eb) => eb.fn.countAll<number | string>().as('n'))
       .executeTakeFirstOrThrow();
-    return toUsage(bytes.n, artifacts.n);
+    return toUsage(versions, artifacts.n);
   }
-  const bytes = await db
+  const versions = await db
     .selectFrom('versions')
     .where('created_by', '=', userId)
-    .select((eb) => eb.fn.sum<number | string | null>('total_bytes').as('n'))
+    .select((eb) => [
+      eb.fn.sum<number | string | null>('total_bytes').as('bytes'),
+      eb.fn.sum<number | string | null>('file_count').as('files'),
+    ])
     .executeTakeFirstOrThrow();
   const artifacts = await db
     .selectFrom('artifacts')
     .where('created_by', '=', userId)
     .select((eb) => eb.fn.countAll<number | string>().as('n'))
     .executeTakeFirstOrThrow();
-  return toUsage(bytes.n, artifacts.n);
+  return toUsage(versions, artifacts.n);
 }
 
 /**
@@ -173,16 +201,27 @@ export async function usageSummaries(
 }
 
 /** A sum is a numeric (a string) on Postgres and null over no rows; a count is a bigint. */
-function toUsage(bytes: number | string | null, artifacts: number | string): Usage {
-  return { bytes: Number(bytes ?? 0), artifacts: Number(artifacts) };
+function toUsage(
+  versions: { bytes: number | string | null; files: number | string | null },
+  artifacts: number | string,
+): Usage {
+  return {
+    bytes: Number(versions.bytes ?? 0),
+    artifacts: Number(artifacts),
+    files: Number(versions.files ?? 0),
+  };
 }
 
-/** Admins: both null. Otherwise the user's override, else the instance value; 0 means null. */
+/**
+ * Admins: all null. Otherwise the user's override, else the instance value; 0 means null. The
+ * files limit has no override: it is the instance's for everyone.
+ */
 export function limitsOf(config: Config, user: UserRow): QuotaLimits {
-  if (effectiveRole(user) === 'admin') return { bytes: null, artifacts: null };
+  if (effectiveRole(user) === 'admin') return { bytes: null, artifacts: null, files: null };
   return {
     bytes: noLimitAtZero(user.quota_bytes ?? config.quota.bytes),
     artifacts: noLimitAtZero(user.quota_artifacts ?? config.quota.artifacts),
+    files: noLimitAtZero(config.quota.files),
   };
 }
 
@@ -199,6 +238,7 @@ export function quotaApplies(config: Config, user: UserRow): boolean {
     config.visibility === 'personal' ||
     config.quota.bytes > 0 ||
     config.quota.artifacts > 0 ||
+    config.quota.files > 0 ||
     user.quota_bytes !== null ||
     user.quota_artifacts !== null
   );
@@ -207,13 +247,27 @@ export function quotaApplies(config: Config, user: UserRow): boolean {
 /**
  * Without locks: for checkTarget and restore's early check. When the space is the publisher's
  * own, it goes by `need.actor` as the caller read it, so a publisher without limits costs no
- * query here; the commit reads the row again.
+ * query here; the commit reads the row again. Returns what is left in the space beyond what it
+ * holds now, for a publish to be held to while its files arrive; undefined when no limit applies.
  */
-export async function checkQuota(db: Db, config: Config, need: QuotaNeed): Promise<void> {
+export async function checkQuota(
+  db: Db,
+  config: Config,
+  need: QuotaNeed,
+): Promise<QuotaRoom | undefined> {
   const subject = (await projectOwnerOf(db, config, need)) ?? need.actor;
   const limits = applicableLimits(config, subject, need);
-  if (limits === null) return;
-  assertFits(need, subject, limits, await usageOf(db, config, subject.id));
+  if (limits === null) return undefined;
+  const used = await usageOf(db, config, subject.id);
+  assertFits(need, subject, limits, used);
+  const space = spaceOf(subject, need.actor);
+  const left = (limit: number | null, inUse: number) => (limit === null ? null : limit - inUse);
+  return {
+    bytes: left(limits.bytes, used.bytes),
+    files: left(limits.files, used.files),
+    uploadTooLarge: (size) => uploadTooLarge(space, limits.bytes ?? 0, used.bytes, size),
+    tooManyFiles: () => tooManyFiles(space, limits.files ?? 0, used.files),
+  };
 }
 
 /**
@@ -266,22 +320,42 @@ async function currentRow(db: Db, user: UserRow): Promise<UserRow> {
 /**
  * The subject's limits that `need` can go over, or null when none can: the bytes limit always
  * (a version of no bytes still may not go into a space that is already over), the artifacts
- * limit only for a new artifact.
+ * limit only for a new artifact, the files limit for anything that adds files (every version).
  */
 function applicableLimits(config: Config, subject: UserRow, need: QuotaNeed): QuotaLimits | null {
   const limits = limitsOf(config, subject);
   const applicable = {
     bytes: limits.bytes,
     artifacts: need.artifacts > 0 ? limits.artifacts : null,
+    files: need.files > 0 ? limits.files : null,
   };
-  return applicable.bytes === null && applicable.artifacts === null ? null : applicable;
+  const none = applicable.bytes === null && applicable.artifacts === null;
+  return none && applicable.files === null ? null : applicable;
 }
 
-/** 413 `quota_exceeded` when `need` does not fit: artifacts first, then bytes, each `used + need ≤ limit`. */
-function assertFits(need: QuotaNeed, subject: UserRow, limits: QuotaLimits, used: Usage): void {
-  const whose = subject.id === need.actor.id ? 'own' : 'other';
+/** Whose space a refusal is about, as its message and details name it. */
+interface Space {
+  whose: 'own' | 'other';
+  owner: string;
+  details: { id: string; name: string };
+}
+
+function spaceOf(subject: UserRow, actor: UserRow): Space {
   const owner = subject.name ?? subject.email ?? subject.id;
-  const spaceOwner = { id: subject.id, name: owner };
+  return {
+    whose: subject.id === actor.id ? 'own' : 'other',
+    owner,
+    details: { id: subject.id, name: owner },
+  };
+}
+
+/**
+ * 413 `quota_exceeded` when `need` does not fit: artifacts first, then bytes, then files, each
+ * `used + need ≤ limit`.
+ */
+function assertFits(need: QuotaNeed, subject: UserRow, limits: QuotaLimits, used: Usage): void {
+  const space = spaceOf(subject, need.actor);
+  const { whose, owner } = space;
   if (limits.artifacts !== null && used.artifacts + need.artifacts > limits.artifacts) {
     throw new AppError(
       'quota_exceeded',
@@ -290,7 +364,7 @@ function assertFits(need: QuotaNeed, subject: UserRow, limits: QuotaLimits, used
       {
         used_artifacts: used.artifacts,
         limit_artifacts: limits.artifacts,
-        space_owner: spaceOwner,
+        space_owner: space.details,
       },
     );
   }
@@ -308,8 +382,39 @@ function assertFits(need: QuotaNeed, subject: UserRow, limits: QuotaLimits, used
         used_bytes: used.bytes,
         limit_bytes: limits.bytes,
         needed_bytes: need.bytes,
-        space_owner: spaceOwner,
+        space_owner: space.details,
       },
     );
   }
+  if (limits.files !== null && used.files + need.files > limits.files) {
+    throw tooManyFiles(space, limits.files, used.files);
+  }
+}
+
+/**
+ * The 413 for an upload larger than what is left of the bytes limit, while it streams: `size` is
+ * its declared size or the bytes that have arrived, so it says only that the upload does not fit.
+ */
+function uploadTooLarge(space: Space, limit: number, used: number, size: number): AppError {
+  return new AppError(
+    'quota_exceeded',
+    413,
+    t(`quota.bytes.upload.${space.whose}`, {
+      left: formatBytes(Math.max(0, limit - used)),
+      used: formatBytes(used),
+      limit: formatBytes(limit),
+      owner: space.owner,
+    }),
+    { used_bytes: used, limit_bytes: limit, needed_bytes: size, space_owner: space.details },
+  );
+}
+
+/** The 413 for a version whose files do not fit in what is left of the files limit. */
+function tooManyFiles(space: Space, limit: number, used: number): AppError {
+  return new AppError(
+    'quota_exceeded',
+    413,
+    t(`quota.files.${space.whose}`, { used, limit, owner: space.owner }),
+    { used_files: used, limit_files: limit, space_owner: space.details },
+  );
 }

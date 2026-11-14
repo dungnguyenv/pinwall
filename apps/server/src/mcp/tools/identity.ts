@@ -72,6 +72,8 @@ function accountLines({ usage, quota, can_create_share_links }: WhoamiOut): stri
         bytesLimit: limitText(quota.bytes, formatBytes),
         artifacts: usage.artifacts,
         artifactsLimit: limitText(quota.artifacts),
+        files: usage.files,
+        filesLimit: limitText(quota.files),
       }),
     );
   }

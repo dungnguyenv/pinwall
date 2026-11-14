@@ -55,9 +55,10 @@ const SNIFF_BYTES = 512;
  * Publishes an upload body. With a `filename` it is that one file; else a Content-Type of HTML
  * or Markdown makes it `index.html` or `index.md`; else it must be a tar, tar.gz or zip, told by
  * its magic bytes whatever the Content-Type says (curl sends `application/x-www-form-urlencoded`).
- * The target is checked before any byte is read, and every limit is counted while the body
- * streams. On failure the body is destroyed and the blobs this upload added that nothing else
- * uses are removed, so no version, file row or orphan blob is left.
+ * The target is checked before any byte is read, and so is a declared length that alone is over
+ * the upload limit or what is left of the space's quota; every limit and the quota are counted
+ * while the body streams. On failure the body is destroyed and the blobs this upload added that
+ * nothing else uses are removed, so no version, file row or orphan blob is left.
  */
 export function ingestUpload(
   deps: AppDeps,
@@ -65,7 +66,7 @@ export function ingestUpload(
   input: UploadInput,
   opts: PublishOptions,
 ): Promise<PublishOutcome> {
-  const budget = new IngestBudget(deps.config.limits);
+  const budget = new IngestBudget(deps.config.limits, input.contentLength);
   return metered(
     deps,
     opts,
@@ -85,10 +86,11 @@ async function publishUpload(
   const { body } = input;
   const maxUpload = deps.config.limits.maxUploadBytes;
   try {
-    await checkTarget(deps, scopeForUser(deps, opts.actor), target);
+    const room = await checkTarget(deps, scopeForUser(deps, opts.actor), target);
     if (input.contentLength !== null && input.contentLength > maxUpload) {
       throw limitExceeded('max_upload_bytes', maxUpload);
     }
+    budget.holdTo(room);
   } catch (error) {
     body.destroy();
     throw error;
@@ -116,7 +118,8 @@ async function publishUpload(
 
 /**
  * Publishes a set of files given by path, such as a dropped folder: paths are normalized, macOS
- * junk is skipped and one folder wrapping every file is removed, as for an archive.
+ * junk is skipped and one folder wrapping every file is removed, as for an archive. A set larger
+ * than what is left of the space's quota is refused before anything is stored.
  */
 export function ingestFiles(
   deps: AppDeps,
@@ -140,8 +143,12 @@ async function publishFileSet(
   files: readonly { path: string; data: Buffer }[],
   opts: PublishOptions,
 ): Promise<PublishOutcome> {
-  await checkTarget(deps, scopeForUser(deps, opts.actor), target);
+  // The size is known before anything is stored: a set that cannot fit is refused here, as the
+  // commit would refuse it.
+  const bytes = files.reduce((sum, file) => sum + file.data.length, 0);
+  const room = await checkTarget(deps, scopeForUser(deps, opts.actor), target, bytes);
   const budget = new IngestBudget(deps.config.limits);
+  budget.holdTo(room);
   return ingest(deps, target, opts, budget, null, async (stager) => {
     const paths = new Set<string>();
     for (const file of files) {
@@ -169,9 +176,11 @@ export interface FileSink {
  * Publishes files that arrive one after another as streams, such as the parts of a web upload:
  * `readFiles` hands each to the sink as it comes, and the version is committed once it resolves.
  * Only the file being stored is held in memory. `budget` must be the one that counts the
- * request's bytes (`countRequestBytes`), so every limit holds while the files stream. The target
- * is checked before the first file is read. On failure `destroyInput` runs and the blobs this
- * publish added that nothing else uses are removed. One folder wrapping every file is removed.
+ * request's bytes (`countRequestBytes`), with the request's declared size, so every limit holds
+ * while the files stream. The target is checked before the first file is read, and so is a
+ * declared size that alone is over what is left of the space's quota; the quota is counted while
+ * the files stream. On failure `destroyInput` runs and the blobs this publish added that nothing
+ * else uses are removed. One folder wrapping every file is removed.
  */
 export function ingestStreamed(
   deps: AppDeps,
@@ -199,7 +208,7 @@ async function publishStreamed(
   readFiles: (sink: FileSink) => Promise<void>,
 ): Promise<PublishOutcome> {
   try {
-    await checkTarget(deps, scopeForUser(deps, opts.actor), target);
+    budget.holdTo(await checkTarget(deps, scopeForUser(deps, opts.actor), target));
   } catch (error) {
     destroyInput();
     throw error;

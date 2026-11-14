@@ -129,8 +129,14 @@ describe.each(dialects)('/me, whoami and the public config on %s', (dialect) => 
     const own = await usage(personal, A);
     expect(own.artifacts).toBeGreaterThan(0);
     expect(own.bytes).toBeGreaterThan(0);
+    expect(own.files).toBeGreaterThan(0);
     const mine = await meOf(personal, A);
-    expect(mine).toMatchObject({ usage: own, limits: { bytes: null, artifacts: null } });
+    expect(mine).toEqual(
+      expect.objectContaining({
+        usage: own,
+        limits: { bytes: null, artifacts: null, files: null },
+      }),
+    );
     expect(Me.parse(mine)).toEqual(mine);
 
     // A team with an instance quota: each person sees theirs, admins have none.
@@ -148,6 +154,18 @@ describe.each(dialects)('/me, whoami and the public config on %s', (dialect) => 
     } finally {
       await capped.close();
     }
+
+    // A files quota alone is enough too; it has no override, so it is everyone's but admins'.
+    const files = contextWith(team, { quota: { bytes: 0, artifacts: 0, files: 50_000 } });
+    expect(await meOf(files, A)).toEqual(
+      expect.objectContaining({
+        usage: await usage(files, A),
+        limits: { bytes: null, artifacts: null, files: 50_000 },
+      }),
+    );
+    expect(await meOf(files, X)).toMatchObject({
+      limits: { bytes: null, artifacts: null, files: null },
+    });
 
     // An override on one person is enough in a team with no quota.
     await setQuota(team, E.user.id, { artifacts: 3 });
@@ -201,7 +219,9 @@ describe.each(dialects)('/me, whoami and the public config on %s', (dialect) => 
       });
       const text = toolText(plain);
       expect(text).not.toContain(t('mcp.whoami.noShareLinks'));
-      expect(text).not.toContain(t('mcp.whoami.space', spaceCopy(0, 0)));
+      expect(text).not.toContain(
+        t('mcp.whoami.space', spaceCopy({ bytes: 0, artifacts: 0, files: 0 })),
+      );
 
       // Personal mode, with links that need approval.
       const ap = contextWith(personal, { shareLinks: 'approved' });
@@ -211,12 +231,12 @@ describe.each(dialects)('/me, whoami and the public config on %s', (dialect) => 
       expect(blocked.structuredContent).toMatchObject({
         visibility: 'personal',
         usage: own,
-        quota: { bytes: null, artifacts: null },
+        quota: { bytes: null, artifacts: null, files: null },
         can_create_share_links: false,
       });
       expect(WhoamiOut.parse(blocked.structuredContent)).toEqual(blocked.structuredContent);
       const lines = toolText(blocked).split('\n');
-      expect(lines).toContain(t('mcp.whoami.space', spaceCopy(own.bytes, own.artifacts)));
+      expect(lines).toContain(t('mcp.whoami.space', spaceCopy(own)));
       expect(lines).toContain(t('mcp.whoami.noShareLinks'));
 
       // An admin may share, and has no limit.
@@ -226,14 +246,21 @@ describe.each(dialects)('/me, whoami and the public config on %s', (dialect) => 
 
       // A limit is said in the text, in numbers.
       await setQuota(team, A.user.id, { bytes: 1_500_000, artifacts: 4 });
-      const limited = await whoami(ap, A);
-      expect(limited.structuredContent.quota).toEqual({ bytes: 1_500_000, artifacts: 4 });
+      const filesLimited = contextWith(ap, { quota: { ...ap.deps.config.quota, files: 900 } });
+      const limited = await whoami(filesLimited, A);
+      expect(limited.structuredContent.quota).toEqual({
+        bytes: 1_500_000,
+        artifacts: 4,
+        files: 900,
+      });
       expect(toolText(limited).split('\n')).toContain(
         t('mcp.whoami.space', {
           bytes: formatBytes(own.bytes),
           bytesLimit: formatBytes(1_500_000),
           artifacts: own.artifacts,
           artifactsLimit: 4,
+          files: own.files,
+          filesLimit: 900,
         }),
       );
     });
@@ -241,11 +268,13 @@ describe.each(dialects)('/me, whoami and the public config on %s', (dialect) => 
 });
 
 /** The values of the usage line of `whoami` for a person with no limits. */
-function spaceCopy(bytes: number, artifacts: number) {
+function spaceCopy(usage: { bytes: number; artifacts: number; files: number }) {
   return {
-    bytes: formatBytes(bytes),
+    bytes: formatBytes(usage.bytes),
     bytesLimit: t('mcp.whoami.noLimit'),
-    artifacts,
+    artifacts: usage.artifacts,
     artifactsLimit: t('mcp.whoami.noLimit'),
+    files: usage.files,
+    filesLimit: t('mcp.whoami.noLimit'),
   };
 }

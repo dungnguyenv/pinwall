@@ -11,7 +11,11 @@ import { usePageTitle } from '../../lib/page-title.ts';
 import { ErrorState, LoadingRegion, Skeleton } from '../../ui/index.ts';
 
 /** The settings where 0 means no limit. */
-const QUOTAS: ReadonlySet<string> = new Set(['PINWALL_QUOTA_BYTES', 'PINWALL_QUOTA_ARTIFACTS']);
+const QUOTAS: ReadonlySet<string> = new Set([
+  'PINWALL_QUOTA_BYTES',
+  'PINWALL_QUOTA_ARTIFACTS',
+  'PINWALL_QUOTA_FILES',
+]);
 
 /** The sections in the order the server lists them, each with its entries; empty ones are left out. */
 function groupBySection(

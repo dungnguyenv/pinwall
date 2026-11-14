@@ -205,8 +205,9 @@ describe.each(dialects)('transferring a space on %s', (dialect) => {
         expect(await usage(V)).toEqual({
           bytes: before.A.bytes + before.V.bytes,
           artifacts: before.A.artifacts + before.V.artifacts,
+          files: before.A.files + before.V.files,
         });
-        expect(await usage(A)).toEqual({ bytes: 0, artifacts: 0 });
+        expect(await usage(A)).toEqual({ bytes: 0, artifacts: 0, files: 0 });
         const seenByA = await listed(A);
         for (const id of moved) expect(seenByA).not.toContain(id);
       } else {

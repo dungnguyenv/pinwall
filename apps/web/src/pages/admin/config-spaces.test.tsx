@@ -110,11 +110,12 @@ test('a quota of 0 reads as no limit', async () => {
     withEntries(
       fxConfigEntry({ section: 'limits', env: 'PINWALL_QUOTA_BYTES', value: '0' }),
       fxConfigEntry({ section: 'limits', env: 'PINWALL_QUOTA_ARTIFACTS', value: '0' }),
+      fxConfigEntry({ section: 'limits', env: 'PINWALL_QUOTA_FILES', value: '0' }),
     ),
   );
   renderRoute('/admin/config');
 
-  for (const env of ['PINWALL_QUOTA_BYTES', 'PINWALL_QUOTA_ARTIFACTS']) {
+  for (const env of ['PINWALL_QUOTA_BYTES', 'PINWALL_QUOTA_ARTIFACTS', 'PINWALL_QUOTA_FILES']) {
     const row = await rowOf(env);
     expect(within(row).getByText('0 (no limit)')).toBeInTheDocument();
     expect(within(row).queryByText(/≈/)).not.toBeInTheDocument();
@@ -144,6 +145,7 @@ test('every new setting has its help line', async () => {
     PINWALL_SHARE_LINKS: 'members',
     PINWALL_QUOTA_BYTES: '10',
     PINWALL_QUOTA_ARTIFACTS: '10',
+    PINWALL_QUOTA_FILES: '10',
     PINWALL_ABUSE_CONTACT: 'abuse@example.test',
     PINWALL_TERMS_URL: 'https://example.test/terms',
     PINWALL_PRIVACY_URL: 'https://example.test/privacy',
@@ -153,6 +155,7 @@ test('every new setting has its help line', async () => {
     'PINWALL_SHARE_LINKS',
     'PINWALL_QUOTA_BYTES',
     'PINWALL_QUOTA_ARTIFACTS',
+    'PINWALL_QUOTA_FILES',
     'PINWALL_ABUSE_CONTACT',
     'PINWALL_TERMS_URL',
     'PINWALL_PRIVACY_URL',

@@ -1,4 +1,5 @@
 import type { Config } from '../config/types.ts';
+import type { QuotaRoom } from '../domain/usage.ts';
 import { type AppError, payloadTooLarge } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { MAX_PATH_LENGTH, quotePath } from './paths.ts';
@@ -37,7 +38,9 @@ export function limitExceeded(limit: LimitName, max: number, path?: string): App
 /**
  * Counts one publish against `config.limits` while it streams, and throws `limitExceeded` the
  * moment a count goes over. Request bytes are what arrived on the wire; expanded bytes are what
- * decompression produced; file bytes are what each file holds.
+ * decompression produced; file bytes are what each file holds. Once `holdTo` gives it what is
+ * left of the space the publish fills, the files and their bytes count against that too.
+ * `declaredBytes` is the request's declared size (its Content-Length), when it has one.
  */
 export class IngestBudget {
   private requestBytes = 0;
@@ -46,8 +49,26 @@ export class IngestBudget {
   private files = 0;
   private versionBytes = 0;
   private file: { path: string; bytes: number } | null = null;
+  private room: QuotaRoom | undefined;
 
-  constructor(private readonly limits: Config['limits']) {}
+  constructor(
+    private readonly limits: Config['limits'],
+    private readonly declaredBytes: number | null = null,
+  ) {}
+
+  /**
+   * Holds the rest of the publish to `room`, what `checkTarget` found left in the space it fills
+   * (undefined: no limit): refused at once with `quota_exceeded` when the declared size alone is
+   * larger than the bytes left, else as soon as the files staged go over the bytes or the number
+   * of files left. The commit checks the whole version again.
+   */
+  holdTo(room: QuotaRoom | undefined): void {
+    this.room = room;
+    const left = room?.bytes ?? null;
+    if (room !== undefined && left !== null && this.declaredBytes !== null) {
+      if (this.declaredBytes > left) throw room.uploadTooLarge(this.declaredBytes);
+    }
+  }
 
   /** Request bytes counted so far, including the chunk that crossed the limit, if one did. */
   get requestBytesRead(): number {
@@ -79,6 +100,10 @@ export class IngestBudget {
   startFile(path: string, declaredSize: number | null): void {
     this.files += 1;
     if (this.files > this.limits.maxFiles) throw limitExceeded('max_files', this.limits.maxFiles);
+    const room = this.room;
+    if (room !== undefined && room.files !== null && this.files > room.files) {
+      throw room.tooManyFiles();
+    }
     const max = this.limits.maxFileBytes;
     if (declaredSize !== null && declaredSize > max) {
       throw limitExceeded('max_file_bytes', max, path);
@@ -95,5 +120,9 @@ export class IngestBudget {
     this.versionBytes += n;
     const maxVersion = this.limits.maxVersionBytes;
     if (this.versionBytes > maxVersion) throw limitExceeded('max_version_bytes', maxVersion);
+    const room = this.room;
+    if (room !== undefined && room.bytes !== null && this.versionBytes > room.bytes) {
+      throw room.uploadTooLarge(this.versionBytes);
+    }
   }
 }
