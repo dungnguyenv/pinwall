@@ -8,19 +8,15 @@ const SRC = fileURLToPath(new URL('../../src/', import.meta.url));
 /**
  * The only places that may act without a viewer (the roadmap's Global Constraints): each is bound
  * to something else that grants access, such as a share link, or serves the whole instance. A
- * path ending in `/` stands for every file under it. M12 adds its transfer, purge and admin files.
+ * path ending in `/` stands for every file under it. Every entry must still be in use.
  */
 const SYSTEM_SCOPE_ALLOWED = [
   'domain/spaces.ts',
-  'domain/share-access.ts',
+  // A guest's comments, and a share link's threads: bound to the link that opened them.
   'domain/comments.ts',
   'api/share-public.ts',
+  // Index maintenance: the search index follows each artifact, whoever sees it.
   'domain/search.ts',
-  'domain/deletion.ts',
-  'domain/blobs.ts',
-  'ops/backup/',
-  'domain/spaces-startup.ts',
-  'publish/startup.ts',
   // An admin deletes everything one person owns (the purge in personal mode).
   'api/admin-users.ts',
   // Purge: an admin's of anyone's space, and a person's of their own (`purgeOwnSpace`).
@@ -31,10 +27,9 @@ const SYSTEM_SCOPE_ALLOWED = [
   'main.ts',
 ];
 
-const allowed = (path: string) =>
-  SYSTEM_SCOPE_ALLOWED.some((entry) =>
-    entry.endsWith('/') ? path.startsWith(entry) : path === entry,
-  );
+/** Whether allow-list `entry` stands for the source file at `path`. */
+const covers = (entry: string, path: string) =>
+  entry.endsWith('/') ? path.startsWith(entry) : path === entry;
 
 /** Every source file of the server, by its path under `src/` with `/` separators. */
 async function sources(): Promise<{ path: string; text: string }[]> {
@@ -55,7 +50,13 @@ test('only the allow-list imports SYSTEM_SCOPE', async () => {
     .map((file) => file.path);
   // The guard reads the right tree: the scope's own module names it.
   expect(users).toContain('domain/spaces.ts');
-  expect(users.filter((path) => !allowed(path))).toEqual([]);
+  expect(
+    users.filter((path) => !SYSTEM_SCOPE_ALLOWED.some((entry) => covers(entry, path))),
+  ).toEqual([]);
+  // Both ways: an entry no file needs any more would let a new unscoped query in unnoticed.
+  expect(
+    SYSTEM_SCOPE_ALLOWED.filter((entry) => !users.some((path) => covers(entry, path))),
+  ).toEqual([]);
 });
 
 /** The source files `text` (the file at `path`) imports by a relative path, as paths under `src/`. */
