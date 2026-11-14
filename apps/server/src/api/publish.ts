@@ -161,7 +161,7 @@ const inlineRoute = createRoute({
       'Over the inline limit or another publishing limit (`payload_too_large`), or the version does not fit in the space it fills (`quota_exceeded`)',
     ),
     429: error(
-      'Over the limit shared by every way to publish, or with 2 of your publishes, or 4 on the server, already in progress (`rate_limited`, with `Retry-After`)',
+      'Over the limit shared by every way to publish, or with 2 of your publishes, or 4 on the server, already in progress (`rate_limited`, with `Retry-After`). An admin is held to their own 2 only.',
     ),
   },
 });
@@ -207,7 +207,7 @@ const uploadRoute = createRoute({
     ),
     415: error('A single archive part that is not a tar, tar.gz or zip'),
     429: error(
-      'Over the limit shared by every way to publish, or with 2 of your publishes, or 4 on the server, already in progress (`rate_limited`, with `Retry-After`)',
+      'Over the limit shared by every way to publish, or with 2 of your publishes, or 4 on the server, already in progress (`rate_limited`, with `Retry-After`). An admin is held to their own 2 only.',
     ),
   },
 });

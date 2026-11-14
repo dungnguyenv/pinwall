@@ -229,7 +229,7 @@ export async function restoreVersion(
   n: number,
   expectedVersionId: string,
 ): Promise<CommitResult> {
-  const release = takeIngestSlot(deps, actor.id);
+  const release = takeIngestSlot(deps, actor);
   try {
     return await copyVersion(deps, actor, artifactId, n, expectedVersionId);
   } finally {

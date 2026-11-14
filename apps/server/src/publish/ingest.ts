@@ -309,7 +309,7 @@ async function metered<T>(
   try {
     let release: () => void;
     try {
-      release = takeIngestSlot(deps, opts.actor.id);
+      release = takeIngestSlot(deps, opts.actor);
     } catch (error) {
       abandon?.();
       throw error;

@@ -61,8 +61,8 @@ describe.each(dialects)('publishes in progress on %s', (dialect) => {
   /** An artifact of Ada's with one version, to restore. */
   let adaArtifact: { id: string; versionId: string };
 
-  async function person(name: string): Promise<Person> {
-    const { user, cookie } = await createSignedInUser(ctx, { kind: 'oidc', name });
+  async function person(name: string, idpRole: 'admin' | 'member' = 'member'): Promise<Person> {
+    const { user, cookie } = await createSignedInUser(ctx, { kind: 'oidc', name, idpRole });
     return { user, cookie, token: await createUserToken(ctx, user.id) };
   }
 
@@ -134,7 +134,7 @@ describe.each(dialects)('publishes in progress on %s', (dialect) => {
   test(`a person with ${INGESTS_PER_PERSON} publishes in progress is refused another, whichever way, until one ends`, async () => {
     const uploadPath = await uploadUrl(ada);
     const running = Array.from({ length: INGESTS_PER_PERSON }, () =>
-      takeIngestSlot(ctx.deps, ada.user.id),
+      takeIngestSlot(ctx.deps, ada.user),
     );
 
     for (const [name, publish] of Object.entries(ways)) {
@@ -157,7 +157,7 @@ describe.each(dialects)('publishes in progress on %s', (dialect) => {
   test(`the instance runs at most ${INGESTS_AT_ONCE} publishes at once, everyone's together`, async () => {
     const uploadPath = await uploadUrl(ada);
     const running = [bob, cat].flatMap((who) =>
-      Array.from({ length: INGESTS_AT_ONCE / 2 }, () => takeIngestSlot(ctx.deps, who.user.id)),
+      Array.from({ length: INGESTS_AT_ONCE / 2 }, () => takeIngestSlot(ctx.deps, who.user)),
     );
 
     for (const [name, publish] of Object.entries(ways)) {
@@ -165,6 +165,42 @@ describe.each(dialects)('publishes in progress on %s', (dialect) => {
     }
     running[0]?.();
     expect((await ways['an inline publish'](ada)).status).toBe(201);
+    for (const release of running) release();
+  });
+
+  test(`an admin publishes, whichever way, while the instance's ${INGESTS_AT_ONCE} places are taken`, async () => {
+    const root = await person('Root', 'admin');
+    const uploadPath = await uploadUrl(root);
+    const running = [bob, cat].flatMap((who) =>
+      Array.from({ length: INGESTS_AT_ONCE / 2 }, () => takeIngestSlot(ctx.deps, who.user)),
+    );
+
+    expect(await ways['an inline publish'](ada)).toEqual(busy('server_busy'));
+    for (const [name, publish] of Object.entries(ways)) {
+      expect((await publish(root, uploadPath)).status, name).toBe(201);
+    }
+    expect((await mcpPublish(root)).isError).toBe(false);
+    for (const release of running) release();
+  });
+
+  test(`an admin is still held to ${INGESTS_PER_PERSON} publishes at once`, async () => {
+    const root = await person('Root', 'admin');
+    const uploadPath = await uploadUrl(root);
+    const running = Array.from({ length: INGESTS_PER_PERSON }, () =>
+      takeIngestSlot(ctx.deps, root.user),
+    );
+
+    for (const [name, publish] of Object.entries(ways)) {
+      expect(await publish(root, uploadPath), name).toEqual(busy('publishes_running'));
+    }
+    const refused = await mcpPublish(root);
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain(t('publish.busy.person', { max: INGESTS_PER_PERSON }));
+    // An admin's places are their own: everyone else still has the instance's.
+    expect((await ways['an inline publish'](ada)).status).toBe(201);
+
+    running[0]?.();
+    expect((await ways['an inline publish'](root)).status).toBe(201);
     for (const release of running) release();
   });
 
