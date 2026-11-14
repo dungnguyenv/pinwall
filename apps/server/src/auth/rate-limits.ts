@@ -21,6 +21,7 @@ export const RATE_RULES: {
   shareLinkCreate: RateRule;
   projectCreate: RateRule;
   memberLookup: RateRule;
+  comment: RateRule;
 } = {
   setup: { name: 'setup', limit: 10, windowMs: 900_000 },
   password: { name: 'password', limit: 10, windowMs: 900_000 },
@@ -35,6 +36,11 @@ export const RATE_RULES: {
   projectCreate: { name: 'project-create', limit: 30, windowMs: 3_600_000 },
   /** Adding a project member by email, per person: every attempt counts, refused ones too. */
   memberLookup: { name: 'member-lookup', limit: 30, windowMs: 3_600_000 },
+  /**
+   * A member's comment writes, per person: new threads, replies, edits, resolves and reopens.
+   * Deleting is not counted. Guests' comments have their own rules, per address and per link.
+   */
+  comment: { name: 'comment', limit: 60, windowMs: 600_000 },
 };
 
 /**

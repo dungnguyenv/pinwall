@@ -267,6 +267,7 @@ export const reviewTools: ToolModule = (server, ctx) => {
       annotations: WRITES,
     },
     runTool(ctx, async (a: z.output<typeof ReplyToCommentIn>) => {
+      await enforceRateLimit(ctx.c, RATE_RULES.comment, user.id);
       const { comment } = await addReply(deps, { kind: 'member', user }, a.comment_id, a.body);
       return {
         text: t('mcp.comment.replied', { thread_id: comment.thread_id, id: comment.id }),
@@ -291,6 +292,7 @@ export const reviewTools: ToolModule = (server, ctx) => {
       annotations: WRITES,
     },
     runTool(ctx, async (a: z.output<typeof ResolveCommentIn>) => {
+      await enforceRateLimit(ctx.c, RATE_RULES.comment, user.id);
       const thread = toThreadOut(
         await resolveThread(deps, user, a.comment_id, a.version_id ?? null),
       );

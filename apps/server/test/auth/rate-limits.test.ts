@@ -49,6 +49,7 @@ test('the rules have the documented limits', () => {
     shareLinkCreate: { name: 'share-link-create', limit: 30, windowMs: 3_600_000 },
     projectCreate: { name: 'project-create', limit: 30, windowMs: 3_600_000 },
     memberLookup: { name: 'member-lookup', limit: 30, windowMs: 3_600_000 },
+    comment: { name: 'comment', limit: 60, windowMs: 600_000 },
   });
 });
 

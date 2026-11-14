@@ -12,6 +12,7 @@ import {
 import type { Context, MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../app.ts';
 import { authOf, requireAuth } from '../auth/guards.ts';
+import { perUser, RATE_RULES } from '../auth/rate-limits.ts';
 import {
   addReply,
   type CommentActor,
@@ -45,6 +46,19 @@ const missingComment = {
   410: error('Its artifact was deleted (`gone`)'),
 };
 
+/**
+ * Comment writes count toward the person's comment rule, before the body is read or an id is
+ * looked up, so a refusal says nothing about what the request named.
+ */
+const counted = [requireAuth, perUser(RATE_RULES.comment)];
+const countedWithBody = [...counted, jsonBodyLimit];
+/** Said in the description of each write the comment rule counts. */
+const RATE_NOTE =
+  'Counts toward the limit of 60 comment writes per user per 10 minutes, shared by new threads, replies, edits, resolves and reopens.';
+const overRate = {
+  429: error('Over 60 comment writes in 10 minutes (`rate_limited`, with `Retry-After`)'),
+};
+
 const listRoute = createRoute({
   method: 'get',
   path: '/artifacts/{id}/comments',
@@ -71,9 +85,8 @@ const createThreadRoute = createRoute({
   path: '/artifacts/{id}/comments',
   tags: ['comments'],
   summary: 'Open a comment thread',
-  description:
-    'Writes the first comment of a thread, anchored to a spot of one page. Without `version_id` the thread is written on the current version.',
-  middleware: [requireAuth, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
+  description: `Writes the first comment of a thread, anchored to a spot of one page. Without \`version_id\` the thread is written on the current version. ${RATE_NOTE}`,
+  middleware: countedWithBody as MiddlewareHandler<AppEnv>[],
   security,
   request: {
     params: IdParam,
@@ -87,6 +100,7 @@ const createThreadRoute = createRoute({
     400: error('An invalid body or anchor, or a `version_id` of another artifact'),
     ...authErrors,
     ...missingArtifact,
+    ...overRate,
   },
 });
 
@@ -95,9 +109,8 @@ const replyRoute = createRoute({
   path: '/comments/{id}/replies',
   tags: ['comments'],
   summary: 'Reply in a thread',
-  description:
-    'Threads are flat: a reply to a reply joins the same thread. A reply belongs to the version its thread was written on.',
-  middleware: [requireAuth, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
+  description: `Threads are flat: a reply to a reply joins the same thread. A reply belongs to the version its thread was written on. ${RATE_NOTE}`,
+  middleware: countedWithBody as MiddlewareHandler<AppEnv>[],
   security,
   request: {
     params: IdParam,
@@ -108,6 +121,7 @@ const replyRoute = createRoute({
     400: error('An invalid body'),
     ...authErrors,
     ...missingComment,
+    ...overRate,
   },
 });
 
@@ -116,8 +130,8 @@ const editRoute = createRoute({
   path: '/comments/{id}',
   tags: ['comments'],
   summary: 'Edit a comment',
-  description: 'Replaces the text and sets `edited_at`. Only the author can edit a comment.',
-  middleware: [requireAuth, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
+  description: `Replaces the text and sets \`edited_at\`. Only the author can edit a comment. ${RATE_NOTE}`,
+  middleware: countedWithBody as MiddlewareHandler<AppEnv>[],
   security,
   request: {
     params: IdParam,
@@ -129,6 +143,7 @@ const editRoute = createRoute({
     401: error('Not signed in'),
     403: error('Not the author, or a cross-site request with the session cookie (`forbidden`)'),
     ...missingComment,
+    ...overRate,
   },
 });
 
@@ -157,9 +172,8 @@ const resolveRoute = createRoute({
   path: '/comments/{id}/resolve',
   tags: ['comments'],
   summary: 'Resolve a thread',
-  description:
-    'Marks the thread resolved in version `version_id`, or in the current version when the body leaves it out (or there is no body). `id` names the first comment of the thread.',
-  middleware: [requireAuth, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
+  description: `Marks the thread resolved in version \`version_id\`, or in the current version when the body leaves it out (or there is no body). \`id\` names the first comment of the thread. ${RATE_NOTE}`,
+  middleware: countedWithBody as MiddlewareHandler<AppEnv>[],
   security,
   request: {
     params: IdParam,
@@ -173,6 +187,7 @@ const resolveRoute = createRoute({
     400: error('`id` is a reply, or `version_id` names a version of another artifact'),
     ...authErrors,
     ...missingComment,
+    ...overRate,
   },
 });
 
@@ -181,8 +196,8 @@ const reopenRoute = createRoute({
   path: '/comments/{id}/reopen',
   tags: ['comments'],
   summary: 'Reopen a thread',
-  description: '`id` names the first comment of the thread.',
-  middleware: [requireAuth] as MiddlewareHandler<AppEnv>[],
+  description: `\`id\` names the first comment of the thread. ${RATE_NOTE}`,
+  middleware: counted as MiddlewareHandler<AppEnv>[],
   security,
   request: { params: IdParam },
   responses: {
@@ -193,6 +208,7 @@ const reopenRoute = createRoute({
     400: error('`id` is a reply'),
     ...authErrors,
     ...missingComment,
+    ...overRate,
   },
 });
 

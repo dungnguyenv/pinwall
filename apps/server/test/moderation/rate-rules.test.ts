@@ -7,6 +7,7 @@ import type { TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 import { connectMcp, toolText } from '../helpers/mcp.ts';
 import type { Reply } from '../helpers/rest.ts';
+import { sampleAnchor } from '../helpers/review.ts';
 import {
   type Person,
   type RestApi,
@@ -236,6 +237,54 @@ describe.each(dialects)('per-person rate rules on %s', (dialect) => {
     expect((await make(21)).status).toBe(201);
   });
 
+  test('comment: 60 per 10 minutes over new threads, replies, edits, resolves and reopens, REST and MCP together', async () => {
+    const { A, E } = fx.people;
+    const { p, pThread, pReply } = fx.ids;
+    const api = spacesClient(ctx, A.cookie);
+    const ways: Record<string, () => Promise<Reply>> = {
+      'new thread': () =>
+        api.post(`/artifacts/${p}/comments`, { body: 'A new thread', anchor: sampleAnchor() }),
+      reply: () => api.post(`/comments/${pThread}/replies`, { body: 'A reply' }),
+      edit: () => api.patch(`/comments/${pReply}`, { body: 'An edit' }),
+      resolve: () => api.post(`/comments/${pThread}/resolve`, {}),
+      reopen: () => api.post(`/comments/${pThread}/reopen`),
+    };
+
+    // Each of the seven ways below counts once: together they reach the 60.
+    await exhaustRate(ctx, RATE_RULES.comment, A.user.id, 53);
+    for (const [name, send] of Object.entries(ways)) {
+      const r = await send();
+      expect(r.status, `${name}: ${JSON.stringify(r.body)}`).toBeOneOf([200, 201]);
+    }
+    await asAgent(ctx, A, async (call) => {
+      const replied = await call('reply_to_comment', { comment_id: pThread, body: 'By an agent' });
+      expect(replied.isError, toolText(replied)).toBeFalsy();
+      const resolved = await call('resolve_comment', { comment_id: pThread });
+      expect(resolved.isError, toolText(resolved)).toBeFalsy();
+      expectRefusedByRate(await call('reply_to_comment', { comment_id: pThread, body: 'More' }));
+      expectRefusedByRate(await call('resolve_comment', { comment_id: pThread }));
+    });
+    for (const [name, send] of Object.entries(ways)) {
+      const r = await send();
+      expect(r.status, `${name} over the limit`).toBe(429);
+      const wait = Number(r.headers.get('retry-after'));
+      expect(wait, `${name}: Retry-After`).toBeGreaterThan(0);
+      expect(wait, `${name}: Retry-After`).toBeLessThanOrEqual(600);
+      expect(r.body).toMatchObject({ error: { code: 'rate_limited' } });
+    }
+
+    // Deleting a comment is not counted.
+    expect((await api.del(`/comments/${pReply}`)).status).toBe(204);
+    // The allowance is A's own.
+    const byE = await spacesClient(ctx, E.cookie).post(`/comments/${pThread}/replies`, {
+      body: 'By E',
+    });
+    expect(byE.status).toBe(201);
+
+    clock.advance(600_000);
+    expect((await ways.reply?.())?.status).toBe(201);
+  });
+
   test('admins have the same limits', async () => {
     const { X } = fx.people;
     await exhaustRate(ctx, RATE_RULES.projectCreate, X.user.id, 30);
@@ -273,6 +322,11 @@ describe.each(dialects)('rate refusals reveal nothing about other spaces on %s',
       RATE_RULES.shareLinkCreate,
       (api, id) => api.post(`/artifacts/${id}/share-links`, {}),
     ],
+    [
+      'comment: new thread',
+      RATE_RULES.comment,
+      (api, id) => api.post(`/artifacts/${id}/comments`, { body: 'A', anchor: sampleAnchor() }),
+    ],
   ];
 
   // S is a stranger to P, so p is not found for S, as an id that names nothing is.
@@ -285,6 +339,26 @@ describe.each(dialects)('rate refusals reveal nothing about other spaces on %s',
       const refused = await send(api, fx.ids.p);
       expect(refused.status).toBe(429);
       sameAnswer(refused, await send(api, UNKNOWN_IDS.p));
+    },
+  );
+
+  /** Requests that name a comment thread, refused by the comment rule. */
+  const NAMING_A_THREAD: [string, (api: RestApi, id: string) => Promise<Reply>][] = [
+    ['reply', (api, id) => api.post(`/comments/${id}/replies`, { body: 'A reply' })],
+    ['edit', (api, id) => api.patch(`/comments/${id}`, { body: 'An edit' })],
+    ['resolve', (api, id) => api.post(`/comments/${id}/resolve`, {})],
+    ['reopen', (api, id) => api.post(`/comments/${id}/reopen`)],
+  ];
+
+  test.each(NAMING_A_THREAD)(
+    'comment: %s by a stranger over the limit gets one answer for both ids',
+    async (_name, send) => {
+      const { S } = fx.people;
+      const api = spacesClient(ctx, S.cookie);
+      await exhaustRate(ctx, RATE_RULES.comment, S.user.id, RATE_RULES.comment.limit);
+      const refused = await send(api, fx.ids.pThread);
+      expect(refused.status).toBe(429);
+      sameAnswer(refused, await send(api, UNKNOWN_IDS.pThread));
     },
   );
 
@@ -301,6 +375,22 @@ describe.each(dialects)('rate refusals reveal nothing about other spaces on %s',
     const refused = await raw(fx.ids.p);
     expect(refused.status).toBe(429);
     sameAnswer(refused, await raw(UNKNOWN_IDS.p));
+  });
+
+  test('MCP comment tools: a stranger over the limit gets one answer for a visible and an unknown id', async () => {
+    const { S } = fx.people;
+    await exhaustRate(ctx, RATE_RULES.comment, S.user.id, RATE_RULES.comment.limit);
+    await asAgent(ctx, S, async (call) => {
+      const calls: [string, (id: string) => Record<string, unknown>][] = [
+        ['reply_to_comment', (id) => ({ comment_id: id, body: 'A reply' })],
+        ['resolve_comment', (id) => ({ comment_id: id })],
+      ];
+      for (const [tool, args] of calls) {
+        const refused = await call(tool, args(fx.ids.pThread));
+        expectRefusedByRate(refused);
+        expect(toolText(await call(tool, args(UNKNOWN_IDS.pThread))), tool).toBe(toolText(refused));
+      }
+    });
   });
 
   test('MCP: a stranger over the limit gets one answer for a visible and an unknown id', async () => {
