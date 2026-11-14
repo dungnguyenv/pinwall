@@ -150,11 +150,15 @@ comment but not publish. Pinwall's answer says to ask the project's owner to mak
 which they do in **Members**. Meanwhile the agent can publish into a project of your own. See
 [Project members](spaces.md#project-members).
 
-**The agent cannot make a share link.** There are two causes. A viewer cannot make links in a
-project, so the owner has to make you an editor, as above. On a Pinwall where an admin
-has to approve who may share outside Pinwall, Pinwall's answer says that an admin has to allow it for
-your account, and an admin does that in **Admin → Users**. People who have an account can still
-open the review link. See [Sharing outside Pinwall](spaces.md#sharing-outside-pinwall).
+**The agent cannot make a share link.** There are three causes. A viewer cannot make links in a
+project, so the owner has to make you an editor, as above. On a Pinwall where an admin has to
+approve who may share outside Pinwall, Pinwall's answer says that an admin has to allow it for your
+account, and an admin does that in **Admin → Users**. On such a Pinwall the version counts too: it
+can be shared only when the person who published it is approved, or, with personal spaces, the
+owner of its project is. Otherwise Pinwall refuses the link (`version_not_exposable`) even for an
+approved account, and the publisher or the owner has to be approved first. People who have an
+account can still open the review link. See
+[Sharing outside Pinwall](spaces.md#sharing-outside-pinwall).
 
 **A web page cannot call `/mcp`.** Pinwall refuses requests to `/mcp` that come from a page in a
 browser tab, whether a published artifact or another site, and `/mcp` never reads browser

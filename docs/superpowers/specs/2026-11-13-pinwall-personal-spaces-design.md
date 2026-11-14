@@ -236,6 +236,20 @@ A new setting, `PINWALL_SHARE_LINKS`, controls who may **expose content outside 
   people who are not approved: `frame-ancestors` stays, because it is what keeps these pages from
   being embedded elsewhere, and the docs and the 1.1.0 changelog say so.
 
+**Who published a version counts too (final review, Ruling I1).** The holder alone is not enough:
+an approved person who can merely see a page, as a member of a stranger's project or in team mode,
+would otherwise hand out a top-level URL to it. With `approved`:
+- **A version is exposable** when its publisher (`versions.created_by`) may expose content, or, in
+  `personal` mode, when the owner of its project may. "May expose" means an admin or an approved
+  person. A version that is gone, or whose publisher and owner are both gone, is not exposable.
+- **A share link or a raw link** needs both: the person who makes or follows it may expose, and
+  the version is exposable. A refusal for the version says `version_not_exposable`, and a link to
+  a version that is no longer exposable answers like a revoked link.
+- **A grant is framed-only** unless its holder may expose AND its version is exposable. Both are
+  checked again on every content request.
+- A restore makes the person who restores the version's publisher, so an approved person who
+  restores a stranger's version makes the copy exposable. That takes their own action.
+
 **Approval:**
 - **Who approves:** an admin turns on "May expose content" for a person in **Admin → Users**.
 - **Removing approval** revokes that person's share links. It uses the same mechanism as losing
@@ -414,7 +428,10 @@ Ownership is stored by `users.id`, so the re-key and the transfer can happen in 
   - for inline publish and for restore.
 - **A refused publish:**
   - creates no version and leaves no orphan blobs;
-  - says how much is used, the limit, and how much the version needed;
+  - says how much is used and the limit. It says how much the version needed when the version's
+    size is known: an inline publish, a restore, and the check at the commit. A refusal while the
+    upload streams, or for its declared `Content-Length`, says only that the upload is larger than
+    what is left (`quota.bytes.upload.*`), not how much the version needed;
   - suggests deleting old versions or asking an admin;
   - uses a new error code `quota_exceeded` (HTTP 413).
 - **Visibility of usage:** people see their own usage and limits in **Settings**. The MCP `whoami`
