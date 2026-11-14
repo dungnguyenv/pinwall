@@ -147,10 +147,44 @@ multi-platform index, and pulls it first when it is not on the machine.
 | 1.1-9 | `apps/server/test/spaces/members-acceptance` and `members-removal`: a viewer, an editor, a removal, and nothing in the owner's other projects. `e2e/keycloak/spaces.spec.ts`, walk "acceptance 9": the same through the web | [members-live](#members-live) |
 
 CI completes 1.1-6: it runs every 1.0 test against 1.1 in the default `team` mode, and those tests
-compare whole response bodies. The 1.1 work edited some of them: most edits pass the new scope
-arguments or list the new settings, columns and rate rules, and the rest follow a change that the
-changelog states, such as expired content grants kept for 30 days or uploads stored as they stream.
-The final review of 1.1 lists every edited file with the ruling that allowed it.
+compare whole response bodies. The 1.1 work edited the 1.0 tests below, each for the reason given,
+and no edit weakens what a test checks. Files that only gained tests are not listed. Under
+`apps/server/test/`:
+
+- **The new scope argument** of the queries that respect spaces (`SYSTEM_SCOPE` or
+  `scopeForUser`): `api/artifacts`, `api/comments`, `api/preview`, `api/share-links`, `db/search`,
+  `domain/commit`, `domain/diff`, `domain/projects`, `ops/restore`, and one search in
+  `publish/ingest`.
+- **New settings, columns, migration, rate rules and error codes:** `api/admin-config` lists the new
+  settings, `PINWALL_QUOTA_FILES` included; `auth/rate-limits` lists the new rules, `comment`
+  included; `auth/guards` and `auth/oidc/gate` give their user rows the new columns; `cli` and
+  `db/migrate` expect migration `0003_spaces`, whose tables and columns the migrate fixture fills;
+  `mcp/skill` knows the code `quota_exceeded` and the reason `share_links_not_approved`.
+- **Expired content grants kept for 30 days:** the purge test of `content/grants` and the
+  content-cleanup test of `domain/deletion`.
+- **Uploads stored as they stream:** three tests took a `blobs.put` spy as their sign that a file
+  was stored, and now watch the spool's store through `aroundSpoolStores`. They are "a rejected
+  upload leaves no version and no orphan blobs" in `publish/ingest`, and "times out with 408,
+  removes what it staged, and keeps the session" and "a client that goes away mid-body gets a 400,
+  never a 500, and leaves no blobs" in `api/publish-sessions`. The 1.1 test "a web upload whose
+  next part waits unread ends as a 400" (`api/publish-rest`) changed the same way.
+- **Live updates that end at once when a member is removed:** `api/events` counts the
+  subscriptions to the artifact's topic only, and expects the viewer's access topic, which a
+  member's stream now follows too, to be left as well.
+
+Elsewhere:
+
+- `apps/web/src/pages/admin/users.test.tsx`: the admin pages gain **Share links** and **Look up a
+  link**, and the users table, wider by the new columns, turns into cards below 1136 px of content
+  instead of 1100.
+- `apps/web/src/pages/share/share-page.test.tsx`: the share page also reads the public
+  configuration, for the abuse contact.
+- `e2e/web-shell.spec.ts`: the accessibility scan covers the two new admin pages.
+- `e2e/keycloak/sign-in.spec.ts`: its sign-in helpers moved to `e2e/keycloak/support.ts`, shared
+  with the spaces walks, and take the address of the Pinwall to sign in to.
+- `tools/test/acceptance.test.ts` expects the 1.1 items, manual checks and suites, and
+  `upgrade.spec.ts` in the Playwright suite; `tools/test/docs.test.ts` knows
+  `PINWALL_ACCEPTANCE_UPGRADE_FROM`.
 
 The manual checks cover what a test runner cannot reach: real identity providers with their own
 accounts, the real Claude clients, Cloudflare in front of a public https address, and the owner's
