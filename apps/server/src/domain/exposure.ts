@@ -33,24 +33,24 @@ export function mayExpose(config: Config, user: ExposureFields): boolean {
  */
 export async function isExposable(db: Db, config: Config, versionId: string): Promise<boolean> {
   if (config.shareLinks === 'members') return true;
-  const version = await db
+  const personal = config.visibility === 'personal';
+  // The publisher, and in personal mode the owner: at most two rows, in one query.
+  const people = await db
     .selectFrom('versions')
     .innerJoin('artifacts', 'artifacts.id', 'versions.artifact_id')
     .innerJoin('projects', 'projects.id', 'artifacts.project_id')
-    .select(['versions.created_by as publisher', 'projects.owner_id as owner'])
+    .innerJoin('users', (join) =>
+      join.on((eb) =>
+        eb.or([
+          eb('users.id', '=', eb.ref('versions.created_by')),
+          ...(personal ? [eb('users.id', '=', eb.ref('projects.owner_id'))] : []),
+        ]),
+      ),
+    )
+    .select(['users.kind', 'users.idp_role', 'users.role_override', 'users.share_approved'])
     .where('versions.id', '=', versionId)
-    .executeTakeFirst();
-  if (version === undefined) return false;
-  const ids = [version.publisher];
-  if (config.visibility === 'personal') ids.push(version.owner);
-  const people = ids.filter((id): id is string => id !== null);
-  if (people.length === 0) return false;
-  const rows = await db
-    .selectFrom('users')
-    .select(['kind', 'idp_role', 'role_override', 'share_approved'])
-    .where('id', 'in', people)
     .execute();
-  return rows.some((row) => mayExpose(config, row));
+  return people.some((person) => mayExpose(config, person));
 }
 
 /**
