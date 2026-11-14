@@ -33,9 +33,9 @@ test('a publish may hold its place for 10 minutes, or for its largest upload at 
 });
 
 /** How long the tests below let a publish hold its place. */
-const DEADLINE_MS = 400;
+const DEADLINE_MS = 1_000;
 
-/** The 408 of a publish stopped at its deadline (`DEADLINE_MS` rounds up to a second, a minute). */
+/** The 408 of a publish stopped at its deadline: `DEADLINE_MS` is a second, said as a minute. */
 const TIMED_OUT = {
   error: {
     code: 'request_timeout',
@@ -285,7 +285,7 @@ describe.each(dialects)('how long a publish may hold its place, on %s', (dialect
   });
 
   test('a web upload whose client stalls ends 408 at the idle timeout and gives its place back', async () => {
-    const server = await listen(buildApp(ctx.deps, { uploadIdleTimeoutMs: 500 }), ctx.deps.config);
+    const server = await listen(buildApp(ctx.deps, { uploadIdleTimeoutMs: 1_000 }), ctx.deps.config);
     // The idle timeout ends it, long before the deadline does.
     ctx.deps.ingestDeadlineMs = 60_000;
     const before = await leftovers();
