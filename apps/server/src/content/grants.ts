@@ -11,7 +11,7 @@ import type {
   VersionRow,
 } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
-import { mayExpose } from '../domain/exposure.ts';
+import { isExposable, mayExpose } from '../domain/exposure.ts';
 import { scopeForUser, type ViewerScope, whereVisible } from '../domain/spaces.ts';
 import { addTombstones, isTombstoned } from '../domain/tombstones.ts';
 import { gone, notFound } from '../lib/errors.ts';
@@ -85,9 +85,9 @@ export interface ResolvedGrant {
   grant: ContentGrantRow;
   version: VersionRow;
   /**
-   * Present, and true, when the grant's holder may not expose content (`mayExpose`): it serves
-   * only inside a frame of Pinwall. Absent otherwise, a share link's grant included, so the 1.0
-   * shape stays as it was.
+   * Present, and true, when the grant's holder may not expose content (`mayExpose`), or its
+   * version is not exposable (`isExposable`): it serves only inside a frame of Pinwall. Absent
+   * otherwise, a share link's grant included, so the 1.0 shape stays as it was.
    */
   framedOnly?: true;
 }
@@ -117,8 +117,10 @@ function grantVersion(
  * version was deleted or revoked (tombstoned) 410; an expired one 410 with `details.expired`; one
  * made for a person who has no access now (blocked, disabled), or who no longer sees the
  * version's artifact, 410 as well. Sight is checked at each request, so a grant refused that way
- * serves again once its holder sees the artifact again. So is approval: a grant whose holder may
- * not expose content now comes back `framedOnly`.
+ * serves again once its holder sees the artifact again. So is exposure: a person's grant comes
+ * back `framedOnly` while its holder may not expose content, or its version is not exposable
+ * (nobody who may expose stands behind it), and a share link's grant answers 410, as its link
+ * does then.
  */
 export async function resolveGrant(deps: AppDeps, token: string): Promise<ResolvedGrant> {
   const { db } = deps.db;
@@ -135,8 +137,7 @@ export async function resolveGrant(deps: AppDeps, token: string): Promise<Resolv
     throw notFound(t('content.notFound.message'));
   }
   if (grant.expires_at <= now) throw gone(t('content.expired.message'), { expired: true });
-  let holder: ViewerScope | null = null;
-  let framedOnly = false;
+  let holder: UserRow | null = null;
   if (grant.user_id !== null) {
     const user = await db
       .selectFrom('users')
@@ -145,13 +146,23 @@ export async function resolveGrant(deps: AppDeps, token: string): Promise<Resolv
       .executeTakeFirst();
     // A deleted user takes their grants along; this is a read that raced the delete.
     if (user === undefined || !hasAccess(user)) throw gone(t('content.gone.message'));
-    holder = scopeForUser(deps, user);
-    framedOnly = !mayExpose(deps.config, user);
+    holder = user;
   }
-  const version = await grantVersion(db, grant.version_id, holder);
+  const version = await grantVersion(
+    db,
+    grant.version_id,
+    holder === null ? null : scopeForUser(deps, holder),
+  );
   // Deleting a version deletes its grants with it, so a miss is a read that raced the delete, or
   // a holder who lost sight of the artifact: either way, gone like a deleted version.
   if (version === undefined) throw gone(t('content.gone.message'));
+  if (holder === null) {
+    // A share link's grant: its link no longer opens either (`resolveShare`).
+    if (!(await isExposable(db, deps.config, version.id))) throw gone(t('content.gone.message'));
+    return { grant, version };
+  }
+  const framedOnly =
+    !mayExpose(deps.config, holder) || !(await isExposable(db, deps.config, version.id));
   return framedOnly ? { grant, version, framedOnly } : { grant, version };
 }
 

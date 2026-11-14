@@ -1136,6 +1136,8 @@
   "spaces.move.otherSpace": "An artifact can only move between projects that have the same owner.",
   "spaces.exposure.shareLink": "You cannot create share links yet: an admin of this Pinwall has to allow it for your account first. Links you already made still list and can be revoked.",
   "spaces.exposure.rawLink": "Raw links are not available to your account yet: an admin of this Pinwall has to allow you to share pages outside Pinwall first. You can still review the artifact in Pinwall.",
+  "spaces.exposure.shareLinkVersion": "This version cannot be shared outside Pinwall: the person who published it has not been allowed to share pages outside Pinwall. An admin of this Pinwall can allow it for them.",
+  "spaces.exposure.rawLinkVersion": "This version has no raw link: the person who published it has not been allowed to share pages outside Pinwall. You can still review it in Pinwall.",
   "quota.bytes.own": "This version needs {{needed}}, but your space already holds {{used}} of its {{limit}}. Delete versions you no longer need, or ask an admin for more room.",
   "quota.bytes.other": "This version needs {{needed}}, but the space of {{owner}}, who owns this project, already holds {{used}} of its {{limit}}. Ask them to delete versions they no longer need, or to ask an admin for more room.",
   "quota.artifacts.own": "Your space already holds {{used}} of its {{limit}} artifacts. Delete artifacts you no longer need, or ask an admin for more room.",

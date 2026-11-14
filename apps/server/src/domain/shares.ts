@@ -15,7 +15,7 @@ import { badRequest, forbidden, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { hashSecret, newId, newSecret } from '../lib/ids.ts';
 import { getArtifact, holdArtifact } from './artifacts.ts';
-import { mayExpose, notApproved } from './exposure.ts';
+import { isExposable, mayExpose, notApproved, notExposable } from './exposure.ts';
 import { endShareLinkStreams } from './live.ts';
 import {
   assertCan,
@@ -94,7 +94,8 @@ export function checkSharePassword(pw: string): string {
  * and cannot be shown again. Someone `mayExpose` refuses gets 403 (`notApproved`) before
  * anything else is checked, so the answer is the same whatever the artifact. A version of another
  * artifact answers 400; a missing artifact, or one `actor` does not see, 404, a deleted one 410.
- * In personal mode a role that may not `createShareLink` (a viewer) gets 403.
+ * In personal mode a role that may not `createShareLink` (a viewer) gets 403. So does a link
+ * whose version (the one given, else the current one) is not exposable (`notExposable`).
  */
 export async function createShareLink(
   deps: AppDeps,
@@ -123,6 +124,10 @@ export async function createShareLink(
     const artifact = await holdArtifact(trx, dialect, scope, artifactId, now);
     assertCan(scope, await holdRoleIn(trx, dialect, scope, artifact.project_id), 'createShareLink');
     const version = p.versionId === null ? null : await versionOf(trx, artifact, p.versionId);
+    const shown = version?.id ?? artifact.current_version_id;
+    if (shown !== null && !(await isExposable(trx, deps.config, shown))) {
+      throw notExposable('shareLink');
+    }
     const link: ShareLinkRow = {
       id: newId('shr'),
       artifact_id: artifact.id,

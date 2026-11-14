@@ -225,8 +225,10 @@ describe.each(dialects)('exposing content on %s', (dialect) => {
       expect((await agent(ctx, E, fx.ids.p)).status).toBe(302);
       expect((await browser(ap, X, await ownArtifact(X))).status).toBe(302);
       await approve(ctx, E.user.id);
-      expect((await browser(ap, E, fx.ids.p)).status).toBe(302);
-      expect((await agent(ap, E, fx.ids.p)).status).toBe(302);
+      // E's own page: p is A's, and A is not approved, so p has no raw link even for E now
+      // (exposable-versions.test.ts).
+      expect((await browser(ap, E, fx.ids.e)).status).toBe(302);
+      expect((await agent(ap, E, fx.ids.e)).status).toBe(302);
     });
   });
 });

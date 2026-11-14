@@ -26,7 +26,7 @@ import { AppError, conflict, forbidden, gone, notFound, unauthorized } from '../
 import { t } from '../lib/i18n.ts';
 import { hashSecret } from '../lib/ids.ts';
 import { entryKind } from '../publish/paths.ts';
-import { mayExpose } from './exposure.ts';
+import { isExposable, mayExpose } from './exposure.ts';
 import { shareOriginalUrl } from './shares.ts';
 import { scopeForUser, seesAll, whereVisible } from './spaces.ts';
 import { isTombstoned } from './tombstones.ts';
@@ -156,8 +156,9 @@ async function makerSees(
  * 404; a link deleted with its version or artifact, or revoked, 410 with `details.reason`
  * `deleted` or `revoked`; an expired one 410 with reason `expired`; one whose maker has no
  * current access, or in `personal` mode no longer sees the artifact, answers as a revoked one
- * (`assertMakerCurrent`). Messages speak of the link only, never of what it pointed to or who
- * made it.
+ * (`assertMakerCurrent`), and so does one whose version is not exposable (`isExposable`: an
+ * unapproved person published what it shows, say). Messages speak of the link only, never of
+ * what it pointed to or who made it.
  */
 export async function resolveShare(
   deps: AppDeps,
@@ -191,6 +192,9 @@ export async function resolveShare(
       : await db.selectFrom('versions').selectAll().where('id', '=', versionId).executeTakeFirst();
   // A read that raced the deletion of what the link shows: the link goes with it.
   if (artifact === undefined || version === undefined) throw linkGone('deleted');
+  // Suspended like a maker who may not expose content: it opens again once someone who may
+  // stands behind the version.
+  if (!(await isExposable(db, deps.config, version.id))) throw linkGone('revoked');
   const locked = link.password_hash !== null && checkUnlock(deps, link, unlockCookie) === null;
   return { link, artifact, version, locked };
 }
@@ -371,11 +375,12 @@ export async function unlockShare(
  * A new content grant of `mode` to the version `s` shows, made for the link's guest: no user,
  * the link recorded so revoking it ends the grant, and lasting `PINWALL_PREVIEW_TTL` but never
  * past the link's expiry or its maker's IdP access deadline (`idpAccessDeadline`); none at all
- * while the maker has no current access or no sight of the artifact (`assertMakerCurrent`). A
- * locked link gets none (401). The link is checked again in the transaction that writes the
- * grant, with its artifact and its row share-locked on Postgres (the order revokes and deletions
- * lock them in), so a revoke, expiry or deletion that lands after `s` was read either waits for
- * the grant and then ends it, or wins and this answers 410.
+ * while the maker has no current access or no sight of the artifact (`assertMakerCurrent`), or
+ * while the version is not exposable (`isExposable`), answered as a revoked link. A locked link
+ * gets none (401). The link is checked again in the transaction that writes the grant, with its
+ * artifact and its row share-locked on Postgres (the order revokes and deletions lock them in),
+ * so a revoke, expiry or deletion that lands after `s` was read either waits for the grant and
+ * then ends it, or wins and this answers 410.
  */
 export async function shareGrant(
   deps: AppDeps,
@@ -408,6 +413,7 @@ export async function shareGrant(
       .where('id', '=', s.version.id)
       .executeTakeFirst();
     if (version === undefined) throw linkGone('deleted');
+    if (!(await isExposable(trx, deps.config, version.id))) throw linkGone('revoked');
     // Never past the link's expiry, nor past the moment its maker's IdP access stops being
     // current, as a grant made for the maker themselves would end.
     const ends = [link.expires_at, idpAccessDeadline(maker, deps.config)];

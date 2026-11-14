@@ -133,7 +133,8 @@ describe.each(dialects)('framed-only content on %s', (dialect) => {
 
     test('approval takes effect on the next content request', async () => {
       const { E } = fx.people;
-      const token = await previewGrant(E, fx.ids.p);
+      // E's own page: one A published would stay framed for E (exposable-versions.test.ts).
+      const token = await previewGrant(E, fx.ids.e, { n: 1 });
       expect((await get(token, '', 'document')).status).toBe(403);
 
       await approve(ctx, E.user.id);

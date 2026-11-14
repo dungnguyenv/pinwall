@@ -5,7 +5,7 @@ import { enforceRateLimit, RATE_RULES } from '../auth/rate-limits.ts';
 import { resolveAuth } from '../auth/resolve.ts';
 import { bearerResolvers } from '../auth/resolvers.ts';
 import { getArtifact } from '../domain/artifacts.ts';
-import { mayExpose, notApproved } from '../domain/exposure.ts';
+import { isExposable, mayExpose, notApproved, notExposable } from '../domain/exposure.ts';
 import { scopeForUser } from '../domain/spaces.ts';
 import { getCurrentVersion, getVersionByNumber } from '../domain/versions.ts';
 import { wantsHtml } from '../http/errors.ts';
@@ -43,7 +43,8 @@ export function mountRawLinks(app: Hono<AppEnv>): void {
  * one 410, through the app's error pages, but only once the caller is known: until then nobody
  * learns whether the artifact exists. Each request counts against the person's `grant` allowance
  * (429, a page in a browser), and someone `mayExpose` refuses gets 403 (`notApproved`), a page
- * that explains it in a browser: both before the artifact is looked up.
+ * that explains it in a browser: both before the artifact is looked up. A version that is not
+ * exposable (`isExposable`) gets 403 too (`notExposable`), once the caller is known to see it.
  */
 async function redirectToRaw(c: Context<AppEnv>, n: string | null): Promise<Response> {
   const { deps, auth } = c.var;
@@ -67,6 +68,7 @@ async function redirectToRaw(c: Context<AppEnv>, n: string | null): Promise<Resp
     n === null
       ? await getCurrentVersion(db, artifact)
       : await getVersionByNumber(db, artifact, VERSION_NUMBER.test(n) ? Number(n) : Number.NaN);
+  if (!(await isExposable(db, deps.config, version.id))) throw notExposable('rawLink');
   const grant = await createGrant(deps, { versionId: version.id, mode: 'raw', user: auth.user });
   return c.redirect(contentUrl(deps.config, grant.token) + url.search, 302);
 }
