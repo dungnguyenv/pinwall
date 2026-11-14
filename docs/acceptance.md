@@ -18,8 +18,8 @@ page. Where the 1.1.0 candidate stands:
    recorded in [Automated runs](#automated-runs). Not run yet: it is part of the final review of the
    candidate.
 2. **[claude-code](#claude-code) on a 1.1.0 image in `personal` mode,** with
-   `-e PINWALL_VISIBILITY=personal` added to the `docker run` of its first step. Not run yet: it is
-   part of the final review too.
+   `-e PINWALL_VISIBILITY=personal` added to the `docker run` of its first step. Done on
+   2026-11-14 at `5fc357c` (see [Results](#results)).
 3. **The manual parts of 1.1-2, 1.1-8 and 1.1-9:** [open-sign-up](#open-sign-up),
    [owner-instance](#owner-instance) and [members-live](#members-live). They need real Google
    accounts and the owner's own instance, so they run on `pinwall.happybooth.vn` after the release,
@@ -78,6 +78,7 @@ outcome. Keep older rows; add new ones below them.
 | [cloudflare-tunnel](#cloudflare-tunnel) | 8 | 2026-11-12 | same run as review-loop, cloudflared 2026.10.7 | controller | pass |
 | [fresh-install](#fresh-install) | 1 | 2026-11-12 | `ghcr.io/dungnguyenv/pinwall:1.0.0-rc.1` (`sha256:40eca17a…`), pulled from GHCR on a home connection | controller | pass, 49 s |
 | [two-machines](#two-machines) (optional) | 6 | | | | not run yet |
+| [claude-code](#claude-code) | 2 | 2026-11-14 | 1.1.0 candidate image built locally from `5fc357c` (`--read-only`, `--cap-drop ALL`, SQLite, single-domain, `PINWALL_VISIBILITY=personal`), Claude Code 2.1.263 | controller | pass, 21 s |
 | [open-sign-up](#open-sign-up) | 1.1-2 | | | | not run yet |
 | [owner-instance](#owner-instance) | 1.1-8 | | | | not run yet |
 | [members-live](#members-live) | 1.1-9 | | | | not run yet |
@@ -102,6 +103,14 @@ the files behind its grant and a public share link all hashed the same as the lo
 content response carried `no-transform`, and Cloudflare reported `DYNAMIC`, so nothing was cached
 or rewritten. The agent's reply showed `&lt;strong&gt;` because the agent wrote the entity itself;
 the `reply_to_comment` description now says the text is plain.
+
+The 1.1.0 `claude-code` row ran the same steps on an image built from the candidate commit, in
+`personal` mode. The empty library read "Your space is empty", stating that only the owner sees what
+they publish. Claude Code signed in with `claude mcp login pinwall`, the command behind `/mcp` and
+**Authenticate**, and the consent page named the client and the account. "publish ./site to
+Pinwall" returned the review link 21 seconds after the request, into the owner's Default project,
+and the link opened the page in the review screen. The container's log held no token, OAuth code,
+consent request id or content address; the upload was logged as `/upload/:token`.
 
 ## The automated part
 
