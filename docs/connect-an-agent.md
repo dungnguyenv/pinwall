@@ -140,10 +140,10 @@ so a client that used one needs a new token. If your access to Pinwall itself wa
 sign-in page says so and shows which account you signed in with.
 
 **The agent says `quota_exceeded`.** Your space is full, and nothing was published. It holds as
-much as it may, in bytes or in artifacts, and for a project that someone else owns, it is the
-owner's space that counts. Look at **Settings → Usage**, delete versions or artifacts you no longer
-need, or ask an admin for more room. The agent should not retry until then. It can read the numbers
-with `whoami`. See [Usage and limits](spaces.md#usage-and-limits).
+much as it may, in bytes, in artifacts or in files, and for a project that someone else owns, it is
+the owner's space that counts. Look at **Settings → Usage**, delete versions or artifacts you no
+longer need, or ask an admin for more room. The agent should not retry until then. It can read the
+numbers with `whoami`. See [Usage and limits](spaces.md#usage-and-limits).
 
 **The agent cannot publish into a project.** You are a viewer there, which lets you read and
 comment but not publish. Pinwall's answer says to ask the project's owner to make you an editor,

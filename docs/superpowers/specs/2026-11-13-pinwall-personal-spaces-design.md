@@ -387,8 +387,10 @@ Ownership is stored by `users.id`, so the re-key and the transfer can happen in 
 | --- | --- |
 | `PINWALL_QUOTA_BYTES` | `0`, which means no limit |
 | `PINWALL_QUOTA_ARTIFACTS` | `0`, which means no limit |
+| `PINWALL_QUOTA_FILES` | `0`, which means no limit |
 
-- **Admins are exempt.** An admin can override both values per person.
+- **Admins are exempt.** An admin can override the bytes and artifacts values per person. The files
+  value has no per-person override (it would need a new column; added in the 1.1 final review).
 - **How stored bytes are counted (builder's call):** a sum of `versions.total_bytes`. This is the
   logical size, so each version counts in full even when files are shared. That makes the number
   easy to predict and to explain. Old versions free space when they are deleted.
@@ -401,8 +403,13 @@ Ownership is stored by `users.id`, so the re-key and the transfer can happen in 
     shared there. Nobody can fill another person's quota, and nobody escapes theirs by publishing
     into the shared default project.
 - **Artifacts** are counted the same way.
+- **Files** are the `version_files` rows of those versions, each version counted in full, counted
+  the same way. They bound the rows a person adds, which cost next to nothing in bytes.
 - **When the quota is checked:**
   - when a publish session or web upload starts (refused at once if the person is already over);
+  - before anything is stored, when the request's size alone (its `Content-Length`, or an inline
+    publish's size) is larger than the bytes left;
+  - while an upload streams: it stops as soon as its staged bytes or files go over what is left;
   - again when a version is about to be committed, with its real size;
   - for inline publish and for restore.
 - **A refused publish:**
@@ -419,12 +426,16 @@ Ownership is stored by `users.id`, so the re-key and the transfer can happen in 
 - **Content grants** (review, raw-link and preview): 600 per hour.
 - **Share links created:** 30 per hour.
 - **Projects created:** 30 per hour.
+- **Comment writes** (new threads, replies, edits, resolves and reopens, over REST and MCP): 60 per
+  10 minutes. Added in the 1.1 final review.
 
 These limits also fix the 1.0 deferred item "preview and raw-link calls not rate-limited".
 
 **Recommended values for `pinwall.happybooth.vn`** (env, part of D5):
 - `PINWALL_QUOTA_BYTES=500MB`
 - `PINWALL_QUOTA_ARTIFACTS=200`
+- `PINWALL_QUOTA_FILES=50000`
+- `PINWALL_MAX_UPLOAD_BYTES=50MB` (a zip is read whole before it is unpacked)
 - `PINWALL_SHARE_LINKS=approved`
 - `PINWALL_PREVIEW_TTL=2h`
 

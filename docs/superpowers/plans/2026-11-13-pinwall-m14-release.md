@@ -644,6 +644,8 @@ Pinwall 1.1.0 is released. Please change infra/argocd/apps/pinwall.yaml (pinwall
     PINWALL_SHARE_LINKS: approved
     PINWALL_QUOTA_BYTES: 500MB
     PINWALL_QUOTA_ARTIFACTS: "200"
+    PINWALL_QUOTA_FILES: "50000"
+    PINWALL_MAX_UPLOAD_BYTES: 50MB
     PINWALL_PREVIEW_TTL: 2h
     PINWALL_ABUSE_CONTACT: <owner's value>
     [PINWALL_TERMS_URL / PINWALL_PRIVACY_URL: <only if the owner gave them>]

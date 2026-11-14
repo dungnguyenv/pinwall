@@ -14,6 +14,9 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
   earliest active admin, else the earliest user. Take a backup first. A 1.0 backup restores into
   1.1, but 1.0 refuses a 1.1 backup.
 - **The per-person rate limits apply in both modes.** See Changed below for the numbers.
+- **Before you set `PINWALL_SHARE_LINKS=approved`, approve the people who publish,** not only those
+  who make links. A page opens outside Pinwall's viewer only when the person who published it, or
+  in `personal` mode its project's owner, is approved, so the links to other pages stop until then.
 - **To switch to personal spaces,** set `PINWALL_VISIBILITY=personal`, restart, and move whole
   spaces with `pinwall transfer --from <user> --to <user>`. Ownership follows the project, so what
   members published into someone else's project stays with that project's owner.
@@ -21,8 +24,9 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
   because every member would then see all of their projects. Run
   `pinwall visibility team --confirm` once, then start again.
 - New settings: `PINWALL_VISIBILITY`, `PINWALL_SHARE_LINKS`, `PINWALL_QUOTA_BYTES`,
-  `PINWALL_QUOTA_ARTIFACTS`, `PINWALL_ABUSE_CONTACT`, `PINWALL_TERMS_URL` and
-  `PINWALL_PRIVACY_URL`.
+  `PINWALL_QUOTA_ARTIFACTS`, `PINWALL_QUOTA_FILES`, `PINWALL_ABUSE_CONTACT`, `PINWALL_TERMS_URL`
+  and `PINWALL_PRIVACY_URL`. On an instance open to the public, also lower
+  `PINWALL_MAX_UPLOAD_BYTES` to `50MB`; see Known limitations.
 - Read [Spaces, projects and members](https://github.com/dungnguyenv/pinwall/blob/v1.1.0/docs/spaces.md)
   for the people who use a Pinwall, and
   [Running an open instance](https://github.com/dungnguyenv/pinwall/blob/v1.1.0/docs/open-instance.md)
@@ -40,12 +44,18 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
   updates stop, and the share links they made in the project are revoked.
 - **Approval to share outside Pinwall.** With `PINWALL_SHARE_LINKS=approved`, only admins and the
   people an admin approved can make share links, open raw links or have their pages open as a page
-  of their own. Everyone else still reviews inside Pinwall's viewer. Taking approval away revokes
-  that person's links.
-- **Quotas.** `PINWALL_QUOTA_BYTES` and `PINWALL_QUOTA_ARTIFACTS` cap what one person stores and
-  how many artifacts they have, in both modes. A publish that does not fit is refused as
-  `quota_exceeded`, HTTP 413, and leaves nothing behind. Admins have no limit, and an admin can set
-  other limits for one person. **Settings, Usage** shows a person where they stand.
+  of their own. Everyone else still reviews inside Pinwall's viewer. Who published a version counts
+  too: a version opens outside the viewer only when its publisher, or in `personal` mode its
+  project's owner, is approved or an admin, whoever opens it, so adding an approved person or an
+  admin to a stranger's project exposes nothing. Taking approval away revokes that person's links.
+- **Quotas.** `PINWALL_QUOTA_BYTES`, `PINWALL_QUOTA_ARTIFACTS` and `PINWALL_QUOTA_FILES` cap what
+  one person stores, how many artifacts they have and how many files all their versions hold, in
+  both modes. A publish that does not fit is refused as `quota_exceeded`, HTTP 413, and leaves
+  nothing behind. It is refused before anything is stored when its size is known up front (an
+  inline publish, a restore, or an upload whose `Content-Length` alone is too large), and an
+  upload stops as soon as its files go over what is left. Admins have no limit, and an admin can
+  set other storage and artifact limits for one person. **Settings, Usage** shows a person where
+  they stand.
 - **Admin tools for an open instance.** **Admin, Users** shows each person's usage and has the
   approval switch, **Set limits…** and **Delete all content** (in `personal` mode). **Share links**
   lists every link that is neither revoked nor expired. **Look up a link** takes a reported share
@@ -72,8 +82,14 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
 - The publish limit, 60 per 10 minutes for each person, now counts every way to publish: upload
   URLs, inline publishes, web uploads and restoring a version. 1.0 counted only upload URLs.
 - New per-person limits: 600 content grants an hour (review, raw links and previews), 30 share
-  links an hour, 30 projects an hour and 30 member look-ups an hour. They count by account, across
-  browsers, tokens and addresses, in memory, so a restart clears them.
+  links an hour, 30 projects an hour, 30 member look-ups an hour, and 60 comment writes per 10
+  minutes (new threads, replies, edits, resolves and reopens, over REST and MCP). They count by
+  account, across browsers, tokens and addresses, in memory, so a restart clears them.
+- At most 2 publishes per person, and 4 on the instance, run at once, restores included. Another
+  answers 429 `rate_limited` with `Retry-After: 10`.
+- Uploaded files go to storage as they arrive, instead of being held whole in memory.
+- Review pages carry the annotator only up to 5 MB of HTML, and with at most 50 MB of such pages
+  held in memory at once; see Known limitations.
 - A `team` instance with an identity provider and no member rule logs a startup warning: anyone the
   provider signs in becomes a member and sees every project.
 - The "no roles claim" warning appears only when a member group rule is set. Without one, a
@@ -97,6 +113,31 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
   line carries no outcome.
 - SQLite search ranking (FTS5) uses statistics of the whole index, so text in other spaces can
   change the order, never the membership, of a person's results. PostgreSQL is unaffected.
+- A zip upload is still read into memory whole before it is unpacked, up to
+  `PINWALL_MAX_UPLOAD_BYTES` (95 MB by default). With four publishes running at once, set
+  `PINWALL_MAX_UPLOAD_BYTES=50MB` on an open instance to keep that near 200 MB. Tar and tar.gz
+  uploads stream.
+- A review page larger than 5 MB of HTML, or one asked for while 50 MB of review pages are already
+  held in memory, is served as it is stored, without the annotator: it takes point comments only,
+  not comments on a selected text or element. That second case is never cached, so the next load
+  gets the annotator again.
+- Restoring a version makes whoever restores it its publisher. When an approved person restores a
+  version that someone who is not approved published, the copy can be shared and opened outside
+  Pinwall.
+- With `approved`, only pages are held inside the viewer, not files. The content addresses
+  Pinwall hands to someone who is not approved still serve their files to an image, script,
+  stylesheet or `fetch` on any site until they expire (`PINWALL_PREVIEW_TTL`).
+- A content address that a share link handed out keeps working until it expires even when the link
+  is suspended because of its maker: one who was not approved when the instance switched to
+  `approved`, or whom the identity provider no longer admits. The link itself stops at once.
+- Content that was revoked or deleted, including by **Delete all my content**, answers 410 and can
+  no longer be traced to its owner by **Look up a link**.
+- Adding someone to a project needs no consent from them: any owner can add any account with a
+  verified email, admins included, and add it again after it leaves.
+- `PINWALL_QUOTA_FILES` has no per-person value. An upload checked by its `Content-Length` counts
+  an archive's or a form's own bytes, so near the bytes limit it can be refused although its files
+  would fit. Comments, projects and kept content grants are bounded by the rate limits, not by a
+  quota.
 
 ## 1.0.0
 

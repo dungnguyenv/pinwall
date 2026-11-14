@@ -47,23 +47,34 @@ choices behind them: [README.md](README.md), [docs/install.md](docs/install.md#c
   headers only when `PINWALL_TRUST_PROXY` says so.
 - **Private spaces.** With `PINWALL_VISIBILITY=personal`, a person sees only the projects they own
   or were added to, as a viewer or an editor. A request that names something in someone else's space
-  (a project, an artifact, a version, a comment, a share link, a content token) gets the answer that
-  an id which does not exist would get, never a 403, on REST, MCP, search, live updates and content
-  alike, so existence does not leak. Admins of the app count as someone else: they cannot read
+  by its id (a project, an artifact, a version, a comment or a share link) gets the answer that an
+  id which does not exist would get, never a 403, on REST, MCP, search, live updates and raw links
+  alike, so existence does not leak. A content token is not such an id but a capability: whoever
+  holds one is served what it grants until it expires, and one made for a person who has since lost
+  sight of the artifact answers 410, gone. Admins of the app count as someone else: they cannot read
   private work, and moderate through metadata and the look-up of reported addresses. The operator of
   the installation, who can read the database, can read everything, as with any self-hosted service.
   Moving a person's space to another account is a command on the server, `pinwall transfer`, and not
   a feature of the app, so that an admin cannot move a stranger's space into their own account to
   read it.
 - **Who may expose content.** With `PINWALL_SHARE_LINKS=approved`, only admins and the people an
-  admin approved can make share links, open raw links or have their pages open as a top-level page.
-  For everyone else, content is served only inside Pinwall's viewer: a top-level load is refused,
-  and responses name Pinwall as the only page that may frame them. The check runs each time a link
-  is opened, and taking approval away revokes the person's links.
+  admin approved can make share links, open raw links or have their pages open as a top-level page,
+  and only for a version that an approved person or an admin published, or, in `personal` mode,
+  one in a project whose owner is approved. Everything else is served only inside Pinwall's viewer,
+  whoever opens it: a top-level load is refused, and responses name Pinwall as the only page that
+  may frame them. The check runs each time a link or a content address is opened, and taking
+  approval away revokes the person's links. It covers pages, not files: a content address that
+  Pinwall handed to someone who is not approved still serves its files to an image, script or
+  `fetch` on another site until it expires.
 - **Moderation.** Admins can look up a reported share URL, artifact link or content URL, revoke
   links, end a version's open pages, delete a version or an artifact, and block the owner. Every
-  such action is a structured log line, which is the audit trail. Per-person quotas and rate limits
-  bound what one account can publish, share or open.
+  such action is a structured log line, which is the audit trail.
+- **Limits per account.** Rate rules, counted per account, limit publishing, content grants, share
+  links, projects, member look-ups and comment writes. Each person runs at most 2 publishes at once,
+  and the instance 4. Quotas, when an operator sets them, cap the bytes, artifacts and files one
+  person stores, and an upload that does not fit stops while it streams. Comments, projects and the
+  content grants Pinwall keeps are bounded by the rate rules only, and every limit counts accounts,
+  so one person with many accounts at the identity provider gets the limits of each.
 - **Access follows the identity provider.** Someone removed at the provider loses access by the next
   re-check (12 hours by default, 24 at most), and an admin can end a person's access with
   **Revoke now**: their next request is refused, and a live-update stream they have open ends

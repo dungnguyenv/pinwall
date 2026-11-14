@@ -21,6 +21,11 @@ them. Admins manage people and answer reports, but they do not browse private wo
 who can read the database, still can. Everything below describes `personal` mode unless it says
 otherwise.
 
+Adding someone to a project needs no consent from them. Any owner can put a project under anyone's
+**Shared with me**, admins included, and add them again after they leave. A project's instructions
+are text its owner wrote for agents to follow, so an agent connected to a stranger's project reads a
+stranger's instructions. Treat such projects as you would any text from someone you do not know.
+
 ## Settings
 
 A starting point for an instance that is open to the public. Each line is an environment variable:
@@ -30,6 +35,8 @@ PINWALL_VISIBILITY=personal
 PINWALL_SHARE_LINKS=approved
 PINWALL_QUOTA_BYTES=500MB
 PINWALL_QUOTA_ARTIFACTS=200
+PINWALL_QUOTA_FILES=50000
+PINWALL_MAX_UPLOAD_BYTES=50MB
 PINWALL_PREVIEW_TTL=2h
 PINWALL_ABUSE_CONTACT=abuse@pinwall.example
 # PINWALL_TERMS_URL=https://pinwall.example/terms
@@ -42,8 +49,15 @@ PINWALL_ABUSE_CONTACT=abuse@pinwall.example
 - `PINWALL_SHARE_LINKS=approved`: only admins and the people an admin approved may make share links,
   open raw links or open their pages outside Pinwall's viewer. The default, `members`, lets every
   member, as in 1.0.
-- `PINWALL_QUOTA_BYTES=500MB` and `PINWALL_QUOTA_ARTIFACTS=200`: the most one person may store and
-  how many artifacts they may have. Both default to `0`, which means no limit.
+- `PINWALL_QUOTA_BYTES=500MB`, `PINWALL_QUOTA_ARTIFACTS=200` and `PINWALL_QUOTA_FILES=50000`: the
+  most one person may store, how many artifacts they may have, and how many files all their
+  versions may hold together. All three default to `0`, which means no limit. The files quota is
+  what stops versions of thousands of tiny files, which cost next to nothing in bytes, from filling
+  the database.
+- `PINWALL_MAX_UPLOAD_BYTES=50MB`: the largest publish request. The default is 95 MB. Pinwall reads
+  a zip archive into memory whole before it unpacks it, and runs up to four publishes at once, so
+  this limit decides what uploads can hold in memory: with 50 MB, four zips hold about 200 MB, and
+  twice that for the moment each one is put together.
 - `PINWALL_PREVIEW_TTL=2h`: how long a content address works once Pinwall has handed it out. The
   default is 12 hours.
 - `PINWALL_ABUSE_CONTACT`: an email address or an http(s) URL where people report abuse. Pinwall
@@ -51,6 +65,11 @@ PINWALL_ABUSE_CONTACT=abuse@pinwall.example
   page.
 - `PINWALL_TERMS_URL` and `PINWALL_PRIVACY_URL`, optional: links to your terms and your privacy
   notice, shown on the sign-in page.
+- `PINWALL_TRUST_PROXY`, behind a reverse proxy or a tunnel: which proxies to believe about the
+  visitor's address (see [configuration.md](configuration.md#general)). Without it every visitor
+  has the proxy's address, so the limits Pinwall keeps per address, on opening share links, on
+  password attempts and on guest comments, become one limit for everyone, which any stranger can
+  use up.
 
 The Helm chart takes them under `env:` (see the
 [chart's example](../deploy/helm/pinwall/README.md#examples)), and Compose under `environment:`.
@@ -65,8 +84,8 @@ can start with the final step already done.
 1. **Personal mode, quotas and approval go first, while a member rule still holds.** Set the
    settings above, keep the member group, email or domain rule in place, and restart. Only the
    people you already admitted can sign in, so nobody new can see anything yet. Approve the people
-   whose share links must keep working before you restart (see
-   [Who may share outside Pinwall](#who-may-share-outside-pinwall)).
+   whose share links must keep working, and the people who published what those links show, before
+   you restart (see [Who may share outside Pinwall](#who-may-share-outside-pinwall)).
 2. **Move the existing work and check it.** Ownership follows the project, not whoever published
    into it: the migration to 1.1 gave every project an owner, and that may not be the person who
    should hold it. Move whole spaces with `pinwall transfer` (see
@@ -86,18 +105,29 @@ Quotas apply in both modes.
 
 - **Who is limited.** Every person with a limit. Admins are exempt. An admin can set another limit
   for one person in **Admin, Users** (**Set limits…**), for storage and for artifacts, or go back to
-  the instance's value. The limits an admin sets apply if that person stops being an admin.
+  the instance's value. The limits an admin sets apply if that person stops being an admin. The
+  files quota has no per-person value: it is the instance's for everyone but admins.
 - **What counts.** The logical size of every version, from `versions.total_bytes`, each counted in
   full even when versions share files. In `personal` mode that is every version in the projects a
   person owns, including what editors publish there. A publish by an editor is checked against the
   owner's quota. In `team` mode it is what the person published, because projects are shared.
-  Artifacts are counted the same way.
+  Artifacts are counted the same way, and so are files: every file of every version, a restored
+  version's included.
 - **Freeing space.** Deleting old versions or artifacts frees it.
-- **When it is checked.** When a publish session or a web upload starts, and again when a version
-  is committed with its real size. An inline publish and restoring a version are checked too.
-- **A refusal.** `quota_exceeded`, HTTP 413. It creates no version and leaves no files behind, and
-  its message says how much is used, the limit and how much the version needed. When the full space
-  is not the publisher's, it says whose space is full: the project owner's. It suggests deleting old
+- **When it is checked.**
+  - When a publish session or a web upload starts: a space that is already full is refused at once.
+  - Before anything is stored: an inline publish or a restore that does not fit is refused, and so
+    is an upload whose declared size (`Content-Length`) alone is larger than the bytes left. That
+    size includes an archive's or a form's own bytes, so near the limit an upload can be refused
+    even though its files alone would fit.
+  - While an upload streams: it stops at the first bytes over what is left, or at the first file
+    over the files left, and keeps nothing.
+  - When the version is committed, with its real size, under a lock on the space, so two publishes
+    cannot both take the last of it.
+- **A refusal.** `quota_exceeded`, HTTP 413. It creates no version and leaves no files behind. Its
+  message says how much is used and the limit, and how much the version needed when that is known;
+  an upload stopped while it streams says it is larger than what is left. When the full space is
+  not the publisher's, it says whose space is full: the project owner's. It suggests deleting old
   versions or asking an admin.
 - **Where people see it.** In **Settings, Usage**, and in `whoami` for an agent, so that the agent
   can tell the person before it publishes.
@@ -112,8 +142,28 @@ addresses), and answer HTTP 429 `rate_limited` with the seconds to wait:
 | Share links created | 30 per hour |
 | Projects created | 30 per hour |
 | Adding a project member by email | 30 per hour |
+| Comment writes: new threads, replies, edits, resolves and reopens, over REST and MCP | 60 per 10 minutes |
 
 Pinwall keeps these counts in memory, so a restart clears them.
+
+Some limits bound memory rather than a person, and hold for everyone, admins included:
+
+- **Publishes in progress.** Each person may have 2 publishes running at once, and the instance 4,
+  restores included. One more answers 429 `rate_limited` with `Retry-After: 10` before any of its
+  files is read. Uploaded files go to storage as they arrive, never whole in memory.
+- **Zip archives** are the exception: Pinwall reads a zip whole into memory before it unpacks it,
+  up to `PINWALL_MAX_UPLOAD_BYTES`. Hence the 50 MB in [Settings](#settings). A tar or tar.gz
+  streams.
+- **Review pages.** To let people comment on text and elements, Pinwall adds its annotator to an
+  HTML page shown for review, which means holding the page in memory while it is sent. It does so
+  only for pages of up to 5 MB, and holds at most 50 MB of them at once across all requests. A
+  larger page, or one asked for while those 50 MB are taken, is served as it is stored, without the
+  annotator, and takes point comments only (see
+  [Writing pages](authoring.md#the-pages-own-content-security-policy)).
+
+What the quotas do not count: comments, projects, and the content grants Pinwall keeps for 30 days.
+The rate rules alone bound them. Nothing bounds how many accounts one person makes at your identity
+provider, and each account gets every limit above.
 
 ## Who may share outside Pinwall
 
@@ -124,8 +174,20 @@ domain with a good name. With `PINWALL_SHARE_LINKS=approved`, a person who is no
   an admin has to allow it. Links they made before still list and can be revoked;
 - open raw links, which serve an artifact's files as they are;
 - have their pages open as a top-level page. Their review pages work inside Pinwall's viewer, full
-  screen included, and nowhere else: a top-level load is refused, and every response says that only
-  Pinwall's own pages may frame it.
+  screen included: a top-level load is refused, and every response says that only Pinwall's own
+  pages may frame it.
+
+**Who published a version counts too, not only who opens it.** A version opens outside the viewer
+only when the person who published it is approved or an admin, or, in `personal` mode, when the
+owner of its project is. Until then it stays inside the viewer whoever opens it, admins included:
+nobody can make a share link to it, open its raw page or load it as a top-level page, and the share
+dialog says why. So adding an approved person to a stranger's project exposes nothing, and an
+approved owner can still share what an editor published in their own project.
+
+**A restore makes the person who restores the publisher.** Restoring an old version copies it into
+a new version, published by whoever restored it. When an approved person restores a version that a
+stranger published, the copy can be shared and opened outside Pinwall. Only that person's own
+action does it, so restore only pages you have checked.
 
 An admin approves a person with the **may expose content** switch in **Admin, Users**. Admins never
 need it.
@@ -138,15 +200,26 @@ in content-domain mode alike, and approval lifts it. See
 [Writing pages](authoring.md#links-frames-and-anchors).
 
 **Approve people before switching.** The check runs every time a link is opened, not only when it is
-made, so switching an existing instance to `approved` stops the links of everyone who is not
-approved yet. A stopped link is suspended, not revoked: it opens again as soon as its maker is
-approved.
+made: a link opens only while its maker may expose content and the version it shows was published
+by someone who may (or, in `personal` mode, sits in a project whose owner may). So switching an
+existing instance to `approved` stops the links of everyone who is not approved yet, and the links
+to versions that people who are not approved published. Approve the people who publish, not only
+those who make links. A stopped link is suspended, not revoked, and answers as a revoked link
+does: it opens again as soon as those people are approved.
 
 - **Removing approval** revokes that person's share links for good, the same way losing access does.
 - **Links handed over by a transfer** open only if the person who receives them is approved.
 - **Content addresses** (`/c/<token>/…`, or `<token>.<content host>` with a content domain) are
   capability URLs: whoever holds one can open the page until it expires, after `PINWALL_PREVIEW_TTL`,
-  12 hours by default. Setting `2h` shortens how long a leaked one keeps working.
+  12 hours by default. Setting `2h` shortens how long a leaked one keeps working. One that a share
+  link handed out keeps working until then even when the link is suspended because of its maker
+  (not approved yet, or no longer admitted by the identity provider); the link itself stops at
+  once.
+- **Only pages are held inside the viewer, not files.** For a person who is not approved, Pinwall
+  refuses a top-level load and a frame on another site, but the content addresses it hands that
+  person still serve their files to an `<img>`, a `<script>`, a stylesheet or a `fetch` on any site
+  until they expire. Browsers do not tell such loads apart from the page's own. Keep
+  `PINWALL_PREVIEW_TTL` short, and treat a report of hotlinked files like any other.
 
 Approval changes nothing while `PINWALL_SHARE_LINKS` is `members`.
 
@@ -172,8 +245,10 @@ it is without showing you the page.
 
 **Who made a content address, once it has expired.** Pinwall keeps an expired content grant for 30
 days, so a report that arrives late can still be traced to the owner. For someone who sits at the
-limit of 600 grants an hour, that is up to about 430,000 rows, around 65 MB. After 30 days the
-look-up answers 404. Content that was revoked or deleted answers 410 and cannot be attributed.
+limit of 600 grants an hour, that is up to 600 × 24 × 30 = 432,000 rows. On PostgreSQL a row takes
+about 270 bytes with the table's five indexes (measured on 432,000 rows: 63 MB of table, 53 MB of
+indexes), so about 120 MB for that one person. After 30 days the look-up answers 404. Content that
+was revoked or deleted answers 410 and cannot be attributed.
 
 **Where the abuse contact does not show.** A share link without comments sends the visitor straight
 to the raw page, which is the artifact's files as they are, so it carries no abuse contact. With

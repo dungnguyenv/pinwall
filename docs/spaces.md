@@ -136,29 +136,39 @@ Reviewing, commenting and working with project members are not affected. An admi
 ask one. An agent that cannot make a share link has the same cause, see
 [Connect an agent](connect-an-agent.md#troubleshooting).
 
+**Who published a page counts too.** Even when you are approved, a version stays inside the viewer
+when the person who published it is not approved and, in `personal` mode, neither is the owner of
+its project: you cannot make a share link to it or open its raw page, and the share dialog says
+why. In your own project, as an approved owner, you can share what your editors publish. A link
+that follows an artifact stops opening while its current version is such a one, and opens again
+once an approved person publishes a newer version or its publisher is approved.
+
 ## Usage and limits
 
 **Settings → Usage** shows what your space holds against what it may hold: your **Storage** and your
-**Artifacts**. The page is there in `personal` mode, and wherever a limit applies to you. A figure
-with no limit says "(no limit)" after what is used. A bar turns to a warning at 90 percent, and at
-the limit the page says "Your space is full. Publishing stops until you delete versions or
-artifacts, or an admin gives you more room."
+**Artifacts**, and your **Files** where the Pinwall limits them too. The page is there in `personal`
+mode, and wherever a limit applies to you. A figure with no limit says "(no limit)" after what is
+used. A bar turns to a warning at 90 percent, and at the limit the page says "Your space is full.
+Publishing stops until you delete versions or artifacts, or an admin gives you more room."
 
 - **Every version counts at its full size,** even when it shares files with another version. That
   makes the number easy to predict.
 - **It counts every version in the projects you own,** and that includes what editors publish there.
   An editor's publish is checked against the owner's limit, not the editor's, so you choose who gets
   to fill your space. A project you are an editor in costs you nothing.
-- **Artifacts are counted the same way.**
+- **Artifacts are counted the same way, and so are files:** every file of every version, so a
+  version of many small files can fill a files limit long before the storage one.
 - **Deleting versions or artifacts frees the space.**
 - **On a Pinwall in `team` mode** the numbers are about what you published, since projects are
   shared there.
-- **Admins have no limits.** An admin can set other limits for one person.
+- **Admins have no limits.** An admin can set other storage and artifact limits for one person.
 
 A publish that does not fit is refused with the error `quota_exceeded` (HTTP 413). It creates no
-version and leaves nothing behind. The message says how much is used, what the limit is and how much
-the version needed, and when the space that is full is the project owner's, it says whose. Publishing
-is also limited in rate, and Pinwall asks you to wait when you hit it, see
+version and leaves nothing behind. An upload stops as soon as it goes over what is left, without
+waiting for its end. The message says how much is used and what the limit is, and how much the
+version needed when that is known; when the space that is full is the project owner's, it says
+whose. Publishing is also limited in rate, and so is commenting, and Pinwall asks you to wait when
+you hit a limit, see
 [Quotas and rate limits](open-instance.md#quotas-and-rate-limits). An agent sees the same numbers
 through `whoami`, so it can warn you before it publishes something large.
 

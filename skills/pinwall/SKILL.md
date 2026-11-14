@@ -123,8 +123,9 @@ share with people outside Pinwall. The link can follow the current version or sh
 (`version_id`), and you can mention that it can ask for a `password` and expire after
 `expires_in_days`; `allow_comments` lets its viewers comment. The URL appears only in that result
 and cannot be read again, so hand it to the user straight away. On request, `list_share_links`
-shows an artifact's links (without URLs) and `revoke_share_link` ends one by its `share_link_id`:
-the project's owner may revoke any link on its artifacts, an editor the links they made.
+shows an artifact's links (without URLs) and `revoke_share_link` ends one by its `share_link_id`.
+With personal spaces the project's owner may revoke any link on its artifacts, an editor the links
+they made; otherwise the link's creator, the artifact's publisher or an admin.
 
 On some Pinwalls an admin has to approve an account before it may share. `forbidden` with
 `share_links_not_approved` means this one is not approved yet: do not retry, and tell the user

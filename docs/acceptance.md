@@ -139,15 +139,18 @@ multi-platform index, and pulls it first when it is not on the machine.
 | 1.1-1 | `apps/server/test/spaces/idor-rest`, `idor-mcp`, `idor-sse`, `idor-content`, `idor-publish`, `idor-members` and `search`: the owner, an editor, a viewer and a stranger on REST, MCP, live streams, search, Recent, raw links, content grants, upload targets and share management, in both modes. `scope-guard`: only the allow-list acts without a viewer | none |
 | 1.1-2 | `apps/server/test/auth/oidc/policy`, `spaces/warnings` and `spaces/projects`: with no member rule everyone who signs in is a member, with a default project of their own. The 1.1-1 suites. `e2e/keycloak/spaces.spec.ts` (`pnpm test:e2e:keycloak`), walk "acceptance 2": a first sign-in through a real Keycloak lands on an empty space, and search and `/a/<id>` show nothing of another person's | [open-sign-up](#open-sign-up) |
 | 1.1-3 | `apps/server/test/moderation/exposure` and `framed-only`: without approval no share link on REST or MCP, no raw link, and content only inside Pinwall's viewer; links stop when approval goes. The 1.1-5 suites. `e2e/keycloak/spaces.spec.ts`, walk "acceptance 3": the same through the web, and the link gone once the admin takes approval back | none |
-| 1.1-4 | `apps/server/test/moderation/quota`: an upload URL, an inline publish over REST and MCP, a web upload and a version restore over the quota each answer `quota_exceeded` (413) and leave no version and no blob; admins are exempt; a per-person override applies | none |
+| 1.1-4 | `apps/server/test/moderation/quota`: an upload URL, an inline publish over REST and MCP, a web upload and a version restore over the quota each answer `quota_exceeded` (413) and leave no version and no blob, over the bytes and over the files quota alike; an upload stops as soon as it goes over what is left, and one whose declared size alone is too large is refused before anything is stored; admins are exempt; a per-person override applies | none |
 | 1.1-5 | `apps/server/test/moderation/admin-users`, `admin-moderation`, `purge`, `transfer` and `transfer-cli`: usage, the transfer and the grants it ends, Delete all content, the share-link list and the look-up; no admin route returns private content or moves a space. `e2e/keycloak/spaces.spec.ts`, walk "acceptance 3": the admin pages | none |
 | 1.1-6 | `apps/server/test/spaces/migration` and `restore-v10`: a 1.0 database and a 1.0 archive get their owners as §8.1 says. `e2e/acceptance/upgrade.spec.ts`: the published 1.0.0 image, upgraded in place to the image under test, answers every read the same as before in `team` mode, its 1.0.0 backup restored into an empty 1.1 answers the same, and in `personal` mode each project is its owner's | none |
 | 1.1-7 | `apps/server/test/spaces/visibility` and `visibility-cli`: `serve` refuses `team` after `personal` while more than one person owns projects, until `pinwall visibility team --confirm` | none |
 | 1.1-8 | `apps/server/test/moderation/transfer` and `transfer-cli`: the transfer moves every project to the account it names, which then sees all of it, and in `personal` mode the account it came from no longer does | [owner-instance](#owner-instance) |
 | 1.1-9 | `apps/server/test/spaces/members-acceptance` and `members-removal`: a viewer, an editor, a removal, and nothing in the owner's other projects. `e2e/keycloak/spaces.spec.ts`, walk "acceptance 9": the same through the web | [members-live](#members-live) |
 
-CI completes 1.1-6: it runs every 1.0 test unchanged against 1.1 in the default `team` mode, and
-those tests compare whole response bodies.
+CI completes 1.1-6: it runs every 1.0 test against 1.1 in the default `team` mode, and those tests
+compare whole response bodies. The 1.1 work edited some of them: most edits pass the new scope
+arguments or list the new settings, columns and rate rules, and the rest follow a change that the
+changelog states, such as expired content grants kept for 30 days or uploads stored as they stream.
+The final review of 1.1 lists every edited file with the ruling that allowed it.
 
 The manual checks cover what a test runner cannot reach: real identity providers with their own
 accounts, the real Claude clients, Cloudflare in front of a public https address, and the owner's

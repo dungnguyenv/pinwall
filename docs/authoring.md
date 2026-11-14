@@ -119,6 +119,13 @@ is for the page the viewer opens only. A page in a nested frame whose own policy
 annotator cannot be commented on at all, so leave scripts allowed in pages you embed when people
 should comment on them.
 
+Adding the annotator means holding the page in memory, so Pinwall adds it only to HTML files of up
+to 5 MB. A larger page is served for review as it is stored, without the annotator, as if its
+policy blocked it: point comments only, and none in a nested frame. A busy Pinwall can serve a
+smaller page that way too, for one load, when 50 MB of review pages are already in memory; the next
+load has the annotator again. Keep pages that people should comment on in detail under 5 MB, with
+large data in files of their own.
+
 ## Text encoding
 
 Write pages in UTF-8. Pinwall labels an HTML file UTF-8 unless its own bytes say otherwise, the way
@@ -147,9 +154,11 @@ Pinwall for the values in force with `whoami`, and the upload dialog of the web 
 | `PINWALL_MAX_EXPANSION_RATIO` | 100 | How many times larger than the upload a version may unpack to |
 
 An operator can also cap what each person stores, with `PINWALL_QUOTA_BYTES` (the total size of
-their versions, each counted in full) and `PINWALL_QUOTA_ARTIFACTS` (how many artifacts they may
-have). Neither is set by default. A publish that would go over is refused as `quota_exceeded` and
-creates nothing. **Settings → Usage** shows the numbers, and `whoami` gives them to an agent. See
+their versions, each counted in full), `PINWALL_QUOTA_ARTIFACTS` (how many artifacts they may have)
+and `PINWALL_QUOTA_FILES` (how many files all their versions hold together). None is set by
+default. A publish that would go over is refused as `quota_exceeded` and creates nothing; an upload
+stops as soon as it goes over, and one whose declared size alone is too large is refused before it
+is read. **Settings → Usage** shows the numbers, and `whoami` gives them to an agent. See
 [Usage and limits](spaces.md#usage-and-limits).
 
 Search reads each version once, when it is published: the entry page first, then the other HTML

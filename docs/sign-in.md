@@ -145,7 +145,10 @@ the setup, such as quotas and who may share pages, is in
 
 1. Give Pinwall's people an organization of their own in Zitadel. Set its login policy so that
    Google is the only way in: Google added as an identity provider of the organization, with new
-   accounts created on first sign-in, and no username and password.
+   accounts created on first sign-in, and no username and password. Check that the accounts it
+   creates from Google have their email marked as verified, as `email_verified` in the token:
+   Pinwall adds only people with a verified email to a project, so nobody could add the others as
+   members.
 2. In the Zitadel project, add the role `pinwall-admin`, switch on **Assert Roles on
    Authentication**, and give the role to the admins. Nobody else needs a role, because a person
    with none is a member. Leave off any project setting that requires a role to sign in, since a new

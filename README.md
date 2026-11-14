@@ -102,8 +102,8 @@ sequenceDiagram
 - 🤝 **Project members.** An owner adds people by email as editors, who publish, or as viewers, who
   read and comment, and the project shows up under **Shared with me** for them.
 - 🚦 **Guard rails for an open instance.** Admins approve who may share pages outside Pinwall, each
-  person has a storage and artifact quota, and admins can look up a reported link, take it down or
-  clear out an account without reading anyone's work.
+  person has quotas for storage, artifacts and files, and admins can look up a reported link, take
+  it down or clear out an account without reading anyone's work.
   [Running an open instance](docs/open-instance.md)
 
 **Operations**
