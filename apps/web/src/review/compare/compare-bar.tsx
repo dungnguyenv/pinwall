@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router';
 import type { ArtifactSummary, VersionSummary } from '../../api/dto.ts';
 import { reviewPath } from '../../api/versions.ts';
-import { HeadingFocusContext } from '../../app/shell/page-header.tsx';
+import { claimHeadingFocus, HeadingFocusContext } from '../../app/shell/page-header.tsx';
 import { IconButton, Segmented, Select, Switch } from '../../ui/index.ts';
 import type { CompareView } from './defaults.ts';
 
@@ -18,9 +18,7 @@ export function CompareHeading({ name }: { name: string }) {
   const pending = useContext(HeadingFocusContext);
   const { pathname } = useLocation();
   useEffect(() => {
-    if (pending === null || pending.current !== pathname) return;
-    pending.current = null;
-    heading.current?.focus({ preventScroll: true });
+    if (claimHeadingFocus(pending, pathname)) heading.current?.focus({ preventScroll: true });
   }, [pending, pathname]);
   return (
     <h1 ref={heading} tabIndex={-1} className="sr-only">

@@ -465,6 +465,48 @@ test('a page that loads later takes the focus when its heading appears', async (
   expect(await screen.findByRole('heading', { name: 'Later page' })).toHaveFocus();
 });
 
+test('a page that loads while a dialog is open leaves the focus and the typing in it', async () => {
+  serveLibrary();
+  let arrive = () => {};
+  const arrived = new Promise<void>((resolve) => {
+    arrive = resolve;
+  });
+  const Later = lazy(async () => {
+    await arrived;
+    return { default: () => <PageHeader title="Later page" /> };
+  });
+  const { user, router } = renderRoute('/', {
+    me,
+    routes: [
+      {
+        element: (
+          <RequireAuth>
+            <AppShell />
+          </RequireAuth>
+        ),
+        children: [
+          { path: '/', element: <PageHeader title="First page" /> },
+          { path: '/later', element: <Later /> },
+        ],
+      },
+    ],
+  });
+  await screen.findByRole('heading', { name: 'First page' });
+  await act(() => router.navigate('/later'));
+
+  // Search opens while the page's code still loads, and the code arrives mid-word.
+  await user.keyboard('{Control>}k{/Control}');
+  const input = await screen.findByRole('combobox', { name: 'Search artifacts' });
+  await user.type(input, 'chu');
+  await act(async () => arrive());
+  // The shell is hidden behind the dialog, so its heading is looked up among hidden elements.
+  const heading = await screen.findByRole('heading', { name: 'Later page', hidden: true });
+  expect(heading).not.toHaveFocus();
+  expect(input).toHaveFocus();
+  await user.keyboard('p');
+  expect(input).toHaveValue('chup');
+});
+
 test('the sidebar is reachable from the keyboard in reading order', async () => {
   serveLibrary();
   const { user } = renderRoute('/', { me });

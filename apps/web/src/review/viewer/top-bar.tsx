@@ -6,7 +6,7 @@ import { Link, useLocation } from 'react-router';
 import type { ApiError } from '../../api/client.ts';
 import type { ArtifactSummary, VersionList, VersionSummary } from '../../api/dto.ts';
 import { useProject } from '../../api/library.ts';
-import { HeadingFocusContext } from '../../app/shell/page-header.tsx';
+import { claimHeadingFocus, HeadingFocusContext } from '../../app/shell/page-header.tsx';
 import { Button, MenuItem, Skeleton } from '../../ui/index.ts';
 import type { Device } from '../frame/device.ts';
 import { ShareDialog } from '../share/share-dialog.tsx';
@@ -62,9 +62,9 @@ function Breadcrumb({ artifact, phone }: { artifact: ArtifactSummary; phone: boo
   const mounted = useRef(false);
 
   useEffect(() => {
-    if (pending === null || pending.current !== pathname) return;
-    pending.current = null;
-    if (!mounted.current) heading.current?.focus({ preventScroll: true });
+    if (claimHeadingFocus(pending, pathname) && !mounted.current) {
+      heading.current?.focus({ preventScroll: true });
+    }
   }, [pending, pathname]);
   useEffect(() => {
     mounted.current = true;

@@ -8,6 +8,25 @@ import { useLocation } from 'react-router';
  */
 export const HeadingFocusContext = createContext<{ current: string | null } | null>(null);
 
+/** An open dialog. Radix keeps one on screen as `closed` while it animates out, no longer holding focus. */
+const OPEN_DIALOG = '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]';
+
+/**
+ * Uses up the heading focus request for `pathname`, if there is one, and says
+ * whether the heading should take focus now. It should not when focus is in
+ * a dialog, opened while the page's code loaded: the dialog would pull focus
+ * straight back with its text selected, so the next key typed would replace
+ * what had been typed.
+ */
+export function claimHeadingFocus(
+  pending: { current: string | null } | null,
+  pathname: string,
+): boolean {
+  if (pending === null || pending.current !== pathname) return false;
+  pending.current = null;
+  return !document.activeElement?.closest(OPEN_DIALOG);
+}
+
 /**
  * The top of a page: its title, an optional line under it, actions on the
  * right, and anything else (tabs, a box) below. The title is the page's h1;
@@ -29,10 +48,8 @@ export function PageHeader({
   const heading = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
-    if (!pending || pending.current !== pathname) return;
-    pending.current = null;
     // Without scrolling, so a restored scroll position on Back stays put.
-    heading.current?.focus({ preventScroll: true });
+    if (claimHeadingFocus(pending, pathname)) heading.current?.focus({ preventScroll: true });
   }, [pending, pathname]);
 
   return (
