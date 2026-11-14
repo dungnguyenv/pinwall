@@ -64,9 +64,9 @@ export class IngestBudget {
    */
   holdTo(room: QuotaRoom | undefined): void {
     this.room = room;
-    const left = room?.bytes ?? null;
-    if (room !== undefined && left !== null && this.declaredBytes !== null) {
-      if (this.declaredBytes > left) throw room.uploadTooLarge(this.declaredBytes);
+    const declared = this.declaredBytes;
+    if (room?.bytes != null && declared !== null && declared > room.bytes) {
+      throw room.uploadTooLarge(declared);
     }
   }
 
