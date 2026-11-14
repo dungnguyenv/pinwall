@@ -23,6 +23,8 @@ test('a publish may hold its place for 10 minutes, or for its largest upload at 
   // 50 MiB takes 800 s, and the default of 95 MB a little over 24 minutes.
   expect(ingestDeadlineMs(52_428_800)).toBe(800_000);
   expect(ingestDeadlineMs(95_000_000)).toBe(1_449_585);
+  // Past the longest delay a timer keeps, the deadline stays at that delay instead of firing at once.
+  expect(ingestDeadlineMs(1_000_000_000_000)).toBe(2 ** 31 - 1);
 
   const ctx = await createTestContext({ env: { PINWALL_MAX_UPLOAD_BYTES: '104857600' } });
   try {
@@ -285,7 +287,10 @@ describe.each(dialects)('how long a publish may hold its place, on %s', (dialect
   });
 
   test('a web upload whose client stalls ends 408 at the idle timeout and gives its place back', async () => {
-    const server = await listen(buildApp(ctx.deps, { uploadIdleTimeoutMs: 1_000 }), ctx.deps.config);
+    const server = await listen(
+      buildApp(ctx.deps, { uploadIdleTimeoutMs: 1_000 }),
+      ctx.deps.config,
+    );
     // The idle timeout ends it, long before the deadline does.
     ctx.deps.ingestDeadlineMs = 60_000;
     const before = await leftovers();

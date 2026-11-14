@@ -14,6 +14,8 @@ export const INGEST_RETRY_AFTER_SECONDS = 10;
 const INGEST_DEADLINE_MIN_MS = 10 * 60_000;
 /** The average rate below which an upload of `PINWALL_MAX_UPLOAD_BYTES` misses its deadline. */
 const INGEST_MIN_BYTES_PER_SECOND = 64 * 1024;
+/** The longest delay `setTimeout` keeps; a longer one fires at once. */
+const INGEST_DEADLINE_MAX_MS = 2 ** 31 - 1;
 
 const ALL = 'ingest:all';
 const personKey = (userId: string) => `ingest:user:${userId}`;
@@ -25,12 +27,16 @@ export type IngestActor = Pick<UserRow, 'id' | 'kind' | 'idp_role' | 'role_overr
  * How long one publish may hold its place: the time an upload of `maxUploadBytes`
  * (`PINWALL_MAX_UPLOAD_BYTES`) takes at 64 KiB/s, and never less than 10 minutes. It bounds a
  * client that trickles its body, or stalls just short of the idle timeout, which would otherwise
- * keep its place for as long as it likes.
+ * keep its place for as long as it likes. Capped at the longest delay a timer keeps (about 24.8
+ * days), which an upload limit above about 140 GB would otherwise pass.
  */
 export function ingestDeadlineMs(maxUploadBytes: number): number {
-  return Math.max(
-    INGEST_DEADLINE_MIN_MS,
-    Math.ceil((maxUploadBytes * 1000) / INGEST_MIN_BYTES_PER_SECOND),
+  return Math.min(
+    INGEST_DEADLINE_MAX_MS,
+    Math.max(
+      INGEST_DEADLINE_MIN_MS,
+      Math.ceil((maxUploadBytes * 1000) / INGEST_MIN_BYTES_PER_SECOND),
+    ),
   );
 }
 
