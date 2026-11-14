@@ -71,10 +71,13 @@ choices behind them: [README.md](README.md), [docs/install.md](docs/install.md#c
   such action is a structured log line, which is the audit trail.
 - **Limits per account.** Rate rules, counted per account, limit publishing, content grants, share
   links, projects, member look-ups and comment writes. Each person runs at most 2 publishes at once,
-  and the instance 4. Quotas, when an operator sets them, cap the bytes, artifacts and files one
-  person stores, and an upload that does not fit stops while it streams. Comments, projects and the
-  content grants Pinwall keeps are bounded by the rate rules only, and every limit counts accounts,
-  so one person with many accounts at the identity provider gets the limits of each.
+  and the instance 4 besides admins' own. An upload that sends nothing for 60 seconds ends, and one
+  publish runs for at most 10 minutes, or longer when `PINWALL_MAX_UPLOAD_BYTES` needs it at
+  64 KiB/s, so a slow client cannot hold its place for long. Quotas, when an operator sets them, cap
+  the bytes, artifacts and files one person stores, and an upload that does not fit stops while it
+  streams. Comments, projects and the content grants Pinwall keeps are bounded by the rate rules
+  only, and every limit counts accounts, so one person with many accounts at the identity provider
+  gets the limits of each.
 - **Access follows the identity provider.** Someone removed at the provider loses access by the next
   re-check (12 hours by default, 24 at most), and an admin can end a person's access with
   **Revoke now**: their next request is refused, and a live-update stream they have open ends

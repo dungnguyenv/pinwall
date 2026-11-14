@@ -57,7 +57,8 @@ PINWALL_ABUSE_CONTACT=abuse@pinwall.example
 - `PINWALL_MAX_UPLOAD_BYTES=50MB`: the largest publish request. The default is 95 MB. Pinwall reads
   a zip archive into memory whole before it unpacks it, and runs up to four publishes at once, so
   this limit decides what uploads can hold in memory: with 50 MB, four zips hold about 200 MB, and
-  twice that for the moment each one is put together.
+  twice that for the moment each one is put together. It also sets how long one publish may run:
+  about 13 minutes at 50 MB (see [Quotas and rate limits](#quotas-and-rate-limits)).
 - `PINWALL_PREVIEW_TTL=2h`: how long a content address works once Pinwall has handed it out. The
   default is 12 hours.
 - `PINWALL_ABUSE_CONTACT`: an email address or an http(s) URL where people report abuse. Pinwall
@@ -146,11 +147,26 @@ addresses), and answer HTTP 429 `rate_limited` with the seconds to wait:
 
 Pinwall keeps these counts in memory, so a restart clears them.
 
-Some limits bound memory rather than a person, and hold for everyone, admins included:
+Some limits bound memory and time rather than a person. They hold for everyone, admins included,
+except where they say otherwise:
 
 - **Publishes in progress.** Each person may have 2 publishes running at once, and the instance 4,
   restores included. One more answers 429 `rate_limited` with `Retry-After: 10` before any of its
-  files is read. Uploaded files go to storage as they arrive, never whole in memory.
+  files is read. Uploaded files go to storage as they arrive, never whole in memory. Admins are
+  exempt from the instance's 4, so that you can still publish and restore while others hold every
+  place, but each admin is still held to 2 at once.
+- **How long a publish may run.** An upload whose body sends nothing for 60 seconds ends with 408
+  `request_timeout`, through an upload URL or the web app alike. And one publish holds its place
+  for at most 10 minutes, or for the time `PINWALL_MAX_UPLOAD_BYTES` takes at 64 KiB/s when that is
+  longer: about 13 minutes at 50 MB, about 24 at the default 95 MB. Past that deadline it ends with
+  408 `request_timeout`, keeps nothing and gives its place back, however steadily its client is
+  still sending. The deadline holds in both modes, so an upload of the largest size that averages
+  under 64 KiB/s (about half a megabit a second) fails.
+- **What these limits leave open.** Several accounts can keep the instance's 4 places busy, cycle
+  after cycle: each upload holds its place until the deadline, and then they start again. Blocking
+  an account does not stop the uploads it is already running. Everyone else, admins aside, gets 429
+  `server_busy` meanwhile, which `pinwall_uploads_rejected_total{reason="server_busy"}` shows. The
+  response is to block the accounts: their places come back within the deadline.
 - **Zip archives** are the exception: Pinwall reads a zip whole into memory before it unpacks it,
   up to `PINWALL_MAX_UPLOAD_BYTES`. Hence the 50 MB in [Settings](#settings). A tar or tar.gz
   streams.

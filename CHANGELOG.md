@@ -14,6 +14,9 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
   earliest active admin, else the earliest user. Take a backup first. A 1.0 backup restores into
   1.1, but 1.0 refuses a 1.1 backup.
 - **The per-person rate limits apply in both modes.** See Changed below for the numbers.
+- **A very slow upload now fails, in both modes.** One publish may run for at most 10 minutes, or
+  for the time `PINWALL_MAX_UPLOAD_BYTES` takes at 64 KiB/s when that is longer, so an upload of
+  the largest size that averages under 64 KiB/s ends with 408. See Changed below.
 - **Before you set `PINWALL_SHARE_LINKS=approved`, approve the people who publish,** not only those
   who make links. A page opens outside Pinwall's viewer only when the person who published it, or
   in `personal` mode its project's owner, is approved, so the links to other pages stop until then.
@@ -86,7 +89,16 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
   minutes (new threads, replies, edits, resolves and reopens, over REST and MCP). They count by
   account, across browsers, tokens and addresses, in memory, so a restart clears them.
 - At most 2 publishes per person, and 4 on the instance, run at once, restores included. Another
-  answers 429 `rate_limited` with `Retry-After: 10`.
+  answers 429 `rate_limited` with `Retry-After: 10`. Admins are exempt from the instance's 4, so
+  they can still publish and restore when others hold every place, but each is held to 2 at once.
+- One publish may hold its place for at most 10 minutes, or for the time
+  `PINWALL_MAX_UPLOAD_BYTES` takes at 64 KiB/s when that is longer: about 24 minutes at the default
+  95 MB. Past that deadline it ends with 408 `request_timeout` (`details.reason`
+  `publish_deadline`), keeps nothing and gives its place back. This holds in every mode, `team`
+  included: an upload of the largest size that averages under 64 KiB/s, which 1.0 took however
+  long it ran, now fails with 408.
+- A web upload whose body sends nothing for 60 seconds now ends with 408 `request_timeout`, as an
+  upload URL's already did.
 - Uploaded files go to storage as they arrive, instead of being held whole in memory.
 - Review pages carry the annotator only up to 5 MB of HTML, and with at most 50 MB of such pages
   held in memory at once; see Known limitations.
@@ -117,6 +129,10 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
   `PINWALL_MAX_UPLOAD_BYTES` (95 MB by default). With four publishes running at once, set
   `PINWALL_MAX_UPLOAD_BYTES=50MB` on an open instance to keep that near 200 MB. Tar and tar.gz
   uploads stream.
+- Several accounts can keep the instance's 4 publish places busy, cycle after cycle, each upload
+  until its deadline, and everyone but admins gets 429 `server_busy` meanwhile. Blocking an account
+  does not stop the uploads it is already running. Block the accounts: their places come back
+  within the deadline.
 - A review page larger than 5 MB of HTML, or one asked for while 50 MB of review pages are already
   held in memory, is served as it is stored, without the annotator: it takes point comments only,
   not comments on a selected text or element. That second case is never cached, so the next load
