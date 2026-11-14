@@ -523,8 +523,17 @@ test('acceptance 9: project members', async ({ browser }) => {
   await expect(bob.getByText(t('web.usage.storage'), { exact: true })).toBeVisible();
   await expectAccessible(bob);
 
-  // She shares a page of Launch and keeps it open; Bob takes her out.
+  // Bob's page is not hers to take outside Pinwall: Bob is not approved, so her link is refused.
   await eve.goto(at(`/a/${launchPage.artifact_id}`));
+  await eve.getByRole('button', { name: t('web.review.share'), exact: true }).click();
+  const sharing = eve.getByRole('dialog', { name: t('web.share.title', { name: 'Launch page' }) });
+  await sharing.getByRole('button', { name: t('web.share.create') }).click();
+  await expect(sharing.getByRole('alert')).toHaveText(t('spaces.exposure.shareLinkVersion'));
+  await eve.keyboard.press('Escape');
+  await expect(sharing).toBeHidden();
+
+  // She shares her own page of Launch and keeps it open; Bob takes her out.
+  await eve.goto(at(`/a/${edit.artifact_id}`));
   const link = await createShareLink(eve);
   await expect(eve.locator('[data-annotator="ready"]')).toBeVisible();
   await bob.goto(at(`/projects/${launch}`));
