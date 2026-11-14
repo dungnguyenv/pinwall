@@ -113,7 +113,7 @@ const createSessionRoute = createRoute({
   tags: ['publishing'],
   summary: 'Create a one-time upload URL',
   description:
-    'Returns an upload URL that publishes one request body to the target, and ready-to-run commands for it. The URL needs no other credential, works once, and expires after `PINWALL_UPLOAD_SESSION_TTL`. The body of `POST <upload_url>` is a tar, tar.gz or zip archive (told by its bytes), or a single file: HTML or Markdown by its Content-Type, anything else named with `?filename=`. With a quota, a body whose `Content-Length` is larger than what is left in the space is refused before it is read, and one that goes over the bytes or files left while it streams stops there (`quota_exceeded`). Counts toward the limit of 60 publishes per user per 10 minutes, shared by every way to publish.',
+    'Returns an upload URL that publishes one request body to the target, and ready-to-run commands for it. The URL needs no other credential, works once, and expires after `PINWALL_UPLOAD_SESSION_TTL`. The body of `POST <upload_url>` is a tar, tar.gz or zip archive (told by its bytes), or a single file: HTML or Markdown by its Content-Type, anything else named with `?filename=`. With a quota, a body whose `Content-Length` is larger than what is left in the space is refused before it is read, and one that goes over the bytes or files left while it streams stops there (`quota_exceeded`). An upload whose body sends nothing for 60 seconds, or that runs past the deadline of a publish (10 minutes, or the time `PINWALL_MAX_UPLOAD_BYTES` takes at 64 KiB/s when that is longer), ends with 408 `request_timeout`. Counts toward the limit of 60 publishes per user per 10 minutes, shared by every way to publish.',
   middleware: [
     requireAuth,
     perUser(RATE_RULES.publish),
@@ -157,6 +157,9 @@ const inlineRoute = createRoute({
     400: error('Invalid fields, a refused path, a binary file, or no entry page'),
     ...authErrors,
     ...targetErrors,
+    408: error(
+      'The publish ran past its deadline, 10 minutes or the time `PINWALL_MAX_UPLOAD_BYTES` takes at 64 KiB/s when that is longer (`request_timeout`)',
+    ),
     413: error(
       'Over the inline limit or another publishing limit (`payload_too_large`), or the version does not fit in the space it fills (`quota_exceeded`)',
     ),
@@ -261,7 +264,7 @@ async function publishWebUpload(
     toPublishTarget(head.fields.target),
     { ...opts, message: messageOf(head.fields.message) },
     budget,
-    () => form.destroy(),
+    (error) => form.destroy(error),
     (sink) => storeFormFiles(head, next, sink),
   );
 }

@@ -12,7 +12,7 @@ import { t } from '../lib/i18n.ts';
 import { rejectionReason } from '../ops/metrics.ts';
 import type { BlobStore } from '../storage/blob-store.ts';
 import { type ArchiveEntry, corruptArchive, readArchive, sniffArchive } from './archive.ts';
-import { takeIngestSlot } from './ingest-slots.ts';
+import { inIngestSlot } from './ingest-slots.ts';
 import { IngestBudget, limitExceeded } from './limits.ts';
 import {
   chooseEntry,
@@ -71,8 +71,8 @@ export function ingestUpload(
     deps,
     opts,
     () => budget.requestBytesRead,
-    () => input.body.destroy(),
-    () => publishUpload(deps, target, input, opts, budget),
+    (error) => input.body.destroy(error),
+    (deadline) => publishUpload(deps, target, input, opts, budget, deadline),
   );
 }
 
@@ -82,6 +82,7 @@ async function publishUpload(
   input: UploadInput,
   opts: PublishOptions,
   budget: IngestBudget,
+  deadline: AbortSignal,
 ): Promise<PublishOutcome> {
   const { body } = input;
   const maxUpload = deps.config.limits.maxUploadBytes;
@@ -101,7 +102,7 @@ async function publishUpload(
     body.destroy();
     counted.destroy();
   };
-  return ingest(deps, target, opts, budget, destroyBody, async (stager) => {
+  return ingest(deps, target, opts, budget, destroyBody, deadline, async (stager) => {
     const single = singleFilePath(input);
     if (single !== null) {
       await stager.stage(single, counted, input.contentLength);
@@ -133,7 +134,7 @@ export function ingestFiles(
     opts,
     () => bytes,
     null,
-    () => publishFileSet(deps, target, files, opts),
+    (deadline) => publishFileSet(deps, target, files, opts, deadline),
   );
 }
 
@@ -142,6 +143,7 @@ async function publishFileSet(
   target: PublishTarget,
   files: readonly { path: string; data: Buffer }[],
   opts: PublishOptions,
+  deadline: AbortSignal,
 ): Promise<PublishOutcome> {
   // The size is known before anything is stored: a set that cannot fit is refused here, as the
   // commit would refuse it.
@@ -149,7 +151,7 @@ async function publishFileSet(
   const room = await checkTarget(deps, scopeForUser(deps, opts.actor), target, bytes);
   const budget = new IngestBudget(deps.config.limits);
   budget.holdTo(room);
-  return ingest(deps, target, opts, budget, null, async (stager) => {
+  return ingest(deps, target, opts, budget, null, deadline, async (stager) => {
     const paths = new Set<string>();
     for (const file of files) {
       const normalized = normalizeEntryPath(file.path);
@@ -187,7 +189,7 @@ export function ingestStreamed(
   target: PublishTarget,
   opts: PublishOptions,
   budget: IngestBudget,
-  destroyInput: () => void,
+  destroyInput: (error?: Error) => void,
   readFiles: (sink: FileSink) => Promise<void>,
 ): Promise<PublishOutcome> {
   return metered(
@@ -195,7 +197,7 @@ export function ingestStreamed(
     opts,
     () => budget.requestBytesRead,
     destroyInput,
-    () => publishStreamed(deps, target, opts, budget, destroyInput, readFiles),
+    (deadline) => publishStreamed(deps, target, opts, budget, destroyInput, deadline, readFiles),
   );
 }
 
@@ -204,7 +206,8 @@ async function publishStreamed(
   target: PublishTarget,
   opts: PublishOptions,
   budget: IngestBudget,
-  destroyInput: () => void,
+  destroyInput: (error?: Error) => void,
+  deadline: AbortSignal,
   readFiles: (sink: FileSink) => Promise<void>,
 ): Promise<PublishOutcome> {
   try {
@@ -213,7 +216,7 @@ async function publishStreamed(
     destroyInput();
     throw error;
   }
-  return ingest(deps, target, opts, budget, destroyInput, async (stager) => {
+  return ingest(deps, target, opts, budget, destroyInput, deadline, async (stager) => {
     const paths = new Set<string>();
     await readFiles({
       file: async (path, body) => {
@@ -252,7 +255,7 @@ export function ingestInline(
     opts,
     () => bytes,
     null,
-    () => publishInline(deps, target, files, opts),
+    (deadline) => publishInline(deps, target, files, opts, deadline),
   );
 }
 
@@ -261,6 +264,7 @@ async function publishInline(
   target: PublishTarget,
   files: readonly InlineFile[],
   opts: PublishOptions,
+  deadline: AbortSignal,
 ): Promise<PublishOutcome> {
   for (const { path } of files) {
     if (!isTextType(contentTypeFor(path))) {
@@ -276,7 +280,7 @@ async function publishInline(
   if (total > max) throw limitExceeded('max_inline_bytes', max);
 
   const set = files.map(({ path, content }) => ({ path, data: Buffer.from(content, 'utf8') }));
-  return publishFileSet(deps, target, set, opts);
+  return publishFileSet(deps, target, set, opts, deadline);
 }
 
 /** The links a publish returns: the artifact's review page and the raw files of version `n`. */
@@ -292,33 +296,22 @@ export function publishLinks(
 }
 
 /**
- * Runs one publish in a place `takeIngestSlot` gives its actor, and keeps its two counters:
- * `bytesRead()` (request bytes read, whatever the outcome) is added to `uploadBytes` once it
- * ends, and a failure is counted by `countFailedPublish` before it is rethrown. Without a place
- * nothing runs: `abandon` destroys the input that would have been read, and the 429 is counted
- * as a failure too. The place is given back once the publish has ended, either way.
+ * Runs one publish in a place its actor is given, for at most its deadline (`inIngestSlot`), and
+ * keeps its two counters: `bytesRead()` (request bytes read, whatever the outcome) is added to
+ * `uploadBytes` once it ends, and a failure is counted by `countFailedPublish` before it is
+ * rethrown. `abandon` destroys the input that would be read: at once when there is no place (the
+ * 429 is counted as a failure too), or with the 408 when the deadline passes, so that `run` fails.
  */
 async function metered<T>(
   deps: AppDeps,
   opts: PublishOptions,
   bytesRead: () => number,
-  abandon: (() => void) | null,
-  run: () => Promise<T>,
+  abandon: ((error?: Error) => void) | null,
+  run: (deadline: AbortSignal) => Promise<T>,
 ): Promise<T> {
   let result: T;
   try {
-    let release: () => void;
-    try {
-      release = takeIngestSlot(deps, opts.actor);
-    } catch (error) {
-      abandon?.();
-      throw error;
-    }
-    try {
-      result = await run();
-    } finally {
-      release();
-    }
+    result = await inIngestSlot(deps, opts.actor, abandon, run);
   } catch (error) {
     countFailedPublish(deps, opts.source, error, bytesRead());
     throw error;
@@ -350,8 +343,9 @@ function countUploadBytes(deps: AppDeps, source: VersionSource, bytes: number): 
 
 /**
  * The steps every publish shares once its files are staged: unwrap a wrapping folder (`unwrap`),
- * choose the entry, extract metadata and commit. Any failure runs `destroyInput`, removes what the
- * stager added that nothing else uses, and rethrows.
+ * choose the entry, extract metadata and commit. Past `deadline` no file is staged and nothing is
+ * committed. Any failure runs `destroyInput`, removes what the stager added that nothing else
+ * uses, and rethrows.
  */
 async function ingest(
   deps: AppDeps,
@@ -359,9 +353,10 @@ async function ingest(
   opts: PublishOptions,
   budget: IngestBudget,
   destroyInput: (() => void) | null,
+  deadline: AbortSignal,
   stageAll: (stager: BlobStager) => Promise<{ unwrap: boolean }>,
 ): Promise<PublishOutcome> {
-  const stager = new BlobStager(deps, budget);
+  const stager = new BlobStager(deps, budget, deadline);
   try {
     const { unwrap } = await stageAll(stager);
     const files = unwrap ? withoutWrapperFolder(stager.files) : [...stager.files];
@@ -370,6 +365,7 @@ async function ingest(
       files.map((file) => metadataFile(deps.blobs, file)),
       entryPath,
     );
+    deadline.throwIfAborted();
     const { artifact, version } = await commitVersion(deps, opts.actor, target, {
       entryPath,
       kind,

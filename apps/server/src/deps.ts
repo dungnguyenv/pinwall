@@ -22,6 +22,7 @@ import {
 import { type Clock, systemClock } from './lib/clock.ts';
 import { createLogger, type Logger } from './lib/logger.ts';
 import { createMetrics, instrumentScheduler, type Metrics } from './ops/metrics.ts';
+import { ingestDeadlineMs } from './publish/ingest-slots.ts';
 import { type BlobStore, createBlobStore } from './storage/index.ts';
 
 /** Everything a request handler or service needs. Built once per process by `createDeps`. */
@@ -38,6 +39,11 @@ export interface AppDeps {
   liveStreams: LiveStreams;
   /** Work this process bounds: publishes being ingested, review pages held in memory. */
   inFlight: InFlight;
+  /**
+   * How long one publish may hold its place, from `PINWALL_MAX_UPLOAD_BYTES` (`ingestDeadlineMs`).
+   * Tests shorten it.
+   */
+  ingestDeadlineMs: number;
   logger: Logger;
   clock: Clock;
   metrics: Metrics;
@@ -88,6 +94,8 @@ export async function createDeps(
       ),
       liveStreams: overrides.liveStreams ?? new LiveStreams(),
       inFlight: overrides.inFlight ?? new InFlight(),
+      ingestDeadlineMs:
+        overrides.ingestDeadlineMs ?? ingestDeadlineMs(resolved.limits.maxUploadBytes),
       logger,
       clock,
       metrics,

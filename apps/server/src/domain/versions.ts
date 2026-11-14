@@ -19,7 +19,7 @@ import { decodeCursor, encodeCursor } from '../lib/cursor.ts';
 import { AppError, badRequest, conflict, gone, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { newId } from '../lib/ids.ts';
-import { takeIngestSlot } from '../publish/ingest-slots.ts';
+import { inIngestSlot } from '../publish/ingest-slots.ts';
 import { entryKind } from '../publish/paths.ts';
 import type { StagedFile } from '../publish/stage.ts';
 import { getArtifact, getTags, lockArtifact, normalizeTags } from './artifacts.ts';
@@ -219,22 +219,20 @@ export async function commitVersion(
  * of `expectedVersionId` as `commitVersion` requires, and with its checks of the actor and of the
  * quota, before and again inside the transaction. The copy shares the old version's blobs but
  * counts in full toward the quota, as every version does; it takes the old version's entry,
- * title, theme color, thumbnail and warnings. It is a publish, so it runs in a place
- * `takeIngestSlot` gives the actor (429 without one).
+ * title, theme color, thumbnail and warnings. It is a publish, so it runs in a place the actor
+ * is given, for at most the deadline of a publish (`inIngestSlot`: 429 without a place, 408 past
+ * the deadline, with nothing copied).
  */
-export async function restoreVersion(
+export function restoreVersion(
   deps: AppDeps,
   actor: UserRow,
   artifactId: string,
   n: number,
   expectedVersionId: string,
 ): Promise<CommitResult> {
-  const release = takeIngestSlot(deps, actor);
-  try {
-    return await copyVersion(deps, actor, artifactId, n, expectedVersionId);
-  } finally {
-    release();
-  }
+  return inIngestSlot(deps, actor, null, (deadline) =>
+    copyVersion(deps, actor, artifactId, n, expectedVersionId, deadline),
+  );
 }
 
 async function copyVersion(
@@ -243,6 +241,7 @@ async function copyVersion(
   artifactId: string,
   n: number,
   expectedVersionId: string,
+  deadline: AbortSignal,
 ): Promise<CommitResult> {
   const { db, dialect } = deps.db;
   const scope = scopeForUser(deps, actor);
@@ -259,6 +258,7 @@ async function copyVersion(
     files: seenOld.file_count,
   });
   const text = await extractVersionText(deps, seenOld.id);
+  deadline.throwIfAborted();
 
   const result = await db.transaction().execute(async (trx) => {
     const now = deps.clock.now();

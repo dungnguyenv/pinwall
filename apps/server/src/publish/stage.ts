@@ -28,9 +28,11 @@ export class BlobStager {
   private readonly registry: BlobRegistry;
   private ended = false;
 
+  /** Past `deadline` (aborted), `stage` refuses with its reason before it reads anything. */
   constructor(
     private readonly deps: AppDeps,
     private readonly budget: IngestBudget,
+    private readonly deadline?: AbortSignal,
   ) {
     this.registry = blobRegistry(deps);
   }
@@ -48,6 +50,7 @@ export class BlobStager {
     declaredSize: number | null,
   ): Promise<StagedFile> {
     this.assertActive();
+    this.deadline?.throwIfAborted();
     this.budget.startFile(path, declaredSize);
     if (Buffer.isBuffer(body)) {
       this.budget.onFileBytes(body.length);

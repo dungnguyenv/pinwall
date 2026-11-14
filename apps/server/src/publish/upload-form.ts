@@ -18,8 +18,11 @@ export interface FormReader {
    * so a form never holds more than the part being read.
    */
   next(): Promise<FormPart | null>;
-  /** Stops reading: destroys the request body and the file part being read. */
-  destroy(): void;
+  /**
+   * Stops reading: destroys the request body and the file part being read, with `error` when one
+   * is given, which then reaches whoever reads them.
+   */
+  destroy(error?: Error): void;
 }
 
 /** The 400 for a body that is not the form a web upload sends. */
@@ -108,9 +111,9 @@ export function readUploadForm(body: Readable, contentType: string): FormReader 
         waiting = { resolve, reject };
       });
     },
-    destroy() {
-      body.destroy();
-      parser.destroy();
+    destroy(error) {
+      body.destroy(error);
+      parser.destroy(error);
     },
   };
 }
