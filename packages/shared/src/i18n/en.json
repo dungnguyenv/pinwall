@@ -920,6 +920,8 @@
   "publish.upload.archiveAlone": "An archive sent first without a path is unpacked, so it must be the only file. Send a path field before each file to publish archives as files.",
   "publish.upload.idle": "The upload sent no data for {{seconds}} seconds, so Pinwall stopped waiting. Run the same command again before the upload URL expires.",
   "publish.upload.interrupted": "The upload was interrupted before all of it arrived. Run the same command again before the upload URL expires.",
+  "publish.busy.person": "You already have {{max}} publishes in progress. Wait for one to finish, then try again.",
+  "publish.busy.server": "Pinwall is busy with other publishes right now. Try again in a few seconds.",
   "content.notFound.title": "Not found",
   "content.notFound.message": "This file is not part of the artifact.",
   "content.gone.title": "No longer available",

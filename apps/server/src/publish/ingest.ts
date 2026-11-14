@@ -12,6 +12,7 @@ import { t } from '../lib/i18n.ts';
 import { rejectionReason } from '../ops/metrics.ts';
 import type { BlobStore } from '../storage/blob-store.ts';
 import { type ArchiveEntry, corruptArchive, readArchive, sniffArchive } from './archive.ts';
+import { takeIngestSlot } from './ingest-slots.ts';
 import { IngestBudget, limitExceeded } from './limits.ts';
 import {
   chooseEntry,
@@ -67,8 +68,9 @@ export function ingestUpload(
   const budget = new IngestBudget(deps.config.limits);
   return metered(
     deps,
-    opts.source,
+    opts,
     () => budget.requestBytesRead,
+    () => input.body.destroy(),
     () => publishUpload(deps, target, input, opts, budget),
   );
 }
@@ -125,8 +127,9 @@ export function ingestFiles(
   const bytes = files.reduce((sum, file) => sum + file.data.length, 0);
   return metered(
     deps,
-    opts.source,
+    opts,
     () => bytes,
+    null,
     () => publishFileSet(deps, target, files, opts),
   );
 }
@@ -180,8 +183,9 @@ export function ingestStreamed(
 ): Promise<PublishOutcome> {
   return metered(
     deps,
-    opts.source,
+    opts,
     () => budget.requestBytesRead,
+    destroyInput,
     () => publishStreamed(deps, target, opts, budget, destroyInput, readFiles),
   );
 }
@@ -236,8 +240,9 @@ export function ingestInline(
   const bytes = files.reduce((sum, file) => sum + Buffer.byteLength(file.content, 'utf8'), 0);
   return metered(
     deps,
-    opts.source,
+    opts,
     () => bytes,
+    null,
     () => publishInline(deps, target, files, opts),
   );
 }
@@ -278,24 +283,38 @@ export function publishLinks(
 }
 
 /**
- * Runs one publish and keeps its two counters: `bytesRead()` (request bytes read, whatever the
- * outcome) is added to `uploadBytes` once it ends, and a failure is counted by
- * `countFailedPublish` before it is rethrown.
+ * Runs one publish in a place `takeIngestSlot` gives its actor, and keeps its two counters:
+ * `bytesRead()` (request bytes read, whatever the outcome) is added to `uploadBytes` once it
+ * ends, and a failure is counted by `countFailedPublish` before it is rethrown. Without a place
+ * nothing runs: `abandon` destroys the input that would have been read, and the 429 is counted
+ * as a failure too. The place is given back once the publish has ended, either way.
  */
 async function metered<T>(
   deps: AppDeps,
-  source: VersionSource,
+  opts: PublishOptions,
   bytesRead: () => number,
+  abandon: (() => void) | null,
   run: () => Promise<T>,
 ): Promise<T> {
   let result: T;
   try {
-    result = await run();
+    let release: () => void;
+    try {
+      release = takeIngestSlot(deps, opts.actor.id);
+    } catch (error) {
+      abandon?.();
+      throw error;
+    }
+    try {
+      result = await run();
+    } finally {
+      release();
+    }
   } catch (error) {
-    countFailedPublish(deps, source, error, bytesRead());
+    countFailedPublish(deps, opts.source, error, bytesRead());
     throw error;
   }
-  countUploadBytes(deps, source, bytesRead());
+  countUploadBytes(deps, opts.source, bytesRead());
   return result;
 }
 

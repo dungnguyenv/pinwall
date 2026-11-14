@@ -8,6 +8,7 @@ import { migrateToLatest } from './db/migrate.ts';
 import {
   DbLeaseManager,
   type EventBus,
+  InFlight,
   InMemoryOneTimeStore,
   InMemoryRateLimiter,
   InProcessEventBus,
@@ -35,6 +36,8 @@ export interface AppDeps {
   scheduler: Scheduler;
   /** Open live-update streams, which `closeDeps` ends. */
   liveStreams: LiveStreams;
+  /** Work this process bounds: publishes being ingested, review pages held in memory. */
+  inFlight: InFlight;
   logger: Logger;
   clock: Clock;
   metrics: Metrics;
@@ -84,6 +87,7 @@ export async function createDeps(
         metrics,
       ),
       liveStreams: overrides.liveStreams ?? new LiveStreams(),
+      inFlight: overrides.inFlight ?? new InFlight(),
       logger,
       clock,
       metrics,

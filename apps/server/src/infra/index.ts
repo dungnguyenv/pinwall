@@ -1,4 +1,5 @@
 export { type EventBus, InProcessEventBus, type PinwallEvent } from './event-bus.ts';
+export { InFlight, type InFlightQuota } from './in-flight.ts';
 export { DbLeaseManager, type LeaseManager } from './leases.ts';
 export { LiveStreams, type StreamQuota } from './live-streams.ts';
 export { InMemoryOneTimeStore, type OneTimeStore } from './one-time-store.ts';

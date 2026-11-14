@@ -19,6 +19,7 @@ import { decodeCursor, encodeCursor } from '../lib/cursor.ts';
 import { AppError, badRequest, conflict, gone, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { newId } from '../lib/ids.ts';
+import { takeIngestSlot } from '../publish/ingest-slots.ts';
 import { entryKind } from '../publish/paths.ts';
 import type { StagedFile } from '../publish/stage.ts';
 import { getArtifact, getTags, lockArtifact, normalizeTags } from './artifacts.ts';
@@ -213,9 +214,25 @@ export async function commitVersion(
  * of `expectedVersionId` as `commitVersion` requires, and with its checks of the actor and of the
  * quota, before and again inside the transaction. The copy shares the old version's blobs but
  * counts in full toward the quota, as every version does; it takes the old version's entry,
- * title, theme color, thumbnail and warnings.
+ * title, theme color, thumbnail and warnings. It is a publish, so it runs in a place
+ * `takeIngestSlot` gives the actor (429 without one).
  */
 export async function restoreVersion(
+  deps: AppDeps,
+  actor: UserRow,
+  artifactId: string,
+  n: number,
+  expectedVersionId: string,
+): Promise<CommitResult> {
+  const release = takeIngestSlot(deps, actor.id);
+  try {
+    return await copyVersion(deps, actor, artifactId, n, expectedVersionId);
+  } finally {
+    release();
+  }
+}
+
+async function copyVersion(
   deps: AppDeps,
   actor: UserRow,
   artifactId: string,

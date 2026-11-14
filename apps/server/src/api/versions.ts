@@ -129,7 +129,9 @@ const restoreRoute = createRoute({
     ...missing,
     409: error('The artifact has a newer version than `expected_version_id` (`version_conflict`)'),
     413: error('The copy, counted in full, does not fit in the space it fills (`quota_exceeded`)'),
-    429: error('Over the limit shared by every way to publish (`rate_limited`)'),
+    429: error(
+      'Over the limit shared by every way to publish, or with 2 of your publishes, or 4 on the server, already in progress (`rate_limited`, with `Retry-After`)',
+    ),
   },
 });
 
