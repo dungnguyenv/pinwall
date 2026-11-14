@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
-import { Readable } from 'node:stream';
+import { PassThrough, pipeline, Readable } from 'node:stream';
 import { PublishResult, PublishSession } from '@pinwall/shared';
 import { Hono } from 'hono';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -947,5 +947,24 @@ describe('withIdleTimeout', () => {
     const source = new Readable({ read() {} });
     withIdleTimeout(source, 50).destroy();
     expect(source.destroyed).toBe(true);
+  });
+
+  test('once destroyed it never ends, so a pipeline that reads it fails instead of waiting', async () => {
+    // A request body from the web ends when it is cancelled, as destroying the guard does.
+    const source = Readable.fromWeb(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(8));
+        },
+      }),
+    );
+    const guarded = withIdleTimeout(source, 60_000);
+    const reader = new PassThrough();
+    const piped = new Promise<unknown>((resolve) => pipeline(guarded, reader, resolve));
+    reader.resume();
+    await new Promise((r) => setTimeout(r, 20));
+    guarded.destroy();
+    expect(await piped).toMatchObject({ code: 'ERR_STREAM_PREMATURE_CLOSE' });
+    expect(reader.destroyed).toBe(true);
   });
 });

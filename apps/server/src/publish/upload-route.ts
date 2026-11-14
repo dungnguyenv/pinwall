@@ -137,7 +137,10 @@ export function withIdleTimeout(source: Readable, ms: number): Readable {
   source.on('end', () => {
     ended = true;
     disarm();
-    guarded.push(null);
+    // A source from the web ends when destroying `guarded` cancels it. Ending `guarded` then
+    // would mark it ended, and a pipeline reading it would wait for an end that never comes
+    // instead of failing.
+    if (!guarded.destroyed) guarded.push(null);
   });
   source.on('error', (error) => {
     guarded.destroy(error instanceof AppError ? error : uploadInterrupted());
