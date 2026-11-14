@@ -108,7 +108,7 @@ The `*_BYTES` limits accept the size syntax above. A publish that goes over any 
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PINWALL_MAX_UPLOAD_BYTES` | `95000000` | The largest single upload request. The default sits under the 100 MB request cap that Cloudflare applies on its Free and Pro plans; raise it only when nothing in front of Pinwall caps requests. |
+| `PINWALL_MAX_UPLOAD_BYTES` | `95000000` | The largest single upload request. The default sits under the 100 MB request cap that Cloudflare applies on its Free and Pro plans; raise it only when nothing in front of Pinwall caps requests. It also sets how long one publish may run: the time this many bytes take at 64 KiB/s, and at least 10 minutes. |
 | `PINWALL_MAX_INLINE_BYTES` | `2000000` | The most content an agent can send inline, inside the request itself, in one publish over MCP. Larger publishes use an upload URL. |
 | `PINWALL_MAX_FILE_BYTES` | `50000000` | The largest single file inside an artifact version. |
 | `PINWALL_MAX_VERSION_BYTES` | `500000000` | The largest total size of an artifact version once it is unpacked. |

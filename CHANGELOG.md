@@ -126,7 +126,8 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
 - SQLite search ranking (FTS5) uses statistics of the whole index, so text in other spaces can
   change the order, never the membership, of a person's results. PostgreSQL is unaffected.
 - A zip upload is still read into memory whole before it is unpacked, up to
-  `PINWALL_MAX_UPLOAD_BYTES` (95 MB by default). With four publishes running at once, set
+  `PINWALL_MAX_UPLOAD_BYTES` (95 MB by default). With four publishes running at once (plus two
+  per admin), set
   `PINWALL_MAX_UPLOAD_BYTES=50MB` on an open instance to keep that near 200 MB. Tar and tar.gz
   uploads stream.
 - Several accounts can keep the instance's 4 publish places busy, cycle after cycle, each upload

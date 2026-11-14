@@ -55,8 +55,9 @@ PINWALL_ABUSE_CONTACT=abuse@pinwall.example
   what stops versions of thousands of tiny files, which cost next to nothing in bytes, from filling
   the database.
 - `PINWALL_MAX_UPLOAD_BYTES=50MB`: the largest publish request. The default is 95 MB. Pinwall reads
-  a zip archive into memory whole before it unpacks it, and runs up to four publishes at once, so
-  this limit decides what uploads can hold in memory: with 50 MB, four zips hold about 200 MB, and
+  a zip archive into memory whole before it unpacks it, and runs up to four publishes at once (plus
+  two per admin, whom the instance cap does not hold), so this limit decides what uploads can hold
+  in memory: with 50 MB, four zips hold about 200 MB, and
   twice that for the moment each one is put together. It also sets how long one publish may run:
   about 13 minutes at 50 MB (see [Quotas and rate limits](#quotas-and-rate-limits)).
 - `PINWALL_PREVIEW_TTL=2h`: how long a content address works once Pinwall has handed it out. The

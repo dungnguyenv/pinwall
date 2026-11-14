@@ -416,7 +416,7 @@ export const CONFIG_VARS: readonly ConfigVar[] = [
     secret: false,
     default: '95000000',
     description:
-      'The largest single upload request. The default sits under the 100 MB request cap that Cloudflare applies on its Free and Pro plans; raise it only when nothing in front of Pinwall caps requests.',
+      'The largest single upload request. The default sits under the 100 MB request cap that Cloudflare applies on its Free and Pro plans; raise it only when nothing in front of Pinwall caps requests. It also sets how long one publish may run: the time this many bytes take at 64 KiB/s, and at least 10 minutes.',
   },
   {
     name: 'PINWALL_MAX_INLINE_BYTES',
