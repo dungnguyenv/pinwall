@@ -112,6 +112,12 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
   and say what to do when a publish is refused for quota, for a viewer's role or for missing
   approval.
 
+### Fixed
+
+- A dialog opened while the next page was still loading, such as search opened right after a
+  click, lost what had been typed when the page arrived: the page's heading took focus, and the
+  dialog took it back with its text selected. The heading now leaves focus in an open dialog.
+
 ### Known limitations
 
 - Until an admin approves a person (`PINWALL_SHARE_LINKS=approved`), the nested frames of their
