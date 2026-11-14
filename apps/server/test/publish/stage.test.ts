@@ -1,10 +1,15 @@
+import { createHash } from 'node:crypto';
+import { readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import type { Config } from '../../src/config/types.ts';
+import { contentTypeOf } from '../../src/content/mime.ts';
 import { collectBlobs } from '../../src/domain/blobs.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { IngestBudget } from '../../src/publish/limits.ts';
 import { BlobStager } from '../../src/publish/stage.ts';
+import type { BlobStore } from '../../src/storage/blob-store.ts';
 import { blobState, ref, sha } from '../helpers/blobs.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
@@ -119,6 +124,87 @@ describe.each(dialects)('BlobStager on %s', (dialect) => {
       deferred: [],
     });
     expect(await blobState(ctx.deps, sha('K'))).toEqual(KEPT);
+  });
+
+  test('a streamed file reaches the store while it still arrives, never whole in memory', async () => {
+    const CHUNK = 64 * 1024;
+    const CHUNKS = 64;
+    const total = CHUNK * CHUNKS;
+    let produced = 0;
+    const whole = createHash('sha256');
+    function* chunks(): Generator<Buffer> {
+      for (let i = 0; i < CHUNKS; i++) {
+        const chunk = Buffer.alloc(CHUNK, i % 251);
+        whole.update(chunk);
+        produced += chunk.length;
+        yield chunk;
+      }
+    }
+    // How much of the file had arrived when its first byte reached the store, either way.
+    let arrivedAtFirstStore: number | null = null;
+    const real = ctx.deps.blobs;
+    async function* watched(body: Readable): AsyncGenerator<Buffer> {
+      for await (const chunk of body) {
+        arrivedAtFirstStore ??= produced;
+        yield chunk as Buffer;
+      }
+    }
+    const blobs: BlobStore = Object.assign(Object.create(real) as BlobStore, {
+      put: (sha256: string, body: Buffer | Readable, size: number) => {
+        arrivedAtFirstStore ??= produced;
+        return real.put(sha256, body, size);
+      },
+      spool: (body: Readable) => real.spool(Readable.from(watched(body), { objectMode: false })),
+    });
+    const s = new BlobStager(
+      { ...ctx.deps, blobs },
+      new IngestBudget({ ...ctx.deps.config.limits, maxFileBytes: total }),
+    );
+
+    const file = await s.stage('big.bin', Readable.from(chunks(), { objectMode: false }), null);
+    const key = whole.digest('hex');
+    expect(file).toEqual({
+      path: 'big.bin',
+      sha256: key,
+      size: total,
+      contentType: 'application/octet-stream',
+    });
+    expect(arrivedAtFirstStore).not.toBeNull();
+    expect(arrivedAtFirstStore ?? total).toBeLessThan(total / 4);
+    expect(await blobState(ctx.deps, key)).toEqual(KEPT);
+    expect(await blobRows()).toEqual([{ sha256: key, size: total, created_at: T }]);
+  });
+
+  test('a streamed HTML file is labeled with the charset its first bytes declare', async () => {
+    const parts = [
+      '<!doctype html><meta char',
+      'set="windows-1252">',
+      `<p>${'é'.repeat(4000)}</p>`,
+    ];
+    const whole = Buffer.from(parts.join(''), 'latin1');
+    const file = await stager().stage(
+      'index.html',
+      Readable.from(
+        parts.map((part) => Buffer.from(part, 'latin1')),
+        { objectMode: false },
+      ),
+      null,
+    );
+    expect(file.contentType).toBe(contentTypeOf('index.html', whole));
+    expect(file.contentType).not.toBe(contentTypeOf('index.html', Buffer.from('<p>')));
+  });
+
+  test('a stream the budget refuses leaves nothing stored and nothing in temporary space', async () => {
+    const body = Readable.from([Buffer.from('hel'), Buffer.from('lo'), Buffer.from('!')]);
+    await expect(stager({ maxFileBytes: 4 }).stage('a.txt', body, null)).rejects.toMatchObject({
+      status: 413,
+    });
+    expect(body.destroyed).toBe(true);
+    expect(await blobRows()).toEqual([]);
+    const { storage } = ctx.deps.config;
+    if (storage.kind === 'local') {
+      expect(await readdir(join(storage.dir, 'tmp')).catch(() => [])).toEqual([]);
+    }
   });
 
   test('a stager refuses work once aborted or released', async () => {

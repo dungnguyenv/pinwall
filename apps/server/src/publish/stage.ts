@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { Readable } from 'node:stream';
+import { Readable } from 'node:stream';
+import { PRESCAN_BYTES } from '../content/html-charset.ts';
 import { contentTypeOf } from '../content/mime.ts';
 import type { AppDeps } from '../deps.ts';
 import { type BlobRegistry, blobRegistry, collectBlobs } from '../domain/blobs.ts';
@@ -35,8 +36,10 @@ export class BlobStager {
   }
 
   /**
-   * Reads `body` whole, counting it against the budget (`declaredSize` is what an archive header
-   * claims, if anything), and stores it. Rejects with the budget's 413 as soon as a limit is
+   * Stores `body`, counting it against the budget as it goes (`declaredSize` is what an archive
+   * header claims, if anything). A stream is never held whole: it goes through the store's
+   * temporary space (`BlobStore.spool`) while it is hashed, and only its first bytes are kept, to
+   * label an HTML file with its charset. Rejects with the budget's 413 as soon as a limit is
    * crossed; a stream is then abandoned, destroyed, and nothing is stored.
    */
   async stage(
@@ -46,28 +49,29 @@ export class BlobStager {
   ): Promise<StagedFile> {
     this.assertActive();
     this.budget.startFile(path, declaredSize);
-    const bytes = await this.read(body);
-    const sha256 = createHash('sha256').update(bytes).digest('hex');
-    await this.registry.withLock(sha256, async () => {
-      // An abort that ran while this file was read must not miss its pin.
-      this.assertActive();
-      this.registry.pin(this.owner, sha256);
-      // The row goes first, so stored bytes always have a row the sweep can find.
-      await this.deps.db.db
-        .insertInto('blobs')
-        .values({ sha256, size: bytes.length, created_at: this.deps.clock.now() })
-        .onConflict((conflict) => conflict.column('sha256').doNothing())
-        .execute();
-      await this.deps.blobs.put(sha256, bytes, bytes.length);
-    });
-    const file: StagedFile = {
+    if (Buffer.isBuffer(body)) {
+      this.budget.onFileBytes(body.length);
+      const sha256 = createHash('sha256').update(body).digest('hex');
+      await this.keep(sha256, body.length, () => this.deps.blobs.put(sha256, body, body.length));
+      return this.add({ path, sha256, size: body.length, contentType: contentTypeOf(path, body) });
+    }
+
+    const head: Buffer[] = [];
+    const spooled = await this.deps.blobs.spool(
+      Readable.from(this.counted(body, head), { objectMode: false }),
+    );
+    try {
+      await this.keep(spooled.sha256, spooled.size, () => spooled.store());
+    } finally {
+      // Nothing left to free once stored; otherwise the bytes never get a name.
+      await spooled.discard();
+    }
+    return this.add({
       path,
-      sha256,
-      size: bytes.length,
-      contentType: contentTypeOf(path, bytes),
-    };
-    this.files.push(file);
-    return file;
+      sha256: spooled.sha256,
+      size: spooled.size,
+      contentType: contentTypeOf(path, Buffer.concat(head)),
+    });
   }
 
   /**
@@ -90,18 +94,45 @@ export class BlobStager {
     if (this.ended) throw new Error('BlobStager: the upload was already aborted or released');
   }
 
-  private async read(body: Readable | Buffer): Promise<Buffer> {
-    if (Buffer.isBuffer(body)) {
-      this.budget.onFileBytes(body.length);
-      return body;
-    }
-    const chunks: Buffer[] = [];
-    // Leaving the loop early (a limit crossed) destroys the stream.
+  /**
+   * Pins blob `sha256` and records its row, then has `store` put its bytes in place, all under the
+   * blob's lock. The row goes first, so stored bytes always have a row the sweep can find.
+   */
+  private async keep(sha256: string, size: number, store: () => Promise<void>): Promise<void> {
+    await this.registry.withLock(sha256, async () => {
+      // An abort that ran while this file was read must not miss its pin.
+      this.assertActive();
+      this.registry.pin(this.owner, sha256);
+      await this.deps.db.db
+        .insertInto('blobs')
+        .values({ sha256, size, created_at: this.deps.clock.now() })
+        .onConflict((conflict) => conflict.column('sha256').doNothing())
+        .execute();
+      await store();
+    });
+  }
+
+  private add(file: StagedFile): StagedFile {
+    this.files.push(file);
+    return file;
+  }
+
+  /**
+   * The bytes of `body`, each counted against the budget, with copies of its first
+   * `PRESCAN_BYTES` put in `head`. Leaving early (a limit crossed, the store failing) destroys
+   * `body`.
+   */
+  private async *counted(body: Readable, head: Buffer[]): AsyncGenerator<Buffer> {
+    let kept = 0;
     for await (const chunk of body) {
       const bytes: Buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       this.budget.onFileBytes(bytes.length);
-      chunks.push(bytes);
+      if (kept < PRESCAN_BYTES) {
+        const part = Buffer.from(bytes.subarray(0, PRESCAN_BYTES - kept));
+        head.push(part);
+        kept += part.length;
+      }
+      yield bytes;
     }
-    return Buffer.concat(chunks);
   }
 }

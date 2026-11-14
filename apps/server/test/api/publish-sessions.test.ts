@@ -18,6 +18,7 @@ import { type UploadReceipt, uploadCommands } from '../../src/publish/sessions.t
 import { mountUploadRoute, withIdleTimeout } from '../../src/publish/upload-route.ts';
 import { makeTar } from '../helpers/archives.ts';
 import { apiInit, createSignedInUser, createUserToken } from '../helpers/auth.ts';
+import { aroundSpoolStores } from '../helpers/blobs.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 import { publishFiles } from '../helpers/publish.ts';
@@ -662,7 +663,11 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
       await start();
       const s = await newSession();
       const server = await listen(uploadApp(300), ctx.deps.config);
-      const stored = vi.spyOn(ctx.deps.blobs, 'put');
+      let stores = 0;
+      const stored = aroundSpoolStores(ctx.deps.blobs, async (store) => {
+        await store();
+        stores += 1;
+      });
       try {
         // a.css arrives whole and is stored; b.bin's data never comes.
         const tar = await makeTar([
@@ -685,7 +690,8 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
       } finally {
         await server.close();
       }
-      expect(stored).toHaveBeenCalledTimes(1);
+      stored.mockRestore();
+      expect(stores).toBe(1);
       expect(await storedBlobs()).toEqual([]);
       expect(await versions()).toEqual([]);
       expect((await put(s.upload_url, await site())).status).toBe(201);
@@ -747,7 +753,11 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
         const server = await listen(ctx.app, ctx.deps.config);
         const errors = vi.spyOn(ctx.deps.logger, 'error');
         const info = vi.spyOn(ctx.deps.logger, 'info');
-        const stored = vi.spyOn(ctx.deps.blobs, 'put');
+        let stores = 0;
+        const stored = aroundSpoolStores(ctx.deps.blobs, async (store) => {
+          await store();
+          stores += 1;
+        });
         const receipt = () =>
           ctx.deps.oneTime.peek<UploadReceipt>(
             `upload-receipt:${hashSecret(s.upload_url.slice(s.upload_url.lastIndexOf('/') + 1))}`,
@@ -765,7 +775,7 @@ describe.each(dialects)('publish sessions on %s', (dialect) => {
           await vi.waitFor(async () => expect((await receipt())?.state).toBe('running'));
           // The client vanishes once the server is past sniffing: mid-archive with a.css
           // stored, or holding part of the single file.
-          if (query === '') await vi.waitFor(() => expect(stored).toHaveBeenCalled());
+          if (query === '') await vi.waitFor(() => expect(stores).toBeGreaterThan(0));
           else await new Promise((r) => setTimeout(r, 50));
           req.destroy();
           // The failed upload hands its URL back.

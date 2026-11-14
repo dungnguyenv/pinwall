@@ -14,6 +14,15 @@ export interface BlobStore {
    */
   put(sha256: string, body: Buffer | Readable, size: number): Promise<void>;
   /**
+   * Writes `body` to the store's temporary space, hashing and counting it as it goes, without
+   * storing it yet: the result names its SHA-256 and size, so a caller can record the blob before
+   * its bytes get that name. `store()` then keeps them under the SHA-256 (nothing when the blob
+   * exists already) and `discard()` drops them; the caller must call one of them, and `discard`
+   * after `store` does nothing. Only the stream's own buffers are held in memory. When `body`
+   * fails, the call rejects with its error and leaves nothing behind.
+   */
+  spool(body: Readable): Promise<SpooledBlob>;
+  /**
    * Streams the blob, or the bytes `start` to `end` inclusive. Rejects with `not_found` when the
    * blob is absent and `bad_request` when the range is inverted or starts past the end. The
    * caller must read the stream to its end or destroy it.
@@ -33,6 +42,16 @@ export interface BlobStore {
    * leftovers it removed.
    */
   removeStaleTemp(before: number): Promise<number>;
+}
+
+/** A body `BlobStore.spool` wrote to temporary space: hashed, counted, not stored yet. */
+export interface SpooledBlob {
+  readonly sha256: string;
+  readonly size: number;
+  /** Stores the bytes under `sha256`, unless the blob exists already, and frees the space. */
+  store(): Promise<void>;
+  /** Frees the space without storing anything. */
+  discard(): Promise<void>;
 }
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
@@ -93,6 +112,23 @@ export class BlobDigest extends Transform {
     if (this.hash.digest('hex') !== sha256) {
       throw badRequest('Blob content does not match its sha256.', { sha256 });
     }
+  }
+}
+
+/** Passes bytes through while hashing and counting them, for a body whose hash is not known yet. */
+export class BlobHash extends Transform {
+  private readonly hash = createHash('sha256');
+  private bytes = 0;
+
+  override _transform(chunk: Buffer, _encoding: BufferEncoding, done: TransformCallback): void {
+    this.bytes += chunk.length;
+    this.hash.update(chunk);
+    done(null, chunk);
+  }
+
+  /** Call once, after the stream has ended: the SHA-256 and the size of what passed. */
+  result(): { sha256: string; size: number } {
+    return { sha256: this.hash.digest('hex'), size: this.bytes };
   }
 }
 

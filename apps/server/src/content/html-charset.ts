@@ -15,7 +15,8 @@ export function htmlCharset(bytes: Buffer): string {
   return prescan(bytes.subarray(0, PRESCAN_BYTES).toString('latin1')) ?? 'utf-8';
 }
 
-const PRESCAN_BYTES = 1024;
+/** How many leading bytes `htmlCharset` reads: the prescan's, which covers the BOM too. */
+export const PRESCAN_BYTES = 1024;
 
 const isSpace = (ch: string | undefined) =>
   ch === '\t' || ch === '\n' || ch === '\f' || ch === '\r' || ch === ' ';

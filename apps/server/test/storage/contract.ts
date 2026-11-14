@@ -186,6 +186,67 @@ export function runBlobStoreContract(name: string, make: () => Promise<BlobStore
       }
     });
 
+    test('spools a stream under its hash, and stores it only when asked', async () => {
+      const store = await make();
+      const parts = ['<h1>', 'Xin chào', '</h1>'].map((text) => Buffer.from(text));
+      const bytes = Buffer.concat(parts);
+      const key = sha256(bytes);
+
+      const spooled = await store.spool(Readable.from(parts));
+      expect({ sha256: spooled.sha256, size: spooled.size }).toEqual({
+        sha256: key,
+        size: bytes.length,
+      });
+      expect(await store.has(key)).toBe(false);
+      await spooled.store();
+      expect(await collect(await store.get(key))).toEqual(bytes);
+      await spooled.discard();
+      expect(await store.has(key)).toBe(true);
+    });
+
+    test('spools an empty stream', async () => {
+      const store = await make();
+      const spooled = await store.spool(Readable.from([]));
+      expect({ sha256: spooled.sha256, size: spooled.size }).toEqual({
+        sha256: sha256(''),
+        size: 0,
+      });
+      await spooled.store();
+      expect(await collect(await store.get(sha256('')))).toEqual(Buffer.alloc(0));
+    });
+
+    test('a discarded spool stores nothing and leaves nothing behind', async () => {
+      const store = await make();
+      const bytes = Buffer.from('never kept');
+      const spooled = await store.spool(Readable.from([bytes]));
+      await spooled.discard();
+      expect(await store.has(sha256(bytes))).toBe(false);
+      expect(await keys(store)).toEqual([]);
+    });
+
+    test('storing a spool of a blob that exists keeps the one copy', async () => {
+      const store = await make();
+      const bytes = Buffer.from('stored once');
+      const key = sha256(bytes);
+      await store.put(key, bytes, bytes.length);
+
+      const spooled = await store.spool(Readable.from([bytes]));
+      await spooled.store();
+      expect(await keys(store)).toEqual([key]);
+      expect(await collect(await store.get(key))).toEqual(bytes);
+    });
+
+    test('a spool whose body fails rejects with its error and stores nothing', async () => {
+      const store = await make();
+      const failure = new Error('the client went away');
+      async function* failing(): AsyncGenerator<Buffer> {
+        yield Buffer.from('part of it');
+        throw failure;
+      }
+      await expect(store.spool(Readable.from(failing()))).rejects.toBe(failure);
+      expect(await keys(store)).toEqual([]);
+    });
+
     test('check passes on a usable store', async () => {
       const store = await make();
       await expect(store.check()).resolves.toBeUndefined();

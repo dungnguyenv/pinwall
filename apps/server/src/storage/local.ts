@@ -10,9 +10,11 @@ import {
   assertSha256,
   assertSize,
   BlobDigest,
+  BlobHash,
   type BlobStore,
   discard,
   isSha256,
+  type SpooledBlob,
 } from './blob-store.ts';
 
 const SHARD = /^[0-9a-f]{2}$/;
@@ -59,6 +61,36 @@ export class LocalBlobStore implements BlobStore {
       await rm(tmp, { force: true });
       throw error;
     }
+  }
+
+  async spool(body: Readable): Promise<SpooledBlob> {
+    await mkdir(this.tmpDir, { recursive: true });
+    const tmp = join(this.tmpDir, randomBytes(16).toString('hex'));
+    const hashing = new BlobHash();
+    try {
+      await pipeline(body, hashing, createWriteStream(tmp, { flags: 'wx', flush: true }));
+    } catch (error) {
+      await rm(tmp, { force: true });
+      throw error;
+    }
+    const { sha256, size } = hashing.result();
+    const discard = () => rm(tmp, { force: true });
+    return {
+      sha256,
+      size,
+      // Renamed on the same file system, as `put` does: the bytes are written once.
+      store: async () => {
+        try {
+          if (await this.has(sha256)) return;
+          const target = this.pathOf(sha256);
+          await mkdir(dirname(target), { recursive: true });
+          await rename(tmp, target);
+        } finally {
+          await discard();
+        }
+      },
+      discard,
+    };
   }
 
   async get(sha256: string, range?: { start: number; end: number }): Promise<Readable> {

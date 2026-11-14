@@ -56,6 +56,25 @@ test('leaves nothing in tmp after a rejected or failed put', async () => {
   expect(await readdir(join(dir, 'tmp'))).toEqual([]);
 });
 
+test('a spool leaves nothing in tmp once stored, discarded or failed', async () => {
+  const dir = await tempDir();
+  const store = createBlobStore({ kind: 'local', dir });
+  const kept = await store.spool(Readable.from([Buffer.from('kept')]));
+  await kept.store();
+  const dropped = await store.spool(Readable.from([Buffer.from('dropped')]));
+  await dropped.discard();
+  const broken = new Readable({
+    read() {
+      this.destroy(new Error('source failed'));
+    },
+  });
+  await expect(store.spool(broken)).rejects.toThrow('source failed');
+
+  expect(await readdir(join(dir, 'tmp'))).toEqual([]);
+  expect(await store.has(sha256('kept'))).toBe(true);
+  expect(await store.has(sha256('dropped'))).toBe(false);
+});
+
 test('stops reading a stream that runs past its declared size', async () => {
   const dir = await tempDir();
   const store = createBlobStore({ kind: 'local', dir });

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
+import { type MockInstance, vi } from 'vitest';
 import type { AppDeps } from '../../src/deps.ts';
 import { newId } from '../../src/lib/ids.ts';
+import type { BlobStore } from '../../src/storage/blob-store.ts';
 
 /** The lowercase hex SHA-256 of `text` as UTF-8: the blob key of those bytes. */
 export function sha(text: string): string {
@@ -90,4 +92,20 @@ export async function blobState(
     .where('sha256', '=', sha256)
     .executeTakeFirst();
   return { row: row !== undefined, object: await deps.blobs.has(sha256) };
+}
+
+/**
+ * Runs `around` each time a streamed body is stored (`BlobStore.spool`, then its `store`), with
+ * that store to call, so a test can wait for a stream to be stored, hold it there or count it.
+ * Bodies held in memory are `put` instead. Returns the spy on `spool`, for `mockRestore`.
+ */
+export function aroundSpoolStores(
+  blobs: BlobStore,
+  around: (store: () => Promise<void>) => Promise<void>,
+): MockInstance<BlobStore['spool']> {
+  const spool = blobs.spool.bind(blobs);
+  return vi.spyOn(blobs, 'spool').mockImplementation(async (body) => {
+    const spooled = await spool(body);
+    return { ...spooled, store: () => around(() => spooled.store()) };
+  });
 }

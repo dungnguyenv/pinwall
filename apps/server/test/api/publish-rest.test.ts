@@ -5,6 +5,7 @@ import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { makeTar, makeZip } from '../helpers/archives.ts';
 import { apiInit, createSignedInUser, createUserToken } from '../helpers/auth.ts';
+import { aroundSpoolStores } from '../helpers/blobs.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 import { listen, openPost, socketPost, split, watchUncaught } from '../helpers/socket.ts';
@@ -534,7 +535,6 @@ describe.each(dialects)('publishing over REST on %s', (dialect) => {
       await start();
       // index.html arrives whole and is stored; the reset comes while its blob is being put,
       // with the start of the next part read by the form but by no one else.
-      const put = ctx.deps.blobs.put.bind(ctx.deps.blobs);
       await resetWhileBusy({
         path: '/api/v1/publish/upload',
         headers: formHeaders(),
@@ -544,10 +544,10 @@ describe.each(dialects)('publishing over REST on %s', (dialect) => {
           part({ name: 'file', filename: 'a.css', body: 'p{}'.repeat(100) }).subarray(0, -50),
         ]),
         hold: (gate, reached) => {
-          const spy = vi.spyOn(ctx.deps.blobs, 'put').mockImplementation(async (...args) => {
+          const spy = aroundSpoolStores(ctx.deps.blobs, async (store) => {
             reached();
             await gate;
-            return put(...args);
+            await store();
           });
           return () => spy.mockRestore();
         },

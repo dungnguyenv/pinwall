@@ -308,6 +308,7 @@ describe.each(dialects)('purging a space on %s', (dialect) => {
         let left = times;
         const blobs: BlobStore = {
           put: (sha256, body, size) => real.put(sha256, body, size),
+          spool: (body) => real.spool(body),
           get: (sha256, range) => real.get(sha256, range),
           has: (sha256) => real.has(sha256),
           list: () => real.list(),

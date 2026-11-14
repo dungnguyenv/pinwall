@@ -19,7 +19,7 @@ import {
 } from '../../src/publish/ingest.ts';
 import { makeTar, makeZip, type TarSpec } from '../helpers/archives.ts';
 import { createSignedInUser } from '../helpers/auth.ts';
-import { blobState, sha } from '../helpers/blobs.ts';
+import { aroundSpoolStores, blobState, sha } from '../helpers/blobs.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 import { publishFiles } from '../helpers/publish.ts';
@@ -543,18 +543,19 @@ describe.each(dialects)('ingest on %s', (dialect) => {
       async (_name, build, expected) => {
         // The first 2 KB hold a.css; the rest arrives once it is stored, so the limits that count
         // ahead of the archive parser (request bytes, expansion) cannot fire before it is.
-        const store = ctx.deps.blobs.put.bind(ctx.deps.blobs);
         let opened = () => {};
         const firstStored = new Promise<void>((resolve) => {
           opened = resolve;
         });
-        const put = vi.spyOn(ctx.deps.blobs, 'put').mockImplementation(async (...args) => {
-          await store(...args);
+        let stores = 0;
+        aroundSpoolStores(ctx.deps.blobs, async (store) => {
+          await store();
+          stores += 1;
           opened();
         });
 
         await expect(upload(await build(), { gate: firstStored })).rejects.toMatchObject(expected);
-        expect(put).toHaveBeenCalled();
+        expect(stores).toBeGreaterThan(0);
         await expectNothingStored();
       },
     );

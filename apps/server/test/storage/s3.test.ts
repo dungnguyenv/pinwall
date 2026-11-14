@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 import { expect, onTestFinished, test } from 'vitest';
 import type { Config } from '../../src/config/types.ts';
@@ -61,6 +62,18 @@ if (endpoint) {
     client.destroy();
   });
 
+  test('a stored spool leaves nothing in the temp folder', async () => {
+    // freshStore empties the prefix again once the test ends.
+    const { cfg } = await freshStore();
+    const tmp = await mkdtemp(join(tmpdir(), 'pinwall-s3-spool-'));
+    onTestFinished(() => rm(tmp, { recursive: true, force: true }));
+    const store = createBlobStore(cfg, tmp);
+    const spooled = await store.spool(Readable.from([Buffer.from('spooled')]));
+    await spooled.store();
+    expect(await store.has(createHash('sha256').update('spooled').digest('hex'))).toBe(true);
+    expect(await readdir(tmp)).toEqual([]);
+  });
+
   test('check fails when the bucket does not exist', async () => {
     const { cfg } = await freshStore();
     if (cfg.kind !== 's3') throw new Error('unreachable');
@@ -74,6 +87,25 @@ if (endpoint) {
   );
   test.skip('S3 blob store contract needs PINWALL_TEST_S3_ENDPOINT', () => {});
 }
+
+test('a discarded or failed spool leaves nothing in the temp folder', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pinwall-s3-spool-'));
+  onTestFinished(() => rm(tmp, { recursive: true, force: true }));
+  // Never reaches the bucket: the spool is on local disk.
+  const store = createBlobStore(
+    { kind: 's3', bucket, region: 'us-east-1', forcePathStyle: true, prefix: '' },
+    tmp,
+  );
+  const dropped = await store.spool(Readable.from([Buffer.from('dropped')]));
+  await dropped.discard();
+  const broken = new Readable({
+    read() {
+      this.destroy(new Error('source failed'));
+    },
+  });
+  await expect(store.spool(broken)).rejects.toThrow('source failed');
+  expect(await readdir(tmp)).toEqual([]);
+});
 
 test('removeStaleTemp removes only the spool folders an unfinished put left', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'pinwall-s3-spool-'));

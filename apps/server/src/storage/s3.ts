@@ -24,9 +24,11 @@ import {
   assertSha256,
   assertSize,
   BlobDigest,
+  BlobHash,
   type BlobStore,
   discard,
   isSha256,
+  type SpooledBlob,
 } from './blob-store.ts';
 
 export type S3StorageConfig = Extract<Config['storage'], { kind: 's3' }>;
@@ -134,6 +136,39 @@ export class S3BlobStore implements BlobStore {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  }
+
+  async spool(body: Readable): Promise<SpooledBlob> {
+    await mkdir(this.tmpDir, { recursive: true });
+    const dir = await mkdtemp(join(this.tmpDir, SPOOL_PREFIX));
+    const discard = () => rm(dir, { recursive: true, force: true });
+    const file = join(dir, randomBytes(8).toString('hex'));
+    const hashing = new BlobHash();
+    try {
+      await pipeline(body, hashing, createWriteStream(file));
+    } catch (error) {
+      await discard();
+      throw error;
+    }
+    const { sha256, size } = hashing.result();
+    return {
+      sha256,
+      size,
+      store: async () => {
+        try {
+          if (await this.has(sha256)) return;
+          const spooled = createReadStream(file);
+          try {
+            await this.upload(sha256, spooled, size);
+          } finally {
+            spooled.destroy();
+          }
+        } finally {
+          await discard();
+        }
+      },
+      discard,
+    };
   }
 
   private async upload(sha256: string, body: Buffer | Readable, size: number): Promise<void> {
