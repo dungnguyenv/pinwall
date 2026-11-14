@@ -10,12 +10,13 @@ import { AppError } from '../lib/errors.ts';
 import { RESERVED_DIR } from '../publish/paths.ts';
 import { type ContentErrorKind, renderContentErrorPage } from './error-page.ts';
 import { contentBaseUrl, type ResolvedGrant, resolveGrant } from './grants.ts';
-import type { ContentHooks } from './hooks.ts';
+import type { ContentHooks, HtmlTransform } from './hooks.ts';
 import {
   MARKDOWN_RENDER_MAX_BYTES,
   renderMarkdownPage,
   renderMarkdownTooLargePage,
 } from './markdown.ts';
+import { SCAN_MAX_BYTES } from './metadata.ts';
 import { isHtmlType, isMarkdownType } from './mime.ts';
 
 /** Single-domain mode: content runs in an opaque origin, never the app's (no allow-same-origin). */
@@ -34,6 +35,26 @@ const ERROR_STATUS: Record<ContentErrorKind, number> = {
   error: 500,
   framed_only: 403,
 };
+
+/**
+ * A review grant's HTML file larger than this is served as stored, without the annotator, since
+ * annotating it reads it whole: the same bound as the scan of HTML at publish. The viewer then
+ * pins point comments on the page.
+ */
+export const REVIEW_HTML_MAX_BYTES = SCAN_MAX_BYTES;
+
+/**
+ * Bytes of review HTML held in memory at once, every request's together, from the moment the
+ * file is read to annotate it until its response has been sent or abandoned. A page that does
+ * not fit is served as stored, without the annotator, and not cached, so a later load annotates
+ * it again.
+ */
+export const REVIEW_HTML_HELD_BYTES = 50_000_000;
+
+const REVIEW_HTML_HELD = [{ key: 'review-html:bytes', limit: REVIEW_HTML_HELD_BYTES }];
+
+/** A body held in memory goes out in slices of this many bytes. */
+const SLICE_BYTES = 65_536;
 
 /** Directory requests try these, in order. */
 const INDEX_NAMES = ['index.html', 'index.md'] as const;
@@ -322,56 +343,137 @@ async function findFile(
  * Serves one stored file. Two kinds of response are not the stored bytes, so they take no range
  * and carry an ETag of their own (SHA-256 of the body): a Markdown file as a rendered page (the
  * stored file itself is `?source`), and, in a review grant, an HTML page after
- * `transformReviewHtml`. `requestPath` is the path the request named; `''` is the grant's root.
+ * `transformReviewHtml`. Only an HTML page of up to `REVIEW_HTML_MAX_BYTES` that fits in
+ * `REVIEW_HTML_HELD_BYTES` is transformed; any other file streams from the blob store as stored.
+ * `requestPath` is the path the request named; `''` is the grant's root.
  */
 async function serveFile(
   c: Context<AppEnv>,
-  { grant, version, framedOnly }: ResolvedGrant,
+  resolved: ResolvedGrant,
   file: VersionFileRow,
   requestPath: string,
   hooks: ContentHooks,
 ): Promise<Response> {
+  const transform = resolved.grant.mode === 'review' ? hooks.transformReviewHtml : undefined;
+  if (isMarkdownType(file.content_type) && !new URL(c.req.url).searchParams.has('source')) {
+    return servePage(c, resolved, file, requestPath, { markdown: true, transform, held: null });
+  }
+  if (transform !== undefined && isHtmlType(file.content_type)) {
+    if (file.size > REVIEW_HTML_MAX_BYTES) return serveStored(c, resolved, file, false);
+    const held = c.var.deps.inFlight.take(REVIEW_HTML_HELD, file.size);
+    if (held === null) return serveStored(c, resolved, file, true);
+    return servePage(c, resolved, file, requestPath, { markdown: false, transform, held });
+  }
+  return serveStored(c, resolved, file, false);
+}
+
+/**
+ * A page built in memory: a Markdown file rendered (`markdown`), or an HTML file as stored, then
+ * passed through `transform` when there is one. `held` gives back what the body takes of
+ * `REVIEW_HTML_HELD_BYTES` once the response is sent or abandoned, or at once when there is no
+ * body to send (HEAD, 304) or the page cannot be built.
+ */
+async function servePage(
+  c: Context<AppEnv>,
+  { grant, version, framedOnly }: ResolvedGrant,
+  file: VersionFileRow,
+  requestPath: string,
+  o: { markdown: boolean; transform: HtmlTransform | undefined; held: (() => void) | null },
+): Promise<Response> {
   const { deps } = c.var;
   const framed = framedOnly === true;
-  const transform = grant.mode === 'review' ? hooks.transformReviewHtml : undefined;
-  const asPage =
-    isMarkdownType(file.content_type) && !new URL(c.req.url).searchParams.has('source');
-  if (asPage || (transform !== undefined && isHtmlType(file.content_type))) {
+  const giveBack = o.held ?? (() => {});
+  let body: Buffer;
+  try {
     // The page's stylesheet link is relative to the URL it is requested at: the root of the
     // grant for an entry in a folder, the file's own path otherwise.
     const pagePath = requestPath === '' ? (file.path.split('/').at(-1) ?? file.path) : file.path;
-    let body: Buffer;
-    if (asPage && file.size > MARKDOWN_RENDER_MAX_BYTES) {
+    if (o.markdown && file.size > MARKDOWN_RENDER_MAX_BYTES) {
       // Never read: a file of up to `PINWALL_MAX_FILE_BYTES`, escaped into a page, would cost
       // several times its size in memory and block the event loop for every request.
       body = Buffer.from(renderMarkdownTooLargePage(pagePath));
     } else {
       const stored = Buffer.concat(await (await deps.blobs.get(file.sha256)).toArray());
-      body = asPage ? Buffer.from(renderMarkdownPage(utf8.decode(stored), pagePath)) : stored;
+      body = o.markdown ? Buffer.from(renderMarkdownPage(utf8.decode(stored), pagePath)) : stored;
     }
-    if (transform !== undefined) {
-      body = await transform(body, {
+    if (o.transform !== undefined) {
+      body = await o.transform(body, {
         grant,
         version,
         path: file.path,
         baseUrl: contentBaseUrl(deps.config, grant.token),
       });
     }
-    const etag = `"${createHash('sha256').update(body).digest('hex')}"`;
-    if (noneMatch(c.req.header('if-none-match'), etag)) {
-      return reply(c, 304, { ETag: etag }, null, framed);
-    }
-    const headers = {
-      'Content-Type': asPage ? HTML : file.content_type,
-      'Content-Length': String(body.length),
-      ETag: etag,
-    };
+  } catch (error) {
+    giveBack();
+    throw error;
+  }
+  const etag = `"${createHash('sha256').update(body).digest('hex')}"`;
+  if (noneMatch(c.req.header('if-none-match'), etag)) {
+    giveBack();
+    return reply(c, 304, { ETag: etag }, null, framed);
+  }
+  const headers = {
+    'Content-Type': o.markdown ? HTML : file.content_type,
+    'Content-Length': String(body.length),
+    ETag: etag,
+  };
+  if (o.held === null || c.req.method === 'HEAD') {
+    giveBack();
     return reply(c, 200, headers, body, framed);
   }
+  return reply(c, 200, headers, heldBody(body, o.held, c.req.raw.signal), framed);
+}
 
+/**
+ * `body` as a stream of slices, which calls `giveBack` once it has been read to its end or
+ * cancelled, or once `aborted` fires (the client went away, perhaps before the server began to
+ * send it, when nothing reads or cancels the stream), so the memory it holds is counted until
+ * then. `giveBack` must be safe to call more than once.
+ */
+function heldBody(
+  body: Buffer,
+  giveBack: () => void,
+  aborted: AbortSignal,
+): ReadableStream<Uint8Array> {
+  if (aborted.aborted) giveBack();
+  else aborted.addEventListener('abort', giveBack, { once: true });
+  let at = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (at >= body.length) {
+        controller.close();
+        giveBack();
+        return;
+      }
+      controller.enqueue(body.subarray(at, at + SLICE_BYTES));
+      at += SLICE_BYTES;
+    },
+    cancel() {
+      giveBack();
+    },
+  });
+}
+
+/**
+ * Serves a file's bytes as stored, streamed from the blob store: whole, or the one range asked
+ * for, with the blob's SHA-256 as its ETag. `noStore` keeps a browser from caching a review page
+ * served without the annotator only because the memory for it was taken (`REVIEW_HTML_HELD_BYTES`).
+ */
+async function serveStored(
+  c: Context<AppEnv>,
+  { framedOnly }: ResolvedGrant,
+  file: VersionFileRow,
+  noStore: boolean,
+): Promise<Response> {
+  const { deps } = c.var;
+  const framed = framedOnly === true;
   const etag = `"${file.sha256}"`;
+  const cache: Record<string, string> = noStore
+    ? { 'Cache-Control': 'no-store, no-transform' }
+    : {};
   if (noneMatch(c.req.header('if-none-match'), etag)) {
-    return reply(c, 304, { ETag: etag }, null, framed);
+    return reply(c, 304, { ETag: etag, ...cache }, null, framed);
   }
   const ifRange = c.req.header('if-range');
   const range =
@@ -386,6 +488,7 @@ async function serveFile(
     'Content-Type': file.content_type,
     ETag: etag,
     'Accept-Ranges': 'bytes',
+    ...cache,
   };
   if (range !== null) {
     headers['Content-Range'] = `bytes ${range.start}-${range.end}/${file.size}`;
