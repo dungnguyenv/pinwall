@@ -80,9 +80,13 @@ function mountHealth(app: Hono<AppEnv>, deps: AppDeps): void {
  * headers or have their cookies read), security headers; then health checks, the pages
  * stylesheet, the API router behind the CSRF origin check and auth resolution, later
  * milestones' routers, and the SPA last, since it answers every remaining browser GET.
- * `opts.contentHooks` replaces the shipped content hooks (tests).
+ * `opts.contentHooks` replaces the shipped content hooks, and `opts.uploadIdleTimeoutMs` the idle
+ * timeout of both upload routes, the upload URL and the web upload (tests).
  */
-export function buildApp(deps: AppDeps, opts: { contentHooks?: ContentHooks } = {}): Hono<AppEnv> {
+export function buildApp(
+  deps: AppDeps,
+  opts: { contentHooks?: ContentHooks; uploadIdleTimeoutMs?: number } = {},
+): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
   app.use(requestId());
@@ -111,9 +115,9 @@ export function buildApp(deps: AppDeps, opts: { contentHooks?: ContentHooks } = 
     originCheck(deps.config),
     resolveAuth({ bearer: bearerResolvers, cookies: true }),
   );
-  app.route('/api/v1', buildApiRouter());
+  app.route('/api/v1', buildApiRouter({ uploadIdleTimeoutMs: opts.uploadIdleTimeoutMs }));
   // The upload token is its only credential: no origin check, no cookie or bearer auth.
-  mountUploadRoute(app);
+  mountUploadRoute(app, { idleTimeoutMs: opts.uploadIdleTimeoutMs });
   app.route('/auth/oidc', buildOidcRouter());
   // `/a/:id/raw` and `/a/:id/v/:n/raw` take a cookie or a bearer token; the SPA owns `/a/:id`.
   mountRawLinks(app);

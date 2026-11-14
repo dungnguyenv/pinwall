@@ -7,8 +7,26 @@ import { AppError, badRequest } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { runUpload } from './sessions.ts';
 
-/** An upload that sends nothing for this long while Pinwall waits for its body is ended. */
+/**
+ * An upload that sends nothing for this long while Pinwall waits for its body is ended: one to an
+ * upload URL, or a web upload.
+ */
 export const UPLOAD_IDLE_TIMEOUT_MS = 60_000;
+
+/**
+ * The i18n keys of what a body guarded by `withIdleTimeout` fails with: `idle`, the 408 (it gets
+ * `{{seconds}}`), and `interrupted`, the 400 of a body that broke off.
+ */
+export interface UploadBodyMessages {
+  idle: string;
+  interrupted: string;
+}
+
+/** An upload URL's, which tell the client to run its command again. */
+const UPLOAD_URL_MESSAGES: UploadBodyMessages = {
+  idle: 'publish.upload.idle',
+  interrupted: 'publish.upload.interrupted',
+};
 
 /** A client gets this long to send a request's headers. */
 const HEADERS_TIMEOUT_MS = 60_000;
@@ -17,8 +35,9 @@ const HEADERS_TIMEOUT_MS = 60_000;
  * Sets the Node server up for uploads; `pinwall serve` calls it before the server takes requests.
  *
  * - No deadline for a whole request. Node's default of 300 s would cut an upload of 95 MB (the default limit) sent
- *   slower than about 2.5 Mbit/s; the upload route ends a body that stalls for
- *   `UPLOAD_IDLE_TIMEOUT_MS` instead. Headers must still arrive within 60 s.
+ *   slower than about 2.5 Mbit/s; the upload routes end a body that stalls for
+ *   `UPLOAD_IDLE_TIMEOUT_MS` instead, and a publish ends once it has held its place for its
+ *   deadline (`ingestDeadlineMs`, at least 10 minutes). Headers must still arrive within 60 s.
  * - A request that asks for `100 Continue` and declares a `Content-Length` over
  *   `PINWALL_MAX_UPLOAD_BYTES` is not asked for its body: the routes refuse such a length
  *   before reading (413), so the client learns why without sending a byte of it. Node closes the
@@ -68,16 +87,16 @@ export function mountUploadRoute(app: Hono<AppEnv>, opts: { idleTimeoutMs?: numb
 }
 
 /** The 408 for an upload that sent nothing for `ms`. */
-function uploadIdle(ms: number): AppError {
+function uploadIdle(ms: number, messages: UploadBodyMessages): AppError {
   const seconds = Math.ceil(ms / 1000);
-  return new AppError('request_timeout', 408, t('publish.upload.idle', { seconds }), {
+  return new AppError('request_timeout', 408, t(messages.idle, { seconds }), {
     idle_timeout_seconds: seconds,
   });
 }
 
 /** The 400 for an upload whose body broke off before its end: the client went away. */
-function uploadInterrupted(): AppError {
-  return badRequest(t('publish.upload.interrupted'));
+function uploadInterrupted(messages: UploadBodyMessages): AppError {
+  return badRequest(t(messages.interrupted));
 }
 
 /** `Content-Length` as a number, or null when it is absent or not a plain byte count. */
@@ -93,9 +112,14 @@ export function declaredLength(header: string | undefined): number | null {
  * closes before its end (the client went away). Its failures are therefore always `AppError`s,
  * so whatever reads it (sniffing, an archive, a file being staged) answers 4xx, never 500. Time
  * the reader spends on bytes it already has does not count, so a slow store or database cannot
- * make a steady client time out. Destroying the result destroys `source`.
+ * make a steady client time out. Destroying the result destroys `source`. The two failures say
+ * what an upload URL's client should do, unless `messages` names others.
  */
-export function withIdleTimeout(source: Readable, ms: number): Readable {
+export function withIdleTimeout(
+  source: Readable,
+  ms: number,
+  messages: UploadBodyMessages = UPLOAD_URL_MESSAGES,
+): Readable {
   let timer: NodeJS.Timeout | undefined;
   let ended = false;
   const disarm = () => {
@@ -104,7 +128,7 @@ export function withIdleTimeout(source: Readable, ms: number): Readable {
   };
   const arm = () => {
     disarm();
-    timer = setTimeout(() => guarded.destroy(uploadIdle(ms)), ms);
+    timer = setTimeout(() => guarded.destroy(uploadIdle(ms, messages)), ms);
   };
 
   const guarded = new Readable({
@@ -143,10 +167,10 @@ export function withIdleTimeout(source: Readable, ms: number): Readable {
     if (!guarded.destroyed) guarded.push(null);
   });
   source.on('error', (error) => {
-    guarded.destroy(error instanceof AppError ? error : uploadInterrupted());
+    guarded.destroy(error instanceof AppError ? error : uploadInterrupted(messages));
   });
   source.on('close', () => {
-    if (!ended) guarded.destroy(uploadInterrupted());
+    if (!ended) guarded.destroy(uploadInterrupted(messages));
   });
   source.pause();
   return guarded;

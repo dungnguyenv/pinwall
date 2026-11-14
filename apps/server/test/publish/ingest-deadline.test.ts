@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { PublishSession } from '@pinwall/shared';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { buildApp } from '../../src/app.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { ingestDeadlineMs, takeIngestSlot } from '../../src/publish/ingest-slots.ts';
 import { makeTar } from '../helpers/archives.ts';
@@ -12,6 +13,7 @@ import { dialects } from '../helpers/db.ts';
 import { connectMcp, toolText } from '../helpers/mcp.ts';
 import { publishFiles } from '../helpers/publish.ts';
 import { restClient } from '../helpers/rest.ts';
+import { listen, socketPost } from '../helpers/socket.ts';
 import type { Person } from '../spaces/fixture.ts';
 
 test('a publish may hold its place for 10 minutes, or for its largest upload at 64 KiB/s', async () => {
@@ -279,6 +281,50 @@ describe.each(dialects)('how long a publish may hold its place, on %s', (dialect
       status: 408,
       body: TIMED_OUT,
     });
+    expect(await leftovers()).toEqual(before);
+  });
+
+  test('a web upload whose client stalls ends 408 at the idle timeout and gives its place back', async () => {
+    const server = await listen(buildApp(ctx.deps, { uploadIdleTimeoutMs: 500 }), ctx.deps.config);
+    // The idle timeout ends it, long before the deadline does.
+    ctx.deps.ingestDeadlineMs = 60_000;
+    const before = await leftovers();
+    const spooled = vi.spyOn(ctx.deps.blobs, 'spool');
+    try {
+      const reply = socketPost(server.port, '/api/v1/publish/upload', {
+        headers: {
+          cookie: ada.cookie,
+          origin: ctx.deps.config.publicOrigin,
+          'content-type': `multipart/form-data; boundary=${BOUNDARY}`,
+          'transfer-encoding': 'chunked',
+        },
+        chunks: [
+          Buffer.from(
+            `--${BOUNDARY}\r\nContent-Disposition: form-data; name="target"\r\n\r\n{}\r\n` +
+              `--${BOUNDARY}\r\nContent-Disposition: form-data; name="file"; filename="index.html"\r\n` +
+              'Content-Type: text/html\r\n\r\n<p>half a page',
+          ),
+        ],
+        stall: true,
+      });
+      await vi.waitFor(() => expect(spooled).toHaveBeenCalled());
+      expect(everyPlaceFree()).toBe(false);
+      const { status, json } = await reply;
+      expect({ status, json }).toEqual({
+        status: 408,
+        json: {
+          error: {
+            code: 'request_timeout',
+            message: t('publish.webUpload.idle', { seconds: 1 }),
+            details: { idle_timeout_seconds: 1 },
+          },
+        },
+      });
+    } finally {
+      spooled.mockRestore();
+      await server.close();
+    }
+    expect(everyPlaceFree()).toBe(true);
     expect(await leftovers()).toEqual(before);
   });
 });

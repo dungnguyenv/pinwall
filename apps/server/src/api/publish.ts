@@ -34,7 +34,12 @@ import {
   readUploadForm,
   uploadFormError,
 } from '../publish/upload-form.ts';
-import { declaredLength } from '../publish/upload-route.ts';
+import {
+  declaredLength,
+  UPLOAD_IDLE_TIMEOUT_MS,
+  type UploadBodyMessages,
+  withIdleTimeout,
+} from '../publish/upload-route.ts';
 import { jsonBodyLimit } from './body-limit.ts';
 
 const error = (description: string) => ({
@@ -175,7 +180,7 @@ const uploadRoute = createRoute({
   tags: ['publishing'],
   summary: 'Publish files uploaded from a browser',
   description:
-    'A `multipart/form-data` body, read while it streams: a `target` field (the JSON of a publish target) and an optional `message` first, then the files as `file` parts. To publish a folder, put a `path` field before each `file` part with its path in the folder; without `path` fields each part is stored under its filename. A `.zip`, `.tar`, `.tgz` or `.tar.gz` part sent first and without a `path` is unpacked, and must then be the only file. Every file part counts toward `PINWALL_MAX_FILES`, and the upload stops at the part that crosses a limit. With a quota, a declared `Content-Length` larger than what is left in the space is refused before any file is stored, and the upload stops as soon as its files go over the bytes or files left. Counts toward the limit of 60 publishes per user per 10 minutes, shared by every way to publish.',
+    'A `multipart/form-data` body, read while it streams: a `target` field (the JSON of a publish target) and an optional `message` first, then the files as `file` parts. To publish a folder, put a `path` field before each `file` part with its path in the folder; without `path` fields each part is stored under its filename. A `.zip`, `.tar`, `.tgz` or `.tar.gz` part sent first and without a `path` is unpacked, and must then be the only file. Every file part counts toward `PINWALL_MAX_FILES`, and the upload stops at the part that crosses a limit. With a quota, a declared `Content-Length` larger than what is left in the space is refused before any file is stored, and the upload stops as soon as its files go over the bytes or files left. A body that sends nothing for 60 seconds, or an upload that runs past the deadline of a publish (10 minutes, or the time `PINWALL_MAX_UPLOAD_BYTES` takes at 64 KiB/s when that is longer), ends with 408 `request_timeout` and keeps nothing. Counts toward the limit of 60 publishes per user per 10 minutes, shared by every way to publish.',
   middleware: [requireAuth, perUser(RATE_RULES.publish)] as MiddlewareHandler<AppEnv>[],
   security,
   request: {
@@ -205,6 +210,9 @@ const uploadRoute = createRoute({
     ),
     ...authErrors,
     ...targetErrors,
+    408: error(
+      'The body sent nothing for 60 seconds, or the upload ran past the deadline of a publish (`request_timeout`)',
+    ),
     413: error(
       'Over a publishing limit (`payload_too_large`), or the version does not fit in the space it fills (`quota_exceeded`)',
     ),
@@ -217,6 +225,12 @@ const uploadRoute = createRoute({
 
 /** Parts named like an archive: one sent first and without a `path` is unpacked. */
 const ARCHIVE_NAME = /\.(zip|tar|tgz|tar\.gz)$/i;
+
+/** What a web upload's body fails with when it stalls or breaks off: upload the files again. */
+const WEB_UPLOAD_MESSAGES: UploadBodyMessages = {
+  idle: 'publish.webUpload.idle',
+  interrupted: 'publish.webUpload.interrupted',
+};
 
 /** The form fields besides the files. */
 const UploadFields = z.object({
@@ -239,11 +253,13 @@ interface FormHead {
  * Every limit counts as the parts arrive: the request's size, the number of file parts
  * (`PINWALL_MAX_FILES`, whatever their names, junk included) and each file's size, so a refused
  * upload stops at the part that crossed one and keeps nothing it stored. Only the file being
- * stored is held in memory.
+ * stored is held in memory. A body that sends nothing for `idleMs` while it is waited for ends
+ * the upload with the 408, as on an upload URL.
  */
 async function publishWebUpload(
   c: Context<AppEnv>,
   opts: Omit<PublishOptions, 'message'>,
+  idleMs: number,
 ): Promise<PublishOutcome> {
   const { deps } = c.var;
   const budget = new IngestBudget(
@@ -252,7 +268,7 @@ async function publishWebUpload(
   );
   let opened: OpenedUpload;
   try {
-    opened = await openWebUpload(c, budget);
+    opened = await openWebUpload(c, budget, idleMs);
   } catch (error) {
     // `ingestStreamed` counts the publish from here on; a refusal before it is counted here.
     countFailedPublish(deps, opts.source, error, budget.requestBytesRead);
@@ -279,11 +295,20 @@ interface OpenedUpload {
 
 /**
  * Refuses a declared length over `PINWALL_MAX_UPLOAD_BYTES`, then reads the form up to its first
- * file, counting every request byte in `budget`. On failure the request body is destroyed.
+ * file, counting every request byte in `budget`, with the body guarded by the idle timeout
+ * (`idleMs`). On failure the request body is destroyed.
  */
-async function openWebUpload(c: Context<AppEnv>, budget: IngestBudget): Promise<OpenedUpload> {
+async function openWebUpload(
+  c: Context<AppEnv>,
+  budget: IngestBudget,
+  idleMs: number,
+): Promise<OpenedUpload> {
   const { limits } = c.var.deps.config;
-  const raw = c.req.raw.body === null ? Readable.from([]) : Readable.fromWeb(c.req.raw.body);
+  const raw = withIdleTimeout(
+    c.req.raw.body === null ? Readable.from([]) : Readable.fromWeb(c.req.raw.body),
+    idleMs,
+    WEB_UPLOAD_MESSAGES,
+  );
   const declared = declaredLength(c.req.header('content-length'));
   if (declared !== null && declared > limits.maxUploadBytes) {
     raw.destroy();
@@ -391,7 +416,15 @@ async function storeFormFiles(
 
 const noStore = { 'Cache-Control': 'no-store' };
 
-export function registerPublishRoutes(api: OpenAPIHono<AppEnv>): void {
+/**
+ * The publishing routes. `opts.idleTimeoutMs` replaces `UPLOAD_IDLE_TIMEOUT_MS` for the web upload
+ * (tests).
+ */
+export function registerPublishRoutes(
+  api: OpenAPIHono<AppEnv>,
+  opts: { idleTimeoutMs?: number } = {},
+): void {
+  const idleMs = opts.idleTimeoutMs ?? UPLOAD_IDLE_TIMEOUT_MS;
   api.openapi(createSessionRoute, async (c) => {
     const body = c.req.valid('json');
     const session = await createPublishSession(c.var.deps, authOf(c).user, {
@@ -416,7 +449,7 @@ export function registerPublishRoutes(api: OpenAPIHono<AppEnv>): void {
   });
 
   api.openapi(uploadRoute, async (c) => {
-    const outcome = await publishWebUpload(c, { actor: authOf(c).user, source: 'web' });
+    const outcome = await publishWebUpload(c, { actor: authOf(c).user, source: 'web' }, idleMs);
     return c.json(toPublishResult(c.var.deps.config, outcome), 201, noStore);
   });
 }

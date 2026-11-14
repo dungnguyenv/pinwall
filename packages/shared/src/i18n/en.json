@@ -927,6 +927,8 @@
   "publish.busy.person": "You already have {{max}} publishes in progress. Wait for one to finish, then try again.",
   "publish.busy.server": "Pinwall is busy with other publishes right now. Try again in a few seconds.",
   "publish.deadline": "The publish took longer than the {{minutes}} minutes Pinwall allows for one, so it was stopped and nothing was kept. Try again, over a faster connection if you can.",
+  "publish.webUpload.idle": "The upload sent no data for {{seconds}} seconds, so Pinwall stopped waiting. Upload the files again.",
+  "publish.webUpload.interrupted": "The upload was interrupted before all of it arrived. Upload the files again.",
   "content.notFound.title": "Not found",
   "content.notFound.message": "This file is not part of the artifact.",
   "content.gone.title": "No longer available",

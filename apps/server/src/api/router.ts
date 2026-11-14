@@ -47,8 +47,9 @@ export function createApiRouter(): OpenAPIHono<AppEnv> {
 /**
  * The router mounted at `/api/v1`. Every resource module adds one `registerXRoutes(api)` line
  * below; the OpenAPI document at `/openapi.json` lists whatever has been registered.
+ * `opts.uploadIdleTimeoutMs` replaces the web upload's idle timeout (tests).
  */
-export function buildApiRouter(): OpenAPIHono<AppEnv> {
+export function buildApiRouter(opts: { uploadIdleTimeoutMs?: number } = {}): OpenAPIHono<AppEnv> {
   const api = createApiRouter();
 
   api.openAPIRegistry.registerComponent('securitySchemes', 'bearer', {
@@ -78,7 +79,7 @@ export function buildApiRouter(): OpenAPIHono<AppEnv> {
   registerAdminUserRoutes(api);
   registerAdminModerationRoutes(api);
   registerAdminConfigRoutes(api);
-  registerPublishRoutes(api);
+  registerPublishRoutes(api, { idleTimeoutMs: opts.uploadIdleTimeoutMs });
   registerProjectRoutes(api);
   registerMemberRoutes(api);
   registerArtifactRoutes(api);
