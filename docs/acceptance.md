@@ -83,9 +83,9 @@ outcome. Keep older rows; add new ones below them.
 | [fresh-install](#fresh-install) | 1 | 2026-11-12 | `ghcr.io/dungnguyenv/pinwall:1.0.0-rc.1` (`sha256:40eca17a…`), pulled from GHCR on a home connection | controller | pass, 49 s |
 | [two-machines](#two-machines) (optional) | 6 | | | | not run yet |
 | [claude-code](#claude-code) | 2 | 2026-11-14 | 1.1.0 candidate image built locally from `5fc357c` (`--read-only`, `--cap-drop ALL`, SQLite, single-domain, `PINWALL_VISIBILITY=personal`), Claude Code 2.1.263 | controller | pass, 21 s |
-| [open-sign-up](#open-sign-up) | 1.1-2 | | | | not run yet |
-| [owner-instance](#owner-instance) | 1.1-8 | | | | not run yet |
-| [members-live](#members-live) | 1.1-9 | | | | not run yet |
+| [open-sign-up](#open-sign-up) | 1.1-2 | 2026-11-17 | 1.1.0 image (`sha256:dfca1b37…`) on `pinwall.happybooth.vn`: `personal`, share links `approved`, sign-in with Google through Zitadel org Danny | controller, with the owner | pass in part: steps 3 and 4 over an API token; steps 1, 2 and 5 not run (see below) |
+| [owner-instance](#owner-instance) | 1.1-8 | 2026-11-17 | same | controller, with the owner | pass |
+| [members-live](#members-live) | 1.1-9 | 2026-11-17 | same | controller, with the owner | pass; the open review tab was not watched (see below) |
 
 The `claude-code` run above was the M6 live check: `claude mcp add --transport http pinwall
 http://localhost:8080/mcp` showed "Needs authentication", the browser sign-in registered the
@@ -115,6 +115,43 @@ they publish. Claude Code signed in with `claude mcp login pinwall`, the command
 Pinwall" returned the review link 21 seconds after the request, into the owner's Default project,
 and the link opened the page in the review screen. The container's log held no token, OAuth code,
 consent request id or content address; the upload was logged as `/upload/:token`.
+
+The three 1.1 rows of 2026-11-17 ran on the live instance right after its sign-up opened, with the
+owner's account and a second Google account. The second account worked through a Pinwall API token,
+over MCP and REST, instead of Claude Code's OAuth sign-in, which the `claude-code` rows already
+cover. Both test tokens were revoked afterwards.
+
+- **owner-instance.**
+  - The owner's account listed its 2 projects through MCP. They held 6 artifacts, two more than
+    when the item was written. The local Owner owned no project.
+  - The second account's `list_projects` and `list_artifacts` returned only its own empty Default
+    project. `search_artifacts` for six words from the owner's artifacts found nothing.
+  - `get_artifact` and `list_comments` on each of the owner's artifacts answered "This artifact
+    does not exist". `GET /api/v1/artifacts/<id>` and `GET /api/v1/projects/<id>` answered 404.
+- **members-live.**
+  - The owner made the project and its page through MCP, and added the second account and changed
+    its role in the web UI.
+  - As Viewer, the second account saw "Acceptance 1.1" beside its own Default project and could
+    comment (201). A publish into the project was refused with `{"reason":"role"}`.
+  - As Editor it published a page. The owner's usage grew by 485 bytes and one artifact, and the
+    second account's stayed at 0.
+  - The approval and the removal went through the REST API with an owner API token. Once approved,
+    the second account made a share link. The owner removed it at 10:27:08Z, and by the next poll at
+    10:27:09Z its page answered 404 and the link 410 `revoked`.
+  - The owner's other projects stayed not found at every step.
+  - Not watched: the open review tab switching to "Artifact not available". No browser was signed
+    in as the second account.
+- **open-sign-up.**
+  - With the member rule gone, the second account published a page into its own Default project.
+    Lists and search showed only that page, and the owner's artifacts stayed not found.
+  - A first sign-in by an address on no list became a member with an empty Default project.
+  - Not run: the empty-library screen and the Claude Code sign-in (steps 1 and 2).
+  - Not run: **Delete all my content** (step 5). `/me/purge` answers 403 "This needs a browser
+    session" to an API token, by design, so the page was deleted with
+    `DELETE /api/v1/artifacts/<id>` instead.
+- **Token management also needs a browser session** (`/me/tokens`). The second account's test
+  token was therefore ended with the admin's **Revoke now** (`POST /api/v1/admin/users/<id>/revoke`),
+  after which it got 401.
 
 ## The automated part
 
