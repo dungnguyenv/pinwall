@@ -170,6 +170,22 @@ describe.each(dialects)('MCP edit_artifact on %s', (dialect) => {
     expect((await currentOf(ctx, id)).title).toBe('Mới');
   });
 
+  test('a warning is one line of text, whatever the page holds', async () => {
+    await start();
+    const text = await ok([
+      { op: 'write', path: 'index.html', content: '<img src="/a\u001b[2J\u0007b.png">' },
+    ]);
+    const lines = text.split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines[3]).toBe(
+      t('mcp.publish.warning', {
+        message: t('publish.warning.rootAbsolute', { file: 'index.html', url: '/a [2J b.png' }),
+      }),
+    );
+    expect(text).not.toContain('\u001b');
+    expect(text).not.toContain('\u0007');
+  });
+
   test('a failed operation makes no version and stores no blob', async () => {
     await start();
     const blobsBefore = await blobRows();

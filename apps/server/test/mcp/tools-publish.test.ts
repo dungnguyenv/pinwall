@@ -326,6 +326,21 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
     }
   });
 
+  test('a warning is one line of text, whatever the page holds', async () => {
+    await start();
+    // The URL is the page's own: no escape sequence or line break of it reaches the agent.
+    const text = await ok('publish_inline', inlineHtml('<img src="/a\u001b[2J\u0007b.png">'));
+    const lines = text.split('\n');
+    expect(lines).toHaveLength(3);
+    expect(lines[2]).toBe(
+      t('mcp.publish.warning', {
+        message: t('publish.warning.rootAbsolute', { file: 'index.html', url: '/a [2J b.png' }),
+      }),
+    );
+    expect(text).not.toContain('\u001b');
+    expect(text).not.toContain('\u0007');
+  });
+
   test('inline content is validated like an HTTP upload', async () => {
     await start();
     const refused = async (files: { path: string; content: string }[], message: string) => {
@@ -722,6 +737,61 @@ describe.each(dialects)(
       for (const owner of await publishAs(A.token, p, v3)) {
         expect(owner.isError).toBe(true);
         expect(owner.text).toContain('"reason":"edited_on_server"');
+      }
+    });
+
+    test('replace_server_edits does not open the door for a viewer or a stranger', async () => {
+      const fx = await spacesFixture(ctx);
+      const { E, V, S } = fx.people;
+      const { p, pV2 } = fx.ids;
+      const edit = await callText(await as(E.token), 'edit_artifact', {
+        artifact_id: p,
+        expected_version_id: pV2,
+        edits: [
+          { op: 'replace', path: 'index.html', old_string: 'Version 2', new_string: 'Bản 2' },
+        ],
+      });
+      const v3 = publishedIds(edit.text).versionId;
+      const count = async () =>
+        (await ctx.deps.db.db.selectFrom('versions').select('id').execute()).length;
+      const before = await count();
+      const files = [{ path: 'index.html', content: '<h1>Cũ</h1>' }];
+      const put = vi.spyOn(ctx.deps.oneTime, 'put');
+      const publishAs = async (token: string, artifactId: string, versionId: string) => {
+        const client = await as(token);
+        const target = {
+          artifact_id: artifactId,
+          expected_version_id: versionId,
+          replace_server_edits: true,
+        };
+        return [
+          await callText(client, 'publish_inline', { ...target, files }),
+          await callText(client, 'create_publish_session', target),
+        ];
+      };
+
+      try {
+        // A viewer is forbidden, with the role reason, and gets neither a version nor a URL.
+        const [viewedInline, viewedSession] = await publishAs(V.token, p, v3);
+        for (const viewed of [viewedInline, viewedSession]) {
+          expect(viewed?.isError).toBe(true);
+          expect(viewed?.text).toContain(t('spaces.role.publish'));
+          expect(viewed?.text).toContain('"reason":"role"');
+          expect(uploadUrlOf(viewed?.text ?? '')).toBe('');
+        }
+        // Another person's artifact answers as a missing one does.
+        const missing = await publishAs(S.token, UNKNOWN_IDS.p, UNKNOWN_IDS.pV2);
+        const outsiders = await publishAs(S.token, p, v3);
+        for (const [i, outsider] of outsiders.entries()) {
+          expect(outsider.isError).toBe(true);
+          expect(outsider.text).toBe(missing[i]?.text);
+          expect(outsider.text).toContain(t('artifact.notFound'));
+          expect(uploadUrlOf(outsider.text)).toBe('');
+        }
+        expect(await count()).toBe(before);
+        expect(put).not.toHaveBeenCalled();
+      } finally {
+        put.mockRestore();
       }
     });
   },

@@ -14,7 +14,8 @@ import { t } from '../../lib/i18n.ts';
 import { ingestInline } from '../../publish/ingest.ts';
 import { createPublishSession, toPublishResult } from '../../publish/sessions.ts';
 import { DESCRIPTIONS, FIELDS, fillDescription } from '../descriptions.ts';
-import { formatBytes, oneLine } from '../format.ts';
+import { flatten, formatBytes } from '../format.ts';
+import { refusalAppendix } from '../merge-diff.ts';
 import { runTool } from '../results.ts';
 import type { ToolModule } from '../server.ts';
 
@@ -124,6 +125,9 @@ export const publishTools: ToolModule = (server, ctx) => {
   const ttlMs = config.ttl.uploadSessionMs;
   // A whole number of minutes, never more than the URL lives.
   const minutes = Math.max(1, Math.floor(ttlMs / 60_000));
+  // A refusal of a stale base ends with what changed, so the agent can merge without another call.
+  const appendix = (err: unknown, args: TargetArgs) =>
+    refusalAppendix(deps, scopeForUser(deps, user), args)(err);
 
   server.registerTool(
     'create_publish_session',
@@ -135,24 +139,28 @@ export const publishTools: ToolModule = (server, ctx) => {
       inputSchema: CreatePublishSessionIn,
       annotations: WRITES,
     },
-    runTool(ctx, async (a: z.output<typeof CreatePublishSessionIn>) => {
-      await enforceRateLimit(ctx.c, RATE_RULES.publish, user.id);
-      const target = targetFromArgs(a);
-      await assertNoServerEdits(deps, scopeForUser(deps, user), target, a.replace_server_edits);
-      const session = await createPublishSession(deps, user, {
-        target,
-        message: messageOf(a.message),
-        source: 'mcp',
-        directory: a.directory,
-        file: a.file,
-      });
-      return t('mcp.publish.session', {
-        minutes,
-        url: session.upload_url,
-        archive: session.commands.archive,
-        single: session.commands.single_file,
-      });
-    }),
+    runTool(
+      ctx,
+      async (a: z.output<typeof CreatePublishSessionIn>) => {
+        await enforceRateLimit(ctx.c, RATE_RULES.publish, user.id);
+        const target = targetFromArgs(a);
+        await assertNoServerEdits(deps, scopeForUser(deps, user), target, a.replace_server_edits);
+        const session = await createPublishSession(deps, user, {
+          target,
+          message: messageOf(a.message),
+          source: 'mcp',
+          directory: a.directory,
+          file: a.file,
+        });
+        return t('mcp.publish.session', {
+          minutes,
+          url: session.upload_url,
+          archive: session.commands.archive,
+          single: session.commands.single_file,
+        });
+      },
+      { appendix },
+    ),
   );
 
   server.registerTool(
@@ -165,26 +173,30 @@ export const publishTools: ToolModule = (server, ctx) => {
       inputSchema: PublishInlineIn,
       annotations: WRITES,
     },
-    runTool(ctx, async (a: z.output<typeof PublishInlineIn>) => {
-      await enforceRateLimit(ctx.c, RATE_RULES.publish, user.id);
-      const target = targetFromArgs(a);
-      await assertNoServerEdits(deps, scopeForUser(deps, user), target, a.replace_server_edits);
-      const outcome = await ingestInline(deps, target, a.files, {
-        actor: user,
-        source: 'inline',
-        message: messageOf(a.message),
-      });
-      const result = toPublishResult(config, outcome);
-      const lines = [
-        t('mcp.publish.done', {
-          review_url: result.review_url,
-          number: result.version_number,
-          version_id: result.version_id,
-          artifact_id: result.artifact_id,
-        }),
-        ...result.warnings.map((w) => t('mcp.publish.warning', { message: oneLine(w.message) })),
-      ];
-      return lines.join('\n');
-    }),
+    runTool(
+      ctx,
+      async (a: z.output<typeof PublishInlineIn>) => {
+        await enforceRateLimit(ctx.c, RATE_RULES.publish, user.id);
+        const target = targetFromArgs(a);
+        await assertNoServerEdits(deps, scopeForUser(deps, user), target, a.replace_server_edits);
+        const outcome = await ingestInline(deps, target, a.files, {
+          actor: user,
+          source: 'inline',
+          message: messageOf(a.message),
+        });
+        const result = toPublishResult(config, outcome);
+        const lines = [
+          t('mcp.publish.done', {
+            review_url: result.review_url,
+            number: result.version_number,
+            version_id: result.version_id,
+            artifact_id: result.artifact_id,
+          }),
+          ...result.warnings.map((w) => t('mcp.publish.warning', { message: flatten(w.message) })),
+        ];
+        return lines.join('\n');
+      },
+      { appendix },
+    ),
   );
 };

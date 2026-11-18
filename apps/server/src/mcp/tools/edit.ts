@@ -18,7 +18,8 @@ import {
 import { ingestEdit } from '../../publish/ingest.ts';
 import { toPublishResult } from '../../publish/sessions.ts';
 import { DESCRIPTIONS, FIELDS } from '../descriptions.ts';
-import { flatten, oneLine } from '../format.ts';
+import { flatten } from '../format.ts';
+import { refusalAppendix } from '../merge-diff.ts';
 import { runTool } from '../results.ts';
 import type { ToolModule } from '../server.ts';
 import { WRITES } from './publish.ts';
@@ -80,6 +81,7 @@ export const editTools: ToolModule = (server, ctx) => {
   const { deps, auth } = ctx;
   const { config } = deps;
   const { user } = auth;
+  const scope = scopeForUser(deps, user);
 
   server.registerTool(
     'edit_artifact',
@@ -88,54 +90,60 @@ export const editTools: ToolModule = (server, ctx) => {
       inputSchema: EditArtifactIn,
       annotations: WRITES,
     },
-    runTool(ctx, async (a: z.output<typeof EditArtifactIn>) => {
-      await enforceRateLimit(ctx.c, RATE_RULES.publish, user.id);
-      const ops = parseEdits(a.edits, config.limits.maxInlineBytes);
-      const target: PublishTarget = {
-        kind: 'new_version',
-        artifactId: a.artifact_id,
-        expectedVersionId: a.expected_version_id,
-      };
-      const scope = scopeForUser(deps, user);
-      // A caller who may not publish here, or a stale version, is refused before any file is read.
-      await checkTarget(deps, scope, target);
-      const { version } = await versionFor(deps, scope, a.artifact_id);
-      if (version.id !== a.expected_version_id) throw versionConflict(version);
+    runTool(
+      ctx,
+      async (a: z.output<typeof EditArtifactIn>) => {
+        await enforceRateLimit(ctx.c, RATE_RULES.publish, user.id);
+        const ops = parseEdits(a.edits, config.limits.maxInlineBytes);
+        const target: PublishTarget = {
+          kind: 'new_version',
+          artifactId: a.artifact_id,
+          expectedVersionId: a.expected_version_id,
+        };
+        // A caller who may not publish here, or a stale version, is refused before any file is read.
+        await checkTarget(deps, scope, target);
+        const { version } = await versionFor(deps, scope, a.artifact_id);
+        if (version.id !== a.expected_version_id) throw versionConflict(version);
 
-      const base = await baseTexts(deps, version, ops);
-      const { texts, summary } = applyEdits(
-        ops,
-        (path) => base.get(path) ?? null,
-        version.entry_path,
-        config.limits,
-      );
-      const changed = new Map<string, Buffer | null>();
-      for (const [path, text] of texts) {
-        changed.set(path, text === null ? null : Buffer.from(text, 'utf8'));
-      }
-      const outcome = await ingestEdit(
-        deps,
-        { artifactId: a.artifact_id, expectedVersionId: a.expected_version_id, changed },
-        {
-          actor: user,
-          source: 'mcp',
-          message: messageOf(a.message),
-          serverEdits: summary.map((edit) => edit.path),
-        },
-      );
+        const base = await baseTexts(deps, version, ops);
+        const { texts, summary } = applyEdits(
+          ops,
+          (path) => base.get(path) ?? null,
+          version.entry_path,
+          config.limits,
+        );
+        const changed = new Map<string, Buffer | null>();
+        for (const [path, text] of texts) {
+          changed.set(path, text === null ? null : Buffer.from(text, 'utf8'));
+        }
+        const outcome = await ingestEdit(
+          deps,
+          { artifactId: a.artifact_id, expectedVersionId: a.expected_version_id, changed },
+          {
+            actor: user,
+            source: 'mcp',
+            message: messageOf(a.message),
+            serverEdits: summary.map((edit) => edit.path),
+          },
+        );
 
-      const result = toPublishResult(config, outcome);
-      return [
-        t('mcp.edit.done', {
-          review_url: result.review_url,
-          number: result.version_number,
-          version_id: result.version_id,
-          artifact_id: result.artifact_id,
-        }),
-        ...summary.map(describeEdit),
-        ...result.warnings.map((w) => t('mcp.publish.warning', { message: oneLine(w.message) })),
-      ].join('\n');
-    }),
+        const result = toPublishResult(config, outcome);
+        return [
+          t('mcp.edit.done', {
+            review_url: result.review_url,
+            number: result.version_number,
+            version_id: result.version_id,
+            artifact_id: result.artifact_id,
+          }),
+          ...summary.map(describeEdit),
+          ...result.warnings.map((w) => t('mcp.publish.warning', { message: flatten(w.message) })),
+        ].join('\n');
+      },
+      {
+        // A stale base ends the refusal with what changed, so the agent can merge without another call.
+        appendix: (err, a) => refusalAppendix(deps, scope, a)(err),
+      },
+    ),
   );
 };
 
