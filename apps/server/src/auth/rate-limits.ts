@@ -22,6 +22,7 @@ export const RATE_RULES: {
   projectCreate: RateRule;
   memberLookup: RateRule;
   comment: RateRule;
+  mcpRead: RateRule;
 } = {
   setup: { name: 'setup', limit: 10, windowMs: 900_000 },
   password: { name: 'password', limit: 10, windowMs: 900_000 },
@@ -41,6 +42,8 @@ export const RATE_RULES: {
    * Deleting is not counted. Guests' comments have their own rules, per address and per link.
    */
   comment: { name: 'comment', limit: 60, windowMs: 600_000 },
+  /** `read_file` calls over MCP, per person: every call counts, refused ones too. */
+  mcpRead: { name: 'mcp-read', limit: 600, windowMs: 3_600_000 },
 };
 
 /**

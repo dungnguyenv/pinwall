@@ -50,6 +50,7 @@ test('the rules have the documented limits', () => {
     projectCreate: { name: 'project-create', limit: 30, windowMs: 3_600_000 },
     memberLookup: { name: 'member-lookup', limit: 30, windowMs: 3_600_000 },
     comment: { name: 'comment', limit: 60, windowMs: 600_000 },
+    mcpRead: { name: 'mcp-read', limit: 600, windowMs: 3_600_000 },
   });
 });
 

@@ -141,6 +141,7 @@ that an admin has to approve the account first. Viewers get the `role` refusal h
 - `list_artifacts`: artifacts, newest first, by project or tag, with review links and open threads;
   with `query`, those matching words in their name, tags or text, best match first.
 - `get_artifact`: one artifact, its current version id and its newest versions with their links.
+- `read_file`: the text of one file of a version with line numbers; a range, or the lines that match.
 - `create_publish_session`: a one-time upload URL with the shell command that publishes to it.
 - `publish_inline`: publishes text files passed in the call, for clients without a shell.
 - `list_comments`: an artifact's comment threads with their anchors and replies.

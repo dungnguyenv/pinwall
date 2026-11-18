@@ -3,6 +3,7 @@ import type { Context } from 'hono';
 import packageJson from '../../package.json' with { type: 'json' };
 import type { AppEnv, AuthContext } from '../app.ts';
 import type { AppDeps } from '../deps.ts';
+import { fileTools } from './tools/files.ts';
 import { registerIdentityTools } from './tools/identity.ts';
 import { libraryTools } from './tools/library.ts';
 import { publishTools } from './tools/publish.ts';
@@ -23,6 +24,7 @@ export const TOOL_NAMES = [
   'create_project',
   'list_artifacts',
   'get_artifact',
+  'read_file',
   'create_publish_session',
   'publish_inline',
   'list_comments',
@@ -49,6 +51,7 @@ export type ToolModule = (server: McpServer, ctx: ToolContext) => void;
 const TOOL_MODULES: readonly ToolModule[] = [
   registerIdentityTools,
   libraryTools,
+  fileTools,
   publishTools,
   reviewTools,
 ];

@@ -22,6 +22,7 @@ import {
  */
 const TOOLS: [string, (ids: CaseIds) => Record<string, unknown>][] = [
   ['get_artifact', (i) => ({ artifact_id: i.q })],
+  ['read_file', (i) => ({ artifact_id: i.q })],
   ['list_comments', (i) => ({ artifact_id: i.q })],
   ['list_share_links', (i) => ({ artifact_id: i.q })],
   ['get_project', (i) => ({ project_id: i.Q })],

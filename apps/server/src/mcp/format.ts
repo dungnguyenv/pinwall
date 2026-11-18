@@ -13,6 +13,9 @@ const LINE_BREAK = /\r\n|[\n\r\p{Zl}\p{Zp}]/u;
 /** Every control character except the tab. */
 const CONTROL_EXCEPT_TAB = /[^\P{Cc}\t]/gu;
 
+/** `text` without its control characters (terminal escapes included), except the tab. */
+export const dropControls = (text: string): string => text.replace(CONTROL_EXCEPT_TAB, '');
+
 /** The indentation of a comment's second and later lines, deeper than its first. */
 const CONTINUATION = '    ';
 
@@ -25,10 +28,7 @@ export const flatten = (text: string): string => text.replace(/[\p{Cc}\p{Zl}\p{Z
  * start a line that looks like a thread header or another author's comment.
  */
 function quoteBody(body: string): string {
-  return body
-    .split(LINE_BREAK)
-    .map((line) => line.replace(CONTROL_EXCEPT_TAB, ''))
-    .join(`\n${CONTINUATION}`);
+  return body.split(LINE_BREAK).map(dropControls).join(`\n${CONTINUATION}`);
 }
 
 /** Where on its page a thread points, as a short phrase. */
