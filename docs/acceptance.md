@@ -22,6 +22,14 @@ page. Where the 1.2.0 candidate stands:
    review, so it runs on `pinwall.happybooth.vn` once 1.2.0 is deployed there. The server suite
    proves 1.2-1 before the tag; this check confirms on the live instance that the model gets text.
 
+Tagged `v1.2.0` at `636611f` on 2026-11-19, after every suite above ran green in CI on that commit.
+1.2.0 (`sha256:85546feb…b065`) went live on `pinwall.happybooth.vn` the same day, after a backup of
+1.1.0. Checked there: `version` prints `1.2.0` and the pod runs that digest; the log since start has
+no warning or error; `healthz` and `readyz` answer 200; `/mcp` without a token answers 401 with the
+resource metadata; `GET /download/<unknown token>` answers 404 and `HEAD` 405; the public config
+still says `personal` and `approved`. [agent-tools](#agent-tools) waits for the owner: it needs
+their browser and a Claude Code session signed in to `/mcp`.
+
 ## Before tagging 1.1.0
 
 Nothing below counts until it is run against the commit that will be tagged, and recorded on this
@@ -78,6 +86,9 @@ the date, the commit, what ran, who ran it and the outcome. Keep older rows.
 | 2026-11-14 | `d242f7f` | `pnpm lint`, `pnpm typecheck`, `pnpm test:integration`, `pnpm test:e2e`, on Node 24 | controller | pass |
 | 2026-11-14 | `c2700b1` | GitHub Actions CI on `main` (all seven jobs) | GitHub Actions | pass |
 | 2026-11-14 | `c2700b1` (`v1.1.0`) | `release.yml`: tag check, CI, image for amd64 and arm64, cosign signature, provenance and SBOM attestations, chart push, GitHub release. Afterwards: `1.1.0`, `1.1`, `1` and `latest` all give `sha256:dfca1b37…749f`; `cosign verify` (cosign 3) with the documented identity; `gh attestation verify` for the provenance and both SPDX SBOMs; the chart's values carry that digest; `version` prints `1.1.0` | controller | pass |
+| 2026-11-19 | `636611f` | `pnpm lint`, `pnpm typecheck`, `pnpm test` on SQLite (server 2,679, web 713, tools 251, annotator 81, shared 36) | controller | pass |
+| 2026-11-19 | `636611f` | GitHub Actions CI on `main` (all seven jobs: `pnpm test` with Postgres and Silo, end-to-end with the annotator and Keycloak suites, acceptance, image, chart, licenses, workflows) | GitHub Actions | pass |
+| 2026-11-19 | `636611f` (`v1.2.0`) | `release.yml`: tag check, CI, image for amd64 and arm64, cosign signature, provenance and SBOM attestations, chart push, GitHub release. Afterwards: `1.2.0`, `1.2`, `1` and `latest` all give `sha256:85546feb…b065`; `cosign verify` (cosign 3) with the documented identity; `gh attestation verify` for the provenance and both SPDX SBOMs; the chart's values carry that digest; `version` prints `1.2.0` | controller | pass |
 
 ## Results
 
