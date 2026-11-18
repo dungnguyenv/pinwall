@@ -1,6 +1,7 @@
 import type { Config } from '../config/types.ts';
 import { contentTypeFor, isTextType } from '../content/mime.ts';
 import { AppError, badRequest, payloadTooLarge } from '../lib/errors.ts';
+import { formatBytes } from '../lib/format.ts';
 import { t } from '../lib/i18n.ts';
 import { splitLines } from '../mcp/text-window.ts';
 import { limitExceeded } from './limits.ts';
@@ -41,6 +42,9 @@ const NO_LIMITS: EditLimits = {
   maxVersionBytes: Number.POSITIVE_INFINITY,
 };
 
+/** An edit reads at most this many bytes of stored files in all: the files it replaces in. */
+export const EDIT_READ_MAX_BYTES = 20_000_000;
+
 /** An error lists at most this many line numbers. */
 const LINES_SHOWN = 10;
 
@@ -71,6 +75,20 @@ export function parseEdits(input: readonly EditInput[], maxInlineBytes: number):
     });
   }
   return input.map((edit, index) => parseEdit(edit, index));
+}
+
+/**
+ * Refuses an edit that would read more than `max` bytes of stored files, by the `sizes` their
+ * rows give, before any of them is read: 413 `payload_too_large` with `reason: 'edit_too_large'`.
+ * An edit that large is made on disk instead.
+ */
+export function assertReadBudget(sizes: readonly number[], max = EDIT_READ_MAX_BYTES): void {
+  const total = sizes.reduce((sum, size) => sum + size, 0);
+  if (total <= max) return;
+  throw payloadTooLarge(
+    t('mcp.edit.readTooLarge', { size: formatBytes(total), max: formatBytes(max) }),
+    { reason: 'edit_too_large', read_bytes: total, max },
+  );
 }
 
 function parseEdit(edit: EditInput, index: number): EditOp {
@@ -137,7 +155,8 @@ interface Touched {
  * order first touched, and one `FileEdit` per path.
  *
  * A `replace` finds `old_string` in the decoded text: once, or at least once with `replace_all`.
- * Only the matched ranges change, so line endings and a BOM stay byte for byte. Its `lines` are
+ * Only the matched ranges change, so line endings and a BOM stay byte for byte; a multi-line
+ * `old_string` written with `\n` matches a CRLF file too (`formsOf`). Its `lines` are
  * where its replacements, and those of the earlier ones on the same text, sit in the new text,
  * numbered as `splitLines` numbers them.
  *
@@ -226,10 +245,39 @@ function fileEdit(path: string, { text, written, count, span }: Touched): FileEd
   return { path, result: 'replaced', count, lines: [Math.min(first, max), Math.min(last, max)] };
 }
 
+/** The strings one `replace` tries: `old_string` to find, `new_string` to put in its place. */
+interface ReplaceForm {
+  needle: string;
+  replacement: string;
+}
+
 /**
- * One `replace` on `text`, checked: its matches (one, or any number with `replace_all`), how
- * long the text becomes, a function that builds it, and `span` (the replacements so far, in the
- * old text) moved to the new text and widened to cover these ones too.
+ * The forms of `op` to try on `text`, in order. `read_file` shows lines without their `\r`, so
+ * an agent writes `\n` where a CRLF file has `\r\n`: when `old_string` has a `\n` but no `\r`
+ * and the text has a `\r\n`, the form with every `\n` made `\r\n` comes first (`new_string`
+ * likewise, unless it has a `\r` of its own), then the strings as written. In a file with both
+ * kinds of line break, the CRLF form wins wherever it matches at all; the strings as written are
+ * tried only when it matches nowhere.
+ */
+function formsOf(text: string, op: Extract<EditOp, { op: 'replace' }>): ReplaceForm[] {
+  const { old_string: needle, new_string: replacement } = op;
+  const given = { needle, replacement };
+  if (!needle.includes('\n') || needle.includes('\r') || !text.includes('\r\n')) return [given];
+  const crlf = (s: string) => s.replaceAll('\n', '\r\n');
+  return [
+    {
+      needle: crlf(needle),
+      replacement: replacement.includes('\r') ? replacement : crlf(replacement),
+    },
+    given,
+  ];
+}
+
+/**
+ * One `replace` on `text`, checked: its matches in the first of `formsOf` that has any (one, or
+ * any number with `replace_all`), how long the text becomes, a function that builds it, and
+ * `span` (the replacements so far, in the old text) moved to the new text and widened to cover
+ * these ones too.
  */
 function replaceIn(
   text: string,
@@ -237,36 +285,21 @@ function replaceIn(
   index: number,
   span: [number, number] | null,
 ): { count: number; length: number; span: [number, number]; build: () => string } {
-  const { old_string: needle, new_string: replacement } = op;
-  const width = needle.length;
-  const delta = replacement.length - width;
-  const [start, end] = span ?? [0, 0];
-  let count = 0;
-  let first = -1;
-  let last = -1;
-  const lines: number[] = [];
-  const cursor = new LineCursor(text);
-  // Where `start` and `end` go: moved by the matches before them, or onto the start or the end
-  // of a match they fall inside of.
-  let movedStart = 0;
-  let movedEnd = 0;
-  let snapStart: number | null = null;
-  let snapEnd: number | null = null;
-  for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + width)) {
-    const newAt = at + count * delta;
-    if (at + width <= start) movedStart += delta;
-    else if (at < start) snapStart = newAt;
-    if (at + width <= end) movedEnd += delta;
-    else if (at < end) snapEnd = newAt + replacement.length;
-    if (first === -1) first = at;
-    last = at;
-    if (lines.length < LINES_SHOWN) addLine(lines, cursor.lineAt(at));
-    count += 1;
+  const forms = formsOf(text, op);
+  let chosen: { form: ReplaceForm; found: Found } | null = null;
+  for (const form of forms) {
+    const found = findAll(text, form, span);
+    if (found.count > 0) {
+      chosen = { form, found };
+      break;
+    }
   }
 
-  if (count === 0) {
-    const whitespace = whitespaceLines(text, needle);
-    const unicode = unicodeLines(text, needle);
+  if (chosen === null) {
+    // Collapsing whitespace makes every line break alike, so one form is enough there.
+    const whitespace = whitespaceLines(text, op.old_string);
+    const unicode =
+      forms.map((form) => unicodeLines(text, form.needle)).find((lines) => lines.length > 0) ?? [];
     const message = [
       t('mcp.edit.problem.not_found'),
       ...(whitespace.length > 0
@@ -279,6 +312,8 @@ function replaceIn(
       details: { whitespace_lines: whitespace, unicode_lines: unicode },
     });
   }
+  const { needle, replacement } = chosen.form;
+  const { count, first, last, lines, moved } = chosen.found;
   if (count > 1 && op.replace_all !== true) {
     throw editFailed(index, op.op, op.path, 'ambiguous', {
       message: t('mcp.edit.problem.ambiguous', { count, lines: lines.join(', ') }),
@@ -286,9 +321,8 @@ function replaceIn(
     });
   }
 
+  const delta = replacement.length - needle.length;
   const ours: [number, number] = [first, last + (count - 1) * delta + replacement.length];
-  const moved: [number, number] | null =
-    span === null ? null : [snapStart ?? start + movedStart, snapEnd ?? end + movedEnd];
   return {
     count,
     length: text.length + count * delta,
@@ -296,9 +330,53 @@ function replaceIn(
     // Split and join, not `String.replace`: `$&` and the like in new_string stay as written.
     build: () =>
       count === 1
-        ? text.slice(0, first) + replacement + text.slice(first + width)
+        ? text.slice(0, first) + replacement + text.slice(first + needle.length)
         : text.split(needle).join(replacement),
   };
+}
+
+/** The matches of one form in a text. */
+interface Found {
+  count: number;
+  /** Where the first and the last match start, in the text before the replacement. */
+  first: number;
+  last: number;
+  /** The first 10 distinct lines with a match. */
+  lines: number[];
+  /** The span of earlier replacements, moved to where it would be after this one. */
+  moved: [number, number] | null;
+}
+
+/** Every match of `form.needle` in `text`, left to right and not overlapping, in one pass. */
+function findAll(text: string, form: ReplaceForm, span: [number, number] | null): Found {
+  const width = form.needle.length;
+  const delta = form.replacement.length - width;
+  const [start, end] = span ?? [0, 0];
+  let count = 0;
+  let first = -1;
+  let last = -1;
+  const lines: number[] = [];
+  const cursor = new LineCursor(text);
+  // Where `start` and `end` go: moved by the matches before them, or onto the start or the end
+  // of a match they fall inside of.
+  let movedStart = 0;
+  let movedEnd = 0;
+  let snapStart: number | null = null;
+  let snapEnd: number | null = null;
+  for (let at = text.indexOf(form.needle); at !== -1; at = text.indexOf(form.needle, at + width)) {
+    const newAt = at + count * delta;
+    if (at + width <= start) movedStart += delta;
+    else if (at < start) snapStart = newAt;
+    if (at + width <= end) movedEnd += delta;
+    else if (at < end) snapEnd = newAt + form.replacement.length;
+    if (first === -1) first = at;
+    last = at;
+    if (lines.length < LINES_SHOWN) addLine(lines, cursor.lineAt(at));
+    count += 1;
+  }
+  const moved: [number, number] | null =
+    span === null ? null : [snapStart ?? start + movedStart, snapEnd ?? end + movedEnd];
+  return { count, first, last, lines, moved };
 }
 
 /**

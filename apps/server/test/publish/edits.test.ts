@@ -4,7 +4,13 @@ import { blobRegistry } from '../../src/domain/blobs.ts';
 import { deleteVersion } from '../../src/domain/deletion.ts';
 import type { PublishTarget } from '../../src/domain/versions.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
-import { applyEdits, type EditOp, parseEdits } from '../../src/publish/edits.ts';
+import {
+  applyEdits,
+  assertReadBudget,
+  EDIT_READ_MAX_BYTES,
+  type EditOp,
+  parseEdits,
+} from '../../src/publish/edits.ts';
 import { ingestEdit, type PublishOptions } from '../../src/publish/ingest.ts';
 import { createSignedInUser } from '../helpers/auth.ts';
 import { blobState, sha } from '../helpers/blobs.ts';
@@ -238,6 +244,84 @@ describe('applyEdits', () => {
       expect.objectContaining({
         status: 413,
         details: { limit: 'max_version_bytes', max: 1000 },
+      }),
+    );
+  });
+});
+
+describe('applyEdits and line endings', () => {
+  test('a multi-line old_string with \n matches a CRLF file, and the result keeps CRLF', () => {
+    const src = '﻿<ul>\r\n  <li>a</li>\r\n  <li>b</li>\r\n</ul>\r\n';
+    const { texts, summary } = edit(src, [
+      replace('  <li>a</li>\n  <li>b</li>', '  <li>A</li>\n  <li>B</li>\n  <li>C</li>'),
+    ]);
+    expect(texts.get('i.html')).toBe(
+      '﻿<ul>\r\n  <li>A</li>\r\n  <li>B</li>\r\n  <li>C</li>\r\n</ul>\r\n',
+    );
+    expect(summary).toEqual([{ path: 'i.html', result: 'replaced', count: 1, lines: [2, 4] }]);
+  });
+
+  test('replace_all and ambiguity count the CRLF form', () => {
+    const src = 'x\r\ny\r\n-\r\nx\r\ny\r\n';
+    expect(edit(src, [replace('x\ny', 'z\nw', { replace_all: true })]).texts.get('i.html')).toBe(
+      'z\r\nw\r\n-\r\nz\r\nw\r\n',
+    );
+    expect(failure(src, [replace('x\ny', 'z')])).toMatchObject({
+      problem: 'ambiguous',
+      count: 2,
+      lines: [1, 4],
+    });
+  });
+
+  test('a file with \n only, and strings with a \r of their own, are taken as written', () => {
+    const lf = edit('a\nb\nc\n', [replace('a\nb', 'x\ny')]);
+    expect(lf.texts.get('i.html')).toBe('x\ny\nc\n');
+    // old_string already has its \r: no form is made up for it.
+    expect(failure('a\r\nb\r\n', [replace('a\r\nb\n', 'x')])).toMatchObject({
+      problem: 'not_found',
+    });
+    // new_string with a \r of its own is written as given.
+    const own = edit('a\r\nb\r\n', [replace('a\nb', 'x\r\ny\nz')]);
+    expect(own.texts.get('i.html')).toBe('x\r\ny\nz\r\n');
+    // A single-line old_string is not adapted, and neither is its new_string.
+    expect(edit('a\r\nb\r\n', [replace('a', 'x\ny')]).texts.get('i.html')).toBe('x\ny\r\nb\r\n');
+  });
+
+  test('in a mixed file the CRLF form is tried first, then the strings as written', () => {
+    // The text has the lines both ways: the CRLF form wins, so the LF copy stays.
+    const both = 'X\nY\n--\r\nX\r\nY\r\n';
+    expect(edit(both, [replace('X\nY', 'Z\nW')]).texts.get('i.html')).toBe(
+      'X\nY\n--\r\nZ\r\nW\r\n',
+    );
+    // Only the LF copy is there: the strings as written match it, and are written as given.
+    const lfOnly = 'a\r\nb\r\nX\nY\n';
+    const { texts, summary } = edit(lfOnly, [replace('X\nY', 'Z\nW')]);
+    expect(texts.get('i.html')).toBe('a\r\nb\r\nZ\nW\n');
+    expect(summary[0]?.lines).toEqual([3, 4]);
+  });
+
+  test('a not_found in a CRLF file still names the Unicode and whitespace lines', () => {
+    const src = 'a\r\n<h1>Bảng\r\ngiá</h1>\r\n'.normalize('NFD');
+    expect(failure(src, [replace('Bảng\ngiá'.normalize('NFC'), 'x')])).toMatchObject({
+      problem: 'not_found',
+      whitespace_lines: [],
+      unicode_lines: [2],
+    });
+    expect(
+      failure('a\r\n  <td>A</td>\r\n  <td>B</td>\r\n', [replace('<td>A</td>\n<td>B</td>', 'x')]),
+    ).toMatchObject({ problem: 'not_found', whitespace_lines: [2] });
+  });
+});
+
+describe('assertReadBudget', () => {
+  test('an edit reads at most 20,000,000 bytes of stored files', () => {
+    expect(EDIT_READ_MAX_BYTES).toBe(20_000_000);
+    expect(() => assertReadBudget([10_000_000, 10_000_000])).not.toThrow();
+    expect(() => assertReadBudget([10_000_000, 10_000_001])).toThrow(
+      expect.objectContaining({
+        status: 413,
+        code: 'payload_too_large',
+        details: { reason: 'edit_too_large', read_bytes: 20_000_001, max: 20_000_000 },
       }),
     );
   });

@@ -1,5 +1,5 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { RATE_RULES } from '../../src/auth/rate-limits.ts';
 import type { UserRow, VersionRow } from '../../src/db/schema.ts';
 import { usageOf } from '../../src/domain/usage.ts';
@@ -222,6 +222,83 @@ describe.each(dialects)('MCP edit_artifact on %s', (dialect) => {
     expect(decomposed.isError).toBe(true);
     expect(decomposed.text).toContain('in another Unicode form');
     expect(decomposed.text).toContain('"whitespace_lines":[],"unicode_lines":[1]');
+  });
+
+  test('a multi-line replace on a CRLF file keeps CRLF on every line, byte for byte', async () => {
+    await start();
+    const page = '﻿<!doctype html>\r\n<ul>\r\n  <li>Một</li>\r\n  <li>Hai</li>\r\n</ul>\r\n';
+    const v2 = await publishFiles(
+      ctx,
+      ada.user,
+      { 'index.html': page },
+      { kind: 'new_version', artifactId: id, expectedVersionId: v1.id },
+    );
+    // As read_file shows the lines: no \r anywhere.
+    const text = await ok(
+      [
+        {
+          op: 'replace',
+          path: 'index.html',
+          old_string: '  <li>Một</li>\n  <li>Hai</li>',
+          new_string: '  <li>Một</li>\n  <li>Hai</li>\n  <li>Ba</li>',
+        },
+      ],
+      { expected_version_id: v2.version.id },
+    );
+    expect(text).toContain('index.html: 1 replacements, now lines 3–5');
+    const sha256 = (await filesOfCurrent(ctx, id)).get('index.html') ?? '';
+    const bytes = Buffer.concat(await (await ctx.deps.blobs.get(sha256)).toArray());
+    expect(
+      bytes.equals(Buffer.from(page.replace('</li>\r\n</ul>', '</li>\r\n  <li>Ba</li>\r\n</ul>'))),
+    ).toBe(true);
+  });
+
+  test('an edit reads at most 20,000,000 bytes of stored files, checked before any is read', async () => {
+    await start();
+    const pages = Object.fromEntries(
+      Array.from({ length: 5 }, (_, i) => [i === 0 ? 'index.html' : `p${i}.html`, `<p>${i}</p>`]),
+    );
+    const many = await publishFiles(
+      ctx,
+      ada.user,
+      { ...pages, 'big.css': 'x{}' },
+      { kind: 'new_version', artifactId: id, expectedVersionId: v1.id },
+    );
+    /** Makes the stored size of `path` in that version `size`, as if it were that large. */
+    const sizeAs = (path: string, size: number) =>
+      ctx.deps.db.db
+        .updateTable('version_files')
+        .set({ size })
+        .where('version_id', '=', many.version.id)
+        .where('path', '=', path)
+        .execute();
+    for (const path of Object.keys(pages)) await sizeAs(path, 4_000_000);
+    // Deleted, so never read: it does not count.
+    await sizeAs('big.css', 30_000_000);
+    const edits = [
+      ...Object.keys(pages).map((path) => ({
+        op: 'replace',
+        path,
+        old_string: '<p>',
+        new_string: '<p class="x">',
+      })),
+      { op: 'delete', path: 'big.css' },
+    ];
+
+    await sizeAs('p4.html', 4_000_001);
+    const get = vi.spyOn(ctx.deps.blobs, 'get');
+    const over = await edit(edits, { expected_version_id: many.version.id });
+    expect(over.isError).toBe(true);
+    expect(over.text).toContain('"reason":"edit_too_large","read_bytes":20000001,"max":20000000');
+    expect(over.text).toContain(t('mcp.hint.payload_too_large.edit_too_large'));
+    expect(get).not.toHaveBeenCalled();
+    get.mockRestore();
+    expect(await versions()).toHaveLength(2);
+
+    await sizeAs('p4.html', 4_000_000);
+    const atLimit = await edit(edits, { expected_version_id: many.version.id });
+    expect(atLimit.isError, atLimit.text).toBe(false);
+    expect(await textOf(ctx, id, 'p4.html')).toBe('<p class="x">4</p>');
   });
 
   test('several matches need replace_all', async () => {

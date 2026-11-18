@@ -8,7 +8,13 @@ import { scopeForUser } from '../../domain/spaces.ts';
 import { filesAt, readText, versionFor } from '../../domain/version-files.ts';
 import { checkTarget, type PublishTarget, versionConflict } from '../../domain/versions.ts';
 import { t } from '../../lib/i18n.ts';
-import { applyEdits, type EditOp, type FileEdit, parseEdits } from '../../publish/edits.ts';
+import {
+  applyEdits,
+  assertReadBudget,
+  type EditOp,
+  type FileEdit,
+  parseEdits,
+} from '../../publish/edits.ts';
 import { ingestEdit } from '../../publish/ingest.ts';
 import { toPublishResult } from '../../publish/sessions.ts';
 import { DESCRIPTIONS, FIELDS } from '../descriptions.ts';
@@ -135,7 +141,8 @@ export const editTools: ToolModule = (server, ctx) => {
 
 /**
  * What `applyEdits` reads from `version`, by path: the text of each file the operations first
- * touch with `replace` (`readText`: text files only, up to its size limit), and `''` for each
+ * touch with `replace` (`readText`: text files only, up to its size limit, and
+ * `EDIT_READ_MAX_BYTES` for all of them together), and `''` for each
  * one they first delete, which needs to exist but is not read. A path they first write is not
  * looked up. Null: the version has no such file.
  */
@@ -148,6 +155,10 @@ async function baseTexts(
   for (const op of ops) if (!first.has(op.path)) first.set(op.path, op.op);
   const wanted = [...first].filter(([, op]) => op !== 'write').map(([path]) => path);
   const files = await filesAt(deps, version, wanted);
+  // By the sizes the rows give, before any blob is read.
+  assertReadBudget(
+    wanted.flatMap((path) => (first.get(path) === 'replace' ? [files.get(path)?.size ?? 0] : [])),
+  );
   const texts = new Map<string, string | null>();
   for (const path of wanted) {
     const row = files.get(path);

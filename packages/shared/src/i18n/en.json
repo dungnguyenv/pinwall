@@ -1123,6 +1123,8 @@
   "mcp.edit.problem.missing_fields": "{{op}} needs {{fields}}.",
   "mcp.edit.problem.bad_path": "this path names a folder, or a file that publishing skips.",
   "mcp.edit.problem.not_text": "write makes text files only (HTML, Markdown, CSS, JavaScript, SVG, JSON). Publish other files with create_publish_session.",
+  "mcp.edit.readTooLarge": "The files this edit replaces text in add up to {{size}}, more than the {{max}} one edit may read.",
+  "mcp.hint.payload_too_large.edit_too_large": "For an edit this large, call create_download_session, edit the files on disk, then publish them with create_publish_session.",
   "mcp.edit.tooLarge": "The edits add up to more than {{max}} bytes of text (PINWALL_MAX_INLINE_BYTES). Send them over several calls, or publish the files with create_publish_session.",
   "mcp.hint.bad_request.edit_failed": "Nothing was changed. Fix that edit (read_file shows the current text) and send all the edits again.",
   "mcp.comment.entryPage": "entry page",
