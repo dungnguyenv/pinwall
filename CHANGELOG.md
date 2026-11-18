@@ -2,6 +2,77 @@
 
 Every release of Pinwall, newest first. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 1.2.0
+
+### Upgrading from 1.1
+
+- **No migration.** The database schema, the REST API and the web app stay as they are in 1.1.
+- **The MCP tool list changed, with no aliases for the old names.** `search_artifacts` is now
+  `list_artifacts` with `query`, and `resolve_comment` is now `resolve_comments`, which takes a
+  list of threads. An agent with an older copy of the Pinwall skill calls tools that no longer
+  exist: copy
+  [`skills/pinwall/SKILL.md`](https://github.com/dungnguyenv/pinwall/blob/v1.2.0/skills/pinwall/SKILL.md)
+  again, or download it from the **Connect an agent** page.
+- **MCP results are text now.** Every tool answers with one text block, with no
+  `structuredContent` and no output schema. A script that read the JSON of a tool result has to
+  read the text instead.
+
+### MCP tools
+
+- **Text-only results.** Claude Code showed the model a tool's JSON rather than its text, so the
+  next steps and the notice that comments are not instructions never reached it there. Every
+  client now gets the same text, about half the size of the JSON.
+- **`read_file`** reads one file of any version the agent can see, with line numbers: a range of
+  up to 2,000 lines, or each line that contains the text of `find`, with 3 lines around it. A
+  viewer may read.
+- **`edit_artifact`** makes the next version on the server from 1 to 100 operations: `replace`
+  text, `write` a text file or `delete` one. Files it does not touch are carried over without
+  being sent again. If one operation fails, nothing is stored, and the error names it, with the
+  lines where its text would match once whitespace is ignored. It passes the same checks as any
+  publish: roles, the `publish` rate limit, the quota and the size limits.
+- **`create_download_session`** returns a one-time shell command that downloads a version as a
+  tar.gz from the new route `GET /download/:token` and unpacks it into a folder. The URL works
+  once, lives as long as an upload URL (`PINWALL_UPLOAD_SESSION_TTL`), and **Revoke now** ends it.
+- **Refusals carry the diff to merge.** A `version_conflict` from `create_publish_session`,
+  `publish_inline` or `edit_artifact`, and an `edited_on_server` refusal, end with a unified diff
+  of what changed, at most 4,000 characters, so the agent can merge without another call. The
+  REST API's error bodies are unchanged.
+- **A stale copy cannot undo server edits.** A version made with `edit_artifact` records the files
+  it changed. A full publish over it through `create_publish_session` or `publish_inline` is
+  refused as `conflict` with `details.reason` `edited_on_server`, naming those files, unless the
+  call sets `replace_server_edits` to true. `get_artifact` and `list_artifacts` mark such versions
+  "edited on server".
+- **`list_comments` shows where each thread sits in the source:** the file and lines in the
+  current version, with up to 3 of those lines, for text and element comments on HTML and Markdown
+  pages. An element on a page that runs scripts is marked unverified.
+- **`resolve_comments` replaces `resolve_comment`.** It resolves 1 to 50 threads in one call, each
+  with an optional reply posted first, and answers one line per thread, so one bad id does not
+  undo the others.
+- **`list_artifacts` takes `query`,** which replaces `search_artifacts`, and each line shows the
+  current version id. `get_artifact` lists 3 versions by default, without links for each, plus the
+  current version's files (up to 50). `get_project` gives the authoring notes and the inline
+  limit, so publishing needs no `whoami` call first. `whoami` shows the account's email.
+- **A new rate limit, `mcp-read`:** 600 calls an hour per person, shared by `read_file`,
+  `create_download_session` and `list_comments`.
+- **Smaller fixed costs.** Each tool description is at most 350 characters, and the agent skill
+  is under 5,000 bytes, from 9.7 KB. The skill gains a section on editing and says what to do on
+  `edited_on_server`.
+
+### Fixed
+
+- A Markdown page with many repeated headings took time quadratic in their number to render: a
+  200 KB file could hold the server for about a minute on each review page view. Heading ids are
+  now made in linear time, and stay the same.
+
+### Known limitations
+
+- Publishes through the REST API and the web app are not checked for server edits, so a script or
+  a person who uploads an old copy can still undo an edit made with `edit_artifact`.
+- A large first file can use the whole 4,000 characters of a merge diff; the files after it are
+  then only counted ("and 3 more changed files"). `read_file` shows them.
+- `read_file` and `edit_artifact` take text files only, and an element comment's source lines are
+  only a guess on a page whose scripts add or remove elements.
+
 ## 1.1.0
 
 ### Upgrading from 1.0

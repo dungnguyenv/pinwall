@@ -51,14 +51,7 @@ const TargetIn = z.object({
     'The name of a new artifact. Default: the title of the entry page.',
   ),
   tags: NEW_ARTIFACT_FIELDS.tags.describe('Tags for a new artifact, at most 20.'),
-  replace_server_edits: z
-    .boolean()
-    .default(false)
-    .describe(
-      'Set it to true only when the user wants the edits made on the server with edit_artifact ' +
-        'discarded. Otherwise a publish over a version made that way is refused, so that stale ' +
-        'local files do not undo them.',
-    ),
+  replace_server_edits: z.boolean().default(false).describe(FIELDS.replaceServerEdits),
 });
 export type TargetArgs = z.output<typeof TargetIn>;
 

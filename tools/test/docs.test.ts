@@ -231,6 +231,30 @@ describe('required contents', () => {
     }
   });
 
+  test('the changelog has a 1.2.0 section above 1.1.0, with the upgrade note and the MCP tools', async () => {
+    const changelog = await readFile(join(ROOT, 'CHANGELOG.md'), 'utf8');
+    const start = changelog.search(/^## 1\.2\.0$/m);
+    const end = changelog.search(/^## 1\.1\.0$/m);
+    expect(start).toBeGreaterThan(-1);
+    expect(start).toBeLessThan(end);
+    const section = changelog.slice(start, end);
+    for (const s of [
+      '### Upgrading from 1.1',
+      '### MCP tools',
+      '`search_artifacts`',
+      '`resolve_comments`',
+      '`read_file`',
+      '`edit_artifact`',
+      '`create_download_session`',
+      '`GET /download/:token`',
+      '`edited_on_server`',
+      '`replace_server_edits`',
+      '`mcp-read`',
+    ]) {
+      expect(section, s).toContain(s);
+    }
+  });
+
   test('the open-instance guide gives the settings, the order and the abuse workflow', async () => {
     const guide = await readFile(join(ROOT, 'docs/open-instance.md'), 'utf8');
     for (const line of [

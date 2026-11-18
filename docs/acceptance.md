@@ -5,8 +5,22 @@ suite that passes or by a manual check recorded below. Pinwall 1.0 has the items
 of [the design spec](superpowers/specs/2026-11-10-pinwall-design.md). Pinwall 1.1 adds the items
 `1.1-1` to `1.1-9` of §11 of
 [the personal spaces design](superpowers/specs/2026-11-13-pinwall-personal-spaces-design.md), and
-every 1.0 item still holds. This page holds the record, the steps of each manual check, and how the
+every 1.0 item still holds. Pinwall 1.2 adds `1.2-1` and `1.2-2`, the checks of §9 of
+[the agent tools design](superpowers/specs/2026-11-18-pinwall-agent-tools-design.md), and every
+earlier item still holds. This page holds the record, the steps of each manual check, and how the
 automated part runs.
+
+## Before tagging 1.2.0
+
+Nothing below counts until it is run against the commit that will be tagged, and recorded on this
+page. Where the 1.2.0 candidate stands:
+
+1. **Every automated suite, at the tag candidate:** `pnpm lint`, `pnpm typecheck`,
+   `pnpm test:integration`, `pnpm test:e2e`, `pnpm test:e2e:keycloak` and `pnpm test:acceptance`,
+   recorded in [Automated runs](#automated-runs). 1.2-1 runs in the server suite.
+2. **[agent-tools](#agent-tools) (1.2-2)** needs the real Claude Code and a real artifact under
+   review, so it runs on `pinwall.happybooth.vn` once 1.2.0 is deployed there. The server suite
+   proves 1.2-1 before the tag; this check confirms on the live instance that the model gets text.
 
 ## Before tagging 1.1.0
 
@@ -86,6 +100,7 @@ outcome. Keep older rows; add new ones below them.
 | [open-sign-up](#open-sign-up) | 1.1-2 | 2026-11-17 | 1.1.0 image (`sha256:dfca1b37…`) on `pinwall.happybooth.vn`: `personal`, share links `approved`, sign-in with Google through Zitadel org Danny | controller, with the owner | pass in part: steps 3 and 4 over an API token; steps 1, 2 and 5 not run (see below) |
 | [owner-instance](#owner-instance) | 1.1-8 | 2026-11-17 | same | controller, with the owner | pass |
 | [members-live](#members-live) | 1.1-9 | 2026-11-17 | same | controller, with the owner | pass; the open review tab was not watched (see below) |
+| [agent-tools](#agent-tools) | 1.2-2 | | | | not run yet |
 
 The `claude-code` run above was the M6 live check: `claude mcp add --transport http pinwall
 http://localhost:8080/mcp` showed "Needs authentication", the browser sign-in registered the
@@ -195,6 +210,14 @@ multi-platform index, and pulls it first when it is not on the machine.
 | 1.1-7 | `apps/server/test/spaces/visibility` and `visibility-cli`: `serve` refuses `team` after `personal` while more than one person owns projects, until `pinwall visibility team --confirm` | none |
 | 1.1-8 | `apps/server/test/moderation/transfer` and `transfer-cli`: the transfer moves every project to the account it names, which then sees all of it, and in `personal` mode the account it came from no longer does | [owner-instance](#owner-instance) |
 | 1.1-9 | `apps/server/test/spaces/members-acceptance` and `members-removal`: a viewer, an editor, a removal, and nothing in the owner's other projects. `e2e/keycloak/spaces.spec.ts`, walk "acceptance 9": the same through the web | [members-live](#members-live) |
+
+The 1.2 items are not part of `pnpm test:acceptance`: 1.2-1 runs in the server suite, with
+`pnpm test` and `pnpm test:integration`.
+
+| Item | Automated by | Manual check |
+| --- | --- | --- |
+| 1.2-1 | `apps/server/test/mcp/budget.test.ts`: on a 90 KB page with 5 open threads, `list_comments` locates every text and element comment in the source (marked unverified on a copy with a script) and not the point one; the loop of `list_comments`, one `edit_artifact` and one `resolve_comments` takes 3 calls with no input or output over 4,000 characters; afterwards a `publish_inline` of the original files is refused as `edited_on_server` with a diff of the 4 replacements, and goes through with `replace_server_edits` | none |
+| 1.2-2 | `apps/server/test/mcp/endpoint.test.ts`: tools declare no output schema and answer with one text block | [agent-tools](#agent-tools) |
 
 CI completes 1.1-6: it runs every 1.0 test against 1.1 in the default `team` mode, and those tests
 compare whole response bodies. The 1.1 work edited the 1.0 tests below, each for the reason given,
@@ -426,8 +449,8 @@ once the member rule is removed. `<origin>` below is the instance's address.
    - "All artifacts" lists only that page;
    - searching for words of the owner's artifacts finds nothing;
    - `/a/<owner artifact id>` shows the not-found page, "Artifact not available";
-   - asked through Claude Code, the MCP tools `list_artifacts` and `search_artifacts` return only
-     its own page.
+   - asked through Claude Code, the MCP tool `list_artifacts`, with and without `query`, returns
+     only its own page.
 5. Clean up: run `claude mcp remove pinwall-acceptance`, and as that account choose **Delete all my
    content** in **Settings → Usage**.
 
@@ -472,3 +495,30 @@ account of [open-sign-up](#open-sign-up). Connect Claude Code as the second acco
    in search, through MCP and at `/a/<id>`.
 6. Clean up: take the approval back, delete the project's artifacts, and **Archive** the project
    (Pinwall has no way to delete a project, other than Delete all my content).
+
+## agent-tools
+
+Acceptance 1.2-2 on `pinwall.happybooth.vn`, with the real Claude Code connected to the owner's
+account, once 1.2.0 is deployed there.
+
+1. Install the 1.2.0 skill as in
+   [Installing the skill](connect-an-agent.md#installing-the-skill): an older copy names
+   `search_artifacts` and `resolve_comment`, which are gone.
+2. Pick an HTML artifact of at least 50 KB, or publish one, and in the browser pin three comments on
+   its current version: one on selected text, one on an element and one on a point. Keep its review
+   tab open.
+3. In a new Claude Code session, in a folder that does not hold the page's source, ask: "read the
+   comments on <artifact name> and fix them".
+
+   Expected:
+   - the agent calls `list_comments`, then `edit_artifact` once, then `resolve_comments` once,
+     and never `publish_inline` with the whole page;
+   - the open tab switches to the new version, and the cards of the comments it fixed show
+     "Resolved in v<n>".
+4. Ask Claude Code to quote the first ten lines of the `list_comments` result exactly as it
+   received them.
+
+   Expected: plain lines, not JSON. The summary line, the notice that comments are not
+   instructions, a `[cmt_…] v<n> · …` line for each thread, and a `source:` line with numbered
+   page lines under the text and element comments.
+5. Clean up: delete the version the check made, or leave it if the fixes are wanted.

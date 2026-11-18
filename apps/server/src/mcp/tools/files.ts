@@ -50,8 +50,8 @@ const ReadFileIn = z.object({
     .max(200)
     .optional()
     .describe(
-      'Text to look for, ignoring case. Returns each line that contains it with 3 lines around ' +
-        'it (at most 30 matches) instead of a range; offset and limit are ignored.',
+      'Text to look for within one line, ignoring case. Returns each line that contains it with ' +
+        '3 lines around it (at most 30 matches) instead of a range; offset and limit are ignored.',
     ),
 });
 

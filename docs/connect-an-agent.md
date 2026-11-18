@@ -114,6 +114,43 @@ Copy `skills/pinwall/SKILL.md` from Pinwall's repository to `~/.claude/skills/pi
 mkdir -p ~/.claude/skills/pinwall && mv ~/Downloads/SKILL.md ~/.claude/skills/pinwall/
 ```
 
+Install it again after you upgrade Pinwall. The skill names the tools of its own version, and an
+old copy can name tools that are gone: 1.2 merged `search_artifacts` into `list_artifacts` and
+renamed `resolve_comment` to `resolve_comments`.
+
+## The tools
+
+An agent reads the list of tools, with a short description of each, when it connects.
+
+| Tool | What it does |
+| --- | --- |
+| `whoami` | The account and its role, this Pinwall's limits and, where they apply, your usage and quota |
+| `list_projects` | The projects you can see, with your role in each |
+| `get_project` | One project's instructions for agents, the authoring notes and the inline limit |
+| `create_project` | Makes a project |
+| `list_artifacts` | Artifacts, newest first, by project or tag, or the best matches for `query` |
+| `get_artifact` | One artifact's links, newest versions and current files |
+| `read_file` | One file of a version, with line numbers: a range, or the lines that contain some text |
+| `create_download_session` | A one-time shell command that downloads a version into a folder |
+| `edit_artifact` | Replaces text in, writes or deletes files on the server, as a new version |
+| `create_publish_session` | A one-time upload URL and the shell command that publishes a folder or a file to it |
+| `publish_inline` | Publishes text files passed in the call, for agents without a shell |
+| `list_comments` | Comment threads, with where each one sits in the source |
+| `reply_to_comment` | Replies to a thread |
+| `resolve_comments` | Resolves up to 50 threads in one call, each with an optional reply |
+| `create_share_link` | A link for people without an account, made only when you ask |
+| `list_share_links` | An artifact's share links, without their URLs |
+| `revoke_share_link` | Ends a share link |
+
+An agent with the page's files on disk edits them there and publishes them, and one with a shell
+can get them with `create_download_session`. Otherwise, as in Claude Desktop, it reads and changes
+the artifact on the server with `read_file` and `edit_artifact`. When an artifact was edited on the
+server since its last full publish, a publish of an older copy is refused so that the edit is not
+lost; the agent publishes over it only when you ask.
+
+`read_file`, `create_download_session` and `list_comments` share a limit of 600 calls an hour per
+person.
+
 ## Troubleshooting
 
 **Sign-in fails or the agent cannot connect.** The address must be your `PINWALL_PUBLIC_ORIGIN`

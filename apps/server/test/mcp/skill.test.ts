@@ -44,6 +44,9 @@ const ERROR_CODES = Object.keys({
 /** The `details.reason` values the skill names for a `forbidden` refusal. */
 const FORBIDDEN_REASONS = ['share_links_not_approved'];
 
+/** The `details.reason` values the skill names for a `conflict` refusal. */
+const CONFLICT_REASONS = ['edited_on_server'];
+
 /** The `key: value` lines between the first two `---` lines. */
 function parseFrontmatter(text: string): Record<string, string> {
   const lines = text.split('\n');
@@ -111,6 +114,7 @@ test('the skill names every tool and nothing that does not exist', async () => {
     ...Object.keys(PublishResult.shape),
     ...ERROR_CODES,
     ...FORBIDDEN_REASONS,
+    ...CONFLICT_REASONS,
   ]);
   const named = [...skill.matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)].map((m) => m[1]);
   expect(named.filter((name) => name !== undefined && !known.has(name))).toEqual([]);
@@ -120,4 +124,24 @@ test('the skill handles the space refusals', () => {
   for (const s of ['quota_exceeded', 'share_links_not_approved', 'shared with you', 'viewer'])
     expect(skill, s).toContain(s);
   expect(skill).toMatch(/do not retry/i);
+});
+
+test('the skill is at most 5,000 bytes', () => {
+  expect(Buffer.byteLength(skill)).toBeLessThanOrEqual(5000);
+});
+
+test('the skill says how to edit, and what to do when the server refuses a stale base', () => {
+  for (const s of [
+    '`create_download_session`',
+    '`read_file`',
+    '`edit_artifact`',
+    '`version_conflict`',
+    '`edited_on_server`',
+    '`replace_server_edits`',
+  ])
+    expect(skill, s).toContain(s);
+  expect(skill).toMatch(/diff/);
+  expect(skill).toMatch(/unless the user asks/);
+  // get_project gives what publishing needs, so no call to whoami comes first.
+  expect(skill).not.toMatch(/once per session/);
 });

@@ -180,10 +180,10 @@ export interface StaleBaseArgs {
  *   `details.paths` names, between that version (the last without server edits) and the one the
  *   caller expected, which `assertNoServerEdits` found to be current.
  *
- * `requestId` is the request's, for the log when a file cannot be compared. Anything else, and a
- * refusal whose versions cannot be found (the expected version is not one of
- * this artifact's, or was deleted; the chain of edits broke at a deleted version), has none:
- * null. The diff is read as `scope`, so it shows only what the caller may already read.
+ * Anything else, and a refusal whose versions cannot be found (the expected version is not one
+ * of this artifact's, or was deleted; the chain of edits broke at a deleted version), has none:
+ * null. `requestId` is the request's, for the log when a file cannot be compared. The diff is
+ * read as `scope`, so it shows only what the caller may already read.
  */
 export function refusalAppendix(
   deps: AppDeps,

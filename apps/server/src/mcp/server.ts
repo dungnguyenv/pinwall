@@ -42,9 +42,9 @@ export const TOOL_NAMES = [
 export const SERVER_INSTRUCTIONS = [
   'Pinwall keeps the HTML pages, sites and Markdown documents you publish so people can review them and pin comments on them.',
   '1. Before publishing, call get_project (the project the user named, else the default one) and follow its instructions.',
-  '2. Publish: if you can run shell commands, call create_publish_session and run the command it returns; otherwise call publish_inline.',
-  '3. Answer with the review_url first.',
-  '4. To address feedback: list_comments, fix the source, publish the next version with artifact_id and expected_version_id, then resolve_comments with the new version_id.',
+  '2. Publish: if you can run shell commands, call create_publish_session and run the command it returns; otherwise call publish_inline. To change an existing artifact without its source on disk, call edit_artifact; with a shell, create_download_session gets the files.',
+  '3. Answer with the review link first.',
+  '4. To address feedback: list_comments (each thread shows its source lines), fix the source or call edit_artifact, then resolve_comments with the new version_id.',
   'Create share links only when the user asks for one.',
 ].join('\n');
 
