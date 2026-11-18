@@ -1079,7 +1079,7 @@
   "mcp.artifacts.summary": "Artifacts listed: {{count}}, most recently updated first.",
   "mcp.artifacts.found": "Artifacts found: {{count}}, best match first.",
   "mcp.artifacts.queryCursor": "A list with query is one list of the best matches and has no pages: leave out cursor, or leave out query to page through the artifacts.",
-  "mcp.artifacts.queryLimit": "With query, limit is at most 50.",
+  "mcp.artifacts.queryLimit": "With query, limit is at most {{max}}.",
   "mcp.artifact.item": "- {{id}}: {{name}} ({{details}}) {{url}}",
   "mcp.artifact.version": "v{{number}} {{version_id}}",
   "mcp.artifact.unpublished": "no published version",

@@ -203,6 +203,27 @@ describe.each(dialects)('version files on %s', (dialect) => {
     expect(refused.details).toMatchObject({ reason: 'not_text', size: 9 });
   });
 
+  test('the path in a refusal is on one line, whatever it holds', async () => {
+    const png = await fileRow(
+      { 'index.html': '<p>x</p>', 'a.png': Buffer.from([0x89, 0x50, 0x4e, 0x47]) },
+      'a.png',
+    );
+    // A stored path cannot hold control characters today; the message does not rely on that.
+    const dirty = 'a\u001b[2J\nb\u2028c';
+    const notText = await failure(readText(ctx.deps, { ...png, path: `${dirty}.png` }));
+    expect(notText.details).toMatchObject({ reason: 'not_text' });
+    expect(notText.message).toContain('a [2J b c.png');
+    expect(notText.message).not.toMatch(/[\p{Cc}\p{Zl}\p{Zp}]/u);
+
+    const html = await fileRow({ 'index.html': '<p>x</p>' }, 'index.html');
+    const large = await failure(
+      readText(ctx.deps, { ...html, path: `${dirty}.html`, size: READ_TEXT_MAX_BYTES + 1 }),
+    );
+    expect(large.details).toMatchObject({ reason: 'too_large' });
+    expect(large.message).toContain('a [2J b c.html');
+    expect(large.message).not.toMatch(/[\p{Cc}\p{Zl}\p{Zp}]/u);
+  });
+
   test('readText refuses a file over 5,000,000 bytes without reading it', async () => {
     expect(READ_TEXT_MAX_BYTES).toBe(5_000_000);
     const file = await fileRow({ 'index.html': '<p>x</p>' }, 'index.html');

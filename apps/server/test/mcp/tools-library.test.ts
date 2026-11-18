@@ -7,6 +7,7 @@ import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { formatBytes } from '../../src/mcp/format.ts';
 import { authoringNotes } from '../../src/mcp/notes.ts';
+import { QUERY_MAX_LIMIT } from '../../src/mcp/tools/library.ts';
 import { createSignedInUser, createUserToken } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
@@ -269,12 +270,20 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
   test('query takes at most 50 artifacts', async () => {
     const r = await callText(client, 'list_artifacts', { query: 'x', limit: 51 });
     expect(r.isError).toBe(true);
-    expect(r.text).toContain(t('mcp.artifacts.queryLimit'));
+    expect(r.text).toContain(t('mcp.artifacts.queryLimit', { max: QUERY_MAX_LIMIT }));
     const edge = await callText(client, 'list_artifacts', { query: 'x', limit: 50 });
     expect(edge.isError, edge.text).toBe(false);
     // Without a query the limit still goes to 100.
     const plain = await callText(client, 'list_artifacts', { limit: 100 });
     expect(plain.isError, plain.text).toBe(false);
+  });
+
+  test('the limit a query allows is said from QUERY_MAX_LIMIT, not written into the text', async () => {
+    expect(QUERY_MAX_LIMIT).toBe(50);
+    expect(t('mcp.artifacts.queryLimit', { max: 7 })).toContain('at most 7');
+    const r = await callText(client, 'list_artifacts', { query: 'x', limit: QUERY_MAX_LIMIT + 1 });
+    expect(r.text).toContain(`at most ${QUERY_MAX_LIMIT}`);
+    expect(r.text).not.toContain('{{');
   });
 
   test('search_artifacts is gone', async () => {
@@ -343,7 +352,7 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
     const { artifact } = await publishFiles(ctx, ada.user, PAGE, {
       kind: 'new_artifact',
       projectId: null,
-      name: 'Bảng\n  giá',
+      name: 'Bảng\r\ngiá',
       tags: [],
     });
     expect(artifact.name).toContain('\n');
@@ -351,6 +360,44 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
     const lines = text.split('\n').filter((line) => line.includes(artifact.id));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain(': Bảng giá (');
+  });
+
+  test('names and tags lose their control characters, terminal escapes included', async () => {
+    // Names are what people typed, and tags can be written by hand: both are data.
+    const { artifact } = await publishFiles(ctx, ada.user, PAGE, {
+      kind: 'new_artifact',
+      projectId: null,
+      name: 'Bảng\u001b[2J\ngiá',
+      tags: [],
+    });
+    await ctx.deps.db.db
+      .insertInto('artifact_tags')
+      .values({ artifact_id: artifact.id, tag: 'x\u001b[31my' })
+      .execute();
+    const project = await createProject(ctx.deps, ada.user, { name: 'Dự\u001b[2J\u2028án' });
+    const clean = (text: string) => {
+      expect(text).not.toContain('\u001b');
+      expect(text).not.toContain('\u2028');
+    };
+
+    const list = await ok('list_artifacts');
+    const line = list.split('\n').find((l) => l.includes(artifact.id)) ?? '';
+    expect(line).toContain(': Bảng [2J giá (');
+    expect(line).toContain(t('mcp.artifact.tags', { tags: 'x [31my' }));
+    clean(list);
+
+    const got = await ok('get_artifact', { artifact_id: artifact.id });
+    expect(got.split('\n')[0]).toContain('Bảng [2J giá');
+    expect(got.split('\n')[0]).toContain(t('mcp.artifact.tags', { tags: 'x [31my' }));
+    clean(got);
+
+    const projects = await ok('list_projects');
+    expect(projects).toContain(`${project.id}: Dự [2J án (`);
+    clean(projects);
+    const one = await ok('get_project', { project_id: project.id });
+    expect(one.split('\n')[0]).toContain('Dự [2J án');
+    clean(one);
+    expect(await ok('create_project', { name: 'Mới\u001b[2J' })).toContain(': Mới [2J');
   });
 
   test('list_artifacts leaves out archived projects unless one is named', async () => {

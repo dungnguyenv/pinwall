@@ -24,7 +24,7 @@ import {
 import { badRequest } from '../../lib/errors.ts';
 import { t } from '../../lib/i18n.ts';
 import { DESCRIPTIONS, FIELDS } from '../descriptions.ts';
-import { flatten, formatBytes, oneLine, withMore } from '../format.ts';
+import { flatten, formatBytes, withMore } from '../format.ts';
 import { authoringNotes } from '../notes.ts';
 import { runTool } from '../results.ts';
 import type { ToolModule } from '../server.ts';
@@ -33,7 +33,7 @@ import type { ArtifactOut, ProjectOut, VersionOut } from '../types.ts';
 const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
 
 /** With `query`, a list is one page of the best matches, and at most this long. */
-const QUERY_MAX_LIMIT = 50;
+export const QUERY_MAX_LIMIT = 50;
 /** `get_artifact` lists at most this many files of the current version. */
 const FILE_LIST_MAX = 50;
 /** A version's message is shown cut to this many characters. */
@@ -188,7 +188,7 @@ function projectLine(p: ProjectOut, artifactCount: number): string {
     ...(p.has_instructions ? [t('mcp.project.flagInstructions')] : []),
     ...spaceDetails(p),
   ];
-  return t('mcp.project.item', { id: p.id, name: oneLine(p.name), details: details.join('; ') });
+  return t('mcp.project.item', { id: p.id, name: flatten(p.name), details: details.join('; ') });
 }
 
 /** What an artifact's lines say about it, between the parentheses. */
@@ -202,7 +202,9 @@ function artifactDetails(a: ArtifactOut): string {
           version_id: a.current_version.id,
         }),
     t('mcp.artifact.openThreads', { count: a.open_thread_count }),
-    ...(a.tags.length === 0 ? [] : [t('mcp.artifact.tags', { tags: a.tags.join(', ') })]),
+    ...(a.tags.length === 0
+      ? []
+      : [t('mcp.artifact.tags', { tags: a.tags.map(flatten).join(', ') })]),
     ...(a.edited_on_server === true ? [t('mcp.artifact.editedOnServer')] : []),
   ].join('; ');
 }
@@ -211,7 +213,7 @@ function artifactDetails(a: ArtifactOut): string {
 function artifactLine(a: ArtifactOut): string {
   return t('mcp.artifact.item', {
     id: a.id,
-    name: oneLine(a.name),
+    name: flatten(a.name),
     details: artifactDetails(a),
     url: a.review_url,
   });
@@ -331,7 +333,7 @@ export const libraryTools: ToolModule = (server, ctx) => {
       const row = await readProject(deps, viewer, a.project_id);
       const project = toProjectOut(row, (await spaceFieldsOf(deps, viewer, [row]))?.get(row.id));
       const place = spaceDetails(project);
-      const name = oneLine(row.name);
+      const name = flatten(row.name);
       const heading =
         place.length === 0
           ? t('mcp.project.heading', { id: row.id, name })
@@ -363,7 +365,7 @@ export const libraryTools: ToolModule = (server, ctx) => {
         name: a.name,
         ...(a.instructions === undefined ? {} : { instructions: a.instructions }),
       });
-      return t('mcp.project.created', { id: row.id, name: oneLine(row.name) });
+      return t('mcp.project.created', { id: row.id, name: flatten(row.name) });
     }),
   );
 
@@ -381,7 +383,9 @@ export const libraryTools: ToolModule = (server, ctx) => {
         if (a.cursor !== undefined)
           throw badRequest(t('mcp.artifacts.queryCursor'), { field: 'cursor' });
         if (a.limit > QUERY_MAX_LIMIT)
-          throw badRequest(t('mcp.artifacts.queryLimit'), { field: 'limit' });
+          throw badRequest(t('mcp.artifacts.queryLimit', { max: QUERY_MAX_LIMIT }), {
+            field: 'limit',
+          });
       }
       const viewer = scope();
       const { items, nextCursor } = await listArtifacts(deps, viewer, {
@@ -423,7 +427,7 @@ export const libraryTools: ToolModule = (server, ctx) => {
       return [
         t('mcp.artifact.heading', {
           id: artifact.id,
-          name: oneLine(artifact.name),
+          name: flatten(artifact.name),
           details: artifactDetails(artifact),
         }),
         t('mcp.artifact.links', { review: artifact.review_url, raw: artifact.raw_url }),

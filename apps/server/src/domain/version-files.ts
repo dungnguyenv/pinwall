@@ -4,6 +4,7 @@ import type { AppDeps } from '../deps.ts';
 import { AppError, badRequest, notFound } from '../lib/errors.ts';
 import { formatBytes } from '../lib/format.ts';
 import { t } from '../lib/i18n.ts';
+import { flatten } from '../mcp/format.ts';
 import { getArtifact } from './artifacts.ts';
 import type { Scope } from './spaces.ts';
 import { getCurrentVersion, getVersionByNumber } from './versions.ts';
@@ -85,7 +86,8 @@ export async function filesAt(
 function notText(file: VersionFileRow): AppError {
   return badRequest(
     t('version.fileNotText', {
-      path: file.path,
+      // A path is the publisher's: one line, whatever it holds.
+      path: flatten(file.path),
       content_type: file.content_type,
       size: formatBytes(file.size),
     }),
@@ -122,7 +124,7 @@ export async function readText(deps: AppDeps, file: VersionFileRow): Promise<str
   if (file.size > READ_TEXT_MAX_BYTES) {
     throw badRequest(
       t('version.fileTooLarge', {
-        path: file.path,
+        path: flatten(file.path),
         size: formatBytes(file.size),
         max: formatBytes(READ_TEXT_MAX_BYTES),
       }),

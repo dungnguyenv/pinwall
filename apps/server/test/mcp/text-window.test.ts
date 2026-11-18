@@ -81,6 +81,13 @@ describe('windowLines', () => {
     expect(body).toBe('     1| a[2Jb\tcd');
   });
 
+  test('U+2028 and U+2029 in a line are shown as a space, as flatten treats them', () => {
+    const { body } = windowLines(['a\u2028b\u2029c'], 1, 1);
+    expect(body).toBe('     1| a b c');
+    // Nothing else changes: the line is still one line, of the same length.
+    expect(body.split('\n')).toHaveLength(1);
+  });
+
   test('a window past the last line is empty', () => {
     expect(windowLines(['a'], 5, 10)).toEqual({ body: '', next: null });
   });
@@ -152,6 +159,17 @@ describe('findLines', () => {
     expect(r.truncated).toBe(true);
     expect(r.matches).toBeLessThan(30);
     expect(r.matches).toBeGreaterThan(0);
+  });
+
+  test('find compares the line as it is shown: U+2028 and U+2029 are spaces', () => {
+    const r = findLines(['one\u2028two', 'x', 'three\u2029four'], 'one two', 0);
+    expect(r).toEqual({ body: '     1| one two', matches: 1, truncated: false });
+    expect(findLines(['three\u2029four'], 'e four', 0).body).toBe('     1| three four');
+    // A needle that has one finds the same lines.
+    expect(findLines(['one two', 'one\u2028two'], 'one\u2028two', 0).matches).toBe(2);
+    // The separator is not a character of the line that a needle could match.
+    expect(findLines(['a\u2028b'], 'a\u2028', 0).matches).toBe(1);
+    expect(findLines(['ab'], 'a b', 0).matches).toBe(0);
   });
 
   test('no match is an empty body', () => {

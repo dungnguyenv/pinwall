@@ -15,6 +15,9 @@ const LINE_BREAK = /\r\n|[\n\r]/;
 
 const BOM = '﻿';
 
+/** U+2028 and U+2029, which `flatten` (format.ts) treats as line breaks, though an editor does not. */
+const SEPARATORS = /[\p{Zl}\p{Zp}]/gu;
+
 /** A UTF-16 unit that starts a surrogate pair: a cut must not leave it alone at the end. */
 const isHighSurrogate = (unit: number): boolean => unit >= 0xd800 && unit <= 0xdbff;
 
@@ -32,12 +35,19 @@ export function splitLines(text: string): string[] {
 }
 
 /**
- * A line as it is shown. It is page source, so it is data: control characters other than the tab
- * (terminal escapes among them) are dropped. A line over `LINE_MAX_CHARS` characters is cut there
- * (never inside a surrogate pair) and ends with a marker that says how many were left out.
+ * `line` without what could break or pass for the text around it: control characters other than
+ * the tab (terminal escapes among them) are dropped, and U+2028 and U+2029, which `flatten`
+ * treats as breaks, become a space.
+ */
+const cleaned = (line: string): string => dropControls(line).replace(SEPARATORS, ' ');
+
+/**
+ * A line as it is shown. It is page source, so it is data: it goes through `cleaned`. A line over
+ * `LINE_MAX_CHARS` characters is cut there (never inside a surrogate pair) and ends with a marker
+ * that says how many were left out.
  */
 function displayLine(line: string): string {
-  const clean = dropControls(line);
+  const clean = cleaned(line);
   if (clean.length <= LINE_MAX_CHARS) return clean;
   const cut = isHighSurrogate(clean.charCodeAt(LINE_MAX_CHARS - 1))
     ? LINE_MAX_CHARS - 1
@@ -78,14 +88,14 @@ export function windowLines(
 
 /** Whether `line`, as it is shown, contains `needle` (already in NFC and lower case). */
 function contains(line: string, needle: string): boolean {
-  return dropControls(line).normalize('NFC').toLowerCase().includes(needle);
+  return cleaned(line).normalize('NFC').toLowerCase().includes(needle);
 }
 
 /**
  * The lines that contain `needle`, each with `context` lines around it, as `windowLines` writes
  * them. The comparison ignores case and the Unicode form (both sides in NFC), so text typed
  * composed finds text stored decomposed. Windows that overlap or touch are one group; groups are
- * separated by a line `--`. The lines are shown as stored.
+ * separated by a line `--`. The lines are shown as `windowLines` shows them.
  *
  * `matches` is how many matching lines are shown, and `truncated` is true when more were left
  * out: after `maxMatches` matches, or once the text would pass `maxChars` characters.
@@ -97,7 +107,8 @@ export function findLines(
   maxMatches = 30,
   maxChars = WINDOW_MAX_CHARS,
 ): { body: string; matches: number; truncated: boolean } {
-  const wanted = needle.normalize('NFC').toLowerCase();
+  // The needle is compared with lines as they are shown, where a separator is a space.
+  const wanted = needle.replace(SEPARATORS, ' ').normalize('NFC').toLowerCase();
   const hits: number[] = [];
   let more = false;
   for (let i = 0; i < lines.length; i++) {
