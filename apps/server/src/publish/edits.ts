@@ -155,8 +155,9 @@ interface Touched {
  * order first touched, and one `FileEdit` per path.
  *
  * A `replace` finds `old_string` in the decoded text: once, or at least once with `replace_all`.
- * Only the matched ranges change, so line endings and a BOM stay byte for byte; a multi-line
- * `old_string` written with `\n` matches a CRLF file too (`formsOf`). Its `lines` are
+ * Only the matched ranges change, so line endings and a BOM stay byte for byte; in a CRLF file
+ * a `\n` in `old_string` matches `\r\n`, and one in `new_string` is written `\r\n`
+ * (`formsOf`). Its `lines` are
  * where its replacements, and those of the earlier ones on the same text, sit in the new text,
  * numbered as `splitLines` numbers them.
  *
@@ -253,24 +254,23 @@ interface ReplaceForm {
 
 /**
  * The forms of `op` to try on `text`, in order. `read_file` shows lines without their `\r`, so
- * an agent writes `\n` where a CRLF file has `\r\n`: when `old_string` has a `\n` but no `\r`
- * and the text has a `\r\n`, the form with every `\n` made `\r\n` comes first (`new_string`
- * likewise, unless it has a `\r` of its own), then the strings as written. In a file with both
- * kinds of line break, the CRLF form wins wherever it matches at all; the strings as written are
- * tried only when it matches nowhere.
+ * an agent writes `\n` where a CRLF file has `\r\n`. In a text that has a `\r\n`:
+ * - `new_string` is written with every `\n` made `\r\n`, unless it has a `\r` of its own,
+ *   whichever form of `old_string` matches;
+ * - when `old_string` has a `\n` but no `\r`, its form with every `\n` made `\r\n` is tried
+ *   first, then `old_string` as written. In a file with both kinds of line break, the CRLF form
+ *   wins wherever it matches at all; the one as written is tried only when it matches nowhere.
+ *
+ * A text without `\r\n` takes both strings as written.
  */
 function formsOf(text: string, op: Extract<EditOp, { op: 'replace' }>): ReplaceForm[] {
-  const { old_string: needle, new_string: replacement } = op;
-  const given = { needle, replacement };
-  if (!needle.includes('\n') || needle.includes('\r') || !text.includes('\r\n')) return [given];
+  const { old_string: needle, new_string: written } = op;
+  if (!text.includes('\r\n')) return [{ needle, replacement: written }];
   const crlf = (s: string) => s.replaceAll('\n', '\r\n');
-  return [
-    {
-      needle: crlf(needle),
-      replacement: replacement.includes('\r') ? replacement : crlf(replacement),
-    },
-    given,
-  ];
+  const replacement = written.includes('\r') ? written : crlf(written);
+  const given = { needle, replacement };
+  if (!needle.includes('\n') || needle.includes('\r')) return [given];
+  return [{ needle: crlf(needle), replacement }, given];
 }
 
 /**

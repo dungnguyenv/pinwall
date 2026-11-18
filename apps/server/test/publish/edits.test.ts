@@ -273,7 +273,7 @@ describe('applyEdits and line endings', () => {
     });
   });
 
-  test('a file with \n only, and strings with a \r of their own, are taken as written', () => {
+  test('a file with \n only, and a string with a \r of its own, are taken as written', () => {
     const lf = edit('a\nb\nc\n', [replace('a\nb', 'x\ny')]);
     expect(lf.texts.get('i.html')).toBe('x\ny\nc\n');
     // old_string already has its \r: no form is made up for it.
@@ -283,20 +283,21 @@ describe('applyEdits and line endings', () => {
     // new_string with a \r of its own is written as given.
     const own = edit('a\r\nb\r\n', [replace('a\nb', 'x\r\ny\nz')]);
     expect(own.texts.get('i.html')).toBe('x\r\ny\nz\r\n');
-    // A single-line old_string is not adapted, and neither is its new_string.
-    expect(edit('a\r\nb\r\n', [replace('a', 'x\ny')]).texts.get('i.html')).toBe('x\ny\r\nb\r\n');
+    // A one-line old_string matches as written; its new_string still follows the file's CRLF.
+    expect(edit('a\r\nb\r\n', [replace('a', 'x\ny')]).texts.get('i.html')).toBe('x\r\ny\r\nb\r\n');
   });
 
-  test('in a mixed file the CRLF form is tried first, then the strings as written', () => {
+  test('in a mixed file the CRLF form of old_string is tried first, then the one written', () => {
     // The text has the lines both ways: the CRLF form wins, so the LF copy stays.
     const both = 'X\nY\n--\r\nX\r\nY\r\n';
     expect(edit(both, [replace('X\nY', 'Z\nW')]).texts.get('i.html')).toBe(
       'X\nY\n--\r\nZ\r\nW\r\n',
     );
-    // Only the LF copy is there: the strings as written match it, and are written as given.
+    // Only the LF copy is there: old_string as written matches it, and new_string still
+    // follows the file's CRLF.
     const lfOnly = 'a\r\nb\r\nX\nY\n';
     const { texts, summary } = edit(lfOnly, [replace('X\nY', 'Z\nW')]);
-    expect(texts.get('i.html')).toBe('a\r\nb\r\nZ\nW\n');
+    expect(texts.get('i.html')).toBe('a\r\nb\r\nZ\r\nW\n');
     expect(summary[0]?.lines).toEqual([3, 4]);
   });
 

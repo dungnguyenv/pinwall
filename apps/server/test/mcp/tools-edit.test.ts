@@ -253,6 +253,32 @@ describe.each(dialects)('MCP edit_artifact on %s', (dialect) => {
     ).toBe(true);
   });
 
+  test('a one-line old_string whose new_string adds a line keeps a CRLF page CRLF', async () => {
+    await start();
+    const page = '<ul>\r\n  <li>Một</li>\r\n</ul>\r\n';
+    const v2 = await publishFiles(
+      ctx,
+      ada.user,
+      { 'index.html': page },
+      { kind: 'new_version', artifactId: id, expectedVersionId: v1.id },
+    );
+    const text = await ok(
+      [
+        {
+          op: 'replace',
+          path: 'index.html',
+          old_string: '<li>Một</li>',
+          new_string: '<li>Một</li>\n  <li>Hai</li>',
+        },
+      ],
+      { expected_version_id: v2.version.id },
+    );
+    expect(text).toContain('index.html: 1 replacements, now lines 2–3');
+    const sha256 = (await filesOfCurrent(ctx, id)).get('index.html') ?? '';
+    const bytes = Buffer.concat(await (await ctx.deps.blobs.get(sha256)).toArray());
+    expect(bytes.toString('utf8')).toBe('<ul>\r\n  <li>Một</li>\r\n  <li>Hai</li>\r\n</ul>\r\n');
+  });
+
   test('an edit reads at most 20,000,000 bytes of stored files, checked before any is read', async () => {
     await start();
     const pages = Object.fromEntries(
