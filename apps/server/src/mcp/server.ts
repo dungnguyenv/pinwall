@@ -26,6 +26,7 @@ export const TOOL_NAMES = [
   'list_artifacts',
   'get_artifact',
   'read_file',
+  'create_download_session',
   'edit_artifact',
   'create_publish_session',
   'publish_inline',

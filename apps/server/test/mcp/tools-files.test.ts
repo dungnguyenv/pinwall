@@ -5,6 +5,7 @@ import type { UserRow, VersionRow } from '../../src/db/schema.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { DESCRIPTIONS } from '../../src/mcp/descriptions.ts';
+import { untarPaths } from '../helpers/archives.ts';
 import { createSignedInUser, createUserToken } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
@@ -332,5 +333,140 @@ describe.each(dialects)('MCP read_file in personal spaces on %s', (dialect) => {
     // A viewer of P has no part in Q.
     const other = await readAs(V.token, fx.ids.q);
     expect(other.text).toBe((await readAs(V.token, UNKNOWN_IDS.q)).text);
+  });
+});
+
+describe.each(dialects)('MCP create_download_session on %s', (dialect) => {
+  let ctx: TestContext;
+  let ada: { user: UserRow; cookie: string };
+  let client: Client;
+  let id: string;
+  let v1: VersionRow;
+
+  beforeEach(async () => {
+    ctx = await createTestContext({ dialect, clock: new FixedClock(T) });
+    ada = await createSignedInUser(ctx, { kind: 'oidc', name: 'Ada' });
+    client = await connectMcp(ctx, { bearer: await createUserToken(ctx, ada.user.id) });
+    const first = await publishFiles(ctx, ada.user, {
+      'index.html': PAGE,
+      'css/site.css': 'p{}',
+    });
+    id = first.artifact.id;
+    v1 = first.version;
+  });
+  afterEach(async () => {
+    await client.close();
+    await ctx.close();
+  });
+
+  const download = (args: Record<string, unknown> = {}) =>
+    callText(client, 'create_download_session', { artifact_id: id, ...args });
+
+  /** The URL inside the command of a result. */
+  const urlIn = (text: string): string => /"(http[^"]*\/download\/[^"]+)"/.exec(text)?.[1] ?? '';
+
+  test('it answers the command, the version it holds and the reminder, and the URL works once', async () => {
+    const r = await download();
+    expect(r.isError, r.text).toBe(false);
+    const url = urlIn(r.text);
+    expect(url).toMatch(/^http:\/\/localhost:8080\/download\/[A-Za-z0-9_-]{43}$/);
+    expect(r.text).toContain(
+      `mkdir -p ./pinwall-${id} && curl --fail-with-body -sS "${url}" | tar -xzf - -C ./pinwall-${id}`,
+    );
+    expect(r.text).toContain(`It holds v1 (${v1.id}).`);
+    expect(r.text).toContain(
+      'Download into an empty folder, then compare with your copy; never unpack over uncommitted work.',
+    );
+
+    const first = await ctx.request(new URL(url).pathname);
+    expect(first.status).toBe(200);
+    expect(await untarPaths(first)).toEqual(['css/site.css', 'index.html']);
+    expect((await ctx.request(new URL(url).pathname)).status).toBe(404);
+  });
+
+  test('version and directory choose what is downloaded and where it goes', async () => {
+    const v2 = await publishFiles(
+      ctx,
+      ada.user,
+      { 'index.html': '<p>2</p>' },
+      {
+        kind: 'new_version',
+        artifactId: id,
+        expectedVersionId: v1.id,
+      },
+    );
+
+    const current = await download({ directory: './my site' });
+    expect(current.text).toContain(`-C './my site'`);
+    expect(current.text).toContain(`It holds v2 (${v2.version.id}).`);
+
+    const older = await download({ version: 1 });
+    expect(older.text).toContain(`It holds v1 (${v1.id}).`);
+    expect(await untarPaths(await ctx.request(new URL(urlIn(older.text)).pathname))).toEqual([
+      'css/site.css',
+      'index.html',
+    ]);
+  });
+
+  test('a missing artifact or version answers not_found, with a hint', async () => {
+    for (const args of [{ artifact_id: 'art_zzzzzzzzzzzzzzzzzzzz' }, { version: 9 }]) {
+      const r = await download(args);
+      expect(r.isError, JSON.stringify(args)).toBe(true);
+      expect(r.text, JSON.stringify(args)).toContain(t('mcp.hint.not_found'));
+    }
+  });
+
+  test('it is read-only, and described in at most 350 characters', async () => {
+    const { tools } = await client.listTools();
+    const tool = tools.find((x) => x.name === 'create_download_session');
+    expect(tool?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
+    expect(tool?.outputSchema).toBeUndefined();
+    expect(tool?.description).toBe(DESCRIPTIONS.create_download_session.description);
+    expect(DESCRIPTIONS.create_download_session.description.length).toBeLessThanOrEqual(350);
+    expect(Object.keys(tool?.inputSchema.properties ?? {}).sort()).toEqual([
+      'artifact_id',
+      'directory',
+      'version',
+    ]);
+  });
+
+  test('it counts toward the mcpRead rule, shared with read_file', async () => {
+    await exhaustRate(ctx, RATE_RULES.mcpRead, ada.user.id, 599);
+    expect((await download()).isError).toBe(false);
+    const refused = await download();
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('Too many requests');
+  });
+});
+
+describe.each(dialects)('MCP create_download_session in personal spaces on %s', (dialect) => {
+  let ctx: TestContext;
+  beforeAll(async () => {
+    ctx = await spacesContext(dialect, 'personal');
+  });
+  afterAll(() => ctx?.close());
+
+  async function downloadAs(token: string, artifactId: string) {
+    const client = await connectMcp(ctx, { bearer: token });
+    try {
+      return await callText(client, 'create_download_session', { artifact_id: artifactId });
+    } finally {
+      await client.close();
+    }
+  }
+
+  test('a viewer may download; another space answers as for an id that does not exist', async () => {
+    const fx = await spacesFixture(ctx);
+    const { V, S } = fx.people;
+
+    const viewed = await downloadAs(V.token, fx.ids.p);
+    expect(viewed.isError, viewed.text).toBe(false);
+    expect(viewed.text).toContain('It holds v2');
+
+    const outsider = await downloadAs(S.token, fx.ids.p);
+    const missing = await downloadAs(S.token, UNKNOWN_IDS.p);
+    expect(outsider.isError).toBe(true);
+    expect(outsider.text).toBe(missing.text);
+    expect(outsider.text).toContain(t('artifact.notFound'));
   });
 });

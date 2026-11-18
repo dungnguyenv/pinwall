@@ -1,9 +1,11 @@
+import { CreatePublishSessionRequest } from '@pinwall/shared';
 import { z } from 'zod';
 import { enforceRateLimit, RATE_RULES } from '../../auth/rate-limits.ts';
 import { scopeForUser } from '../../domain/spaces.ts';
 import { fileOf, readText, versionFor } from '../../domain/version-files.ts';
 import { badRequest } from '../../lib/errors.ts';
 import { t } from '../../lib/i18n.ts';
+import { createDownloadSession } from '../../publish/download.ts';
 import { DESCRIPTIONS, FIELDS } from '../descriptions.ts';
 import { flatten } from '../format.ts';
 import { runTool } from '../results.ts';
@@ -15,16 +17,19 @@ const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
 /** `read_file` shows at most this many lines in one call. */
 const LINES_MAX = 2000;
 
+/** The version a file tool works on: its number, as `get_artifact` lists them. */
+const VersionField = z
+  .number()
+  .int()
+  .min(1)
+  .optional()
+  .describe(
+    'A version number, as get_artifact lists them (3 for v3). Default: the current version.',
+  );
+
 const ReadFileIn = z.object({
   artifact_id: z.string().min(1).max(100).describe(FIELDS.artifactId),
-  version: z
-    .number()
-    .int()
-    .min(1)
-    .optional()
-    .describe(
-      'A version number, as get_artifact lists them (3 for v3). Default: the current version.',
-    ),
+  version: VersionField,
   path: z
     .string()
     .min(1)
@@ -50,12 +55,23 @@ const ReadFileIn = z.object({
     ),
 });
 
+const CreateDownloadIn = z.object({
+  artifact_id: z.string().min(1).max(100).describe(FIELDS.artifactId),
+  version: VersionField,
+  directory: CreatePublishSessionRequest.shape.directory.describe(
+    'Where to unpack, as the shell will see it (default ./pinwall-<artifact_id>), so the command can be run as given.',
+  ),
+});
+
 /**
- * The file tools: read the text of one file of an artifact version. They read through the same
- * services as `/api/v1`, so a caller sees what the API shows them; a viewer may read.
+ * The file tools: read the text of one file of an artifact version, or get a whole version onto
+ * disk. They read through the same services as `/api/v1`, so a caller sees what the API shows
+ * them; a viewer may read.
  */
 export const fileTools: ToolModule = (server, ctx) => {
   const { deps, auth } = ctx;
+  // A whole number of minutes, never more than the URL lives.
+  const minutes = Math.max(1, Math.floor(deps.config.ttl.uploadSessionMs / 60_000));
 
   server.registerTool(
     'read_file',
@@ -83,6 +99,29 @@ export const fileTools: ToolModule = (server, ctx) => {
         total: lines.length,
       });
       return [header, t('mcp.read.notice'), ...bodyOf(a, lines)].join('\n');
+    }),
+  );
+
+  server.registerTool(
+    'create_download_session',
+    {
+      ...DESCRIPTIONS.create_download_session,
+      inputSchema: CreateDownloadIn,
+      annotations: READ_ONLY,
+    },
+    runTool(ctx, async (a: z.output<typeof CreateDownloadIn>) => {
+      await enforceRateLimit(ctx.c, RATE_RULES.mcpRead, auth.user.id);
+      const session = await createDownloadSession(deps, auth.user, {
+        artifactId: a.artifact_id,
+        version: a.version,
+        directory: a.directory,
+      });
+      return t('mcp.download.session', {
+        minutes,
+        command: session.command,
+        number: session.version.number,
+        version_id: session.version.id,
+      });
     }),
   );
 };

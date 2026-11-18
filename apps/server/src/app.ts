@@ -19,6 +19,7 @@ import { mountMcp } from './mcp/route.ts';
 import { mountOAuth } from './oauth/routes.ts';
 import { httpMetrics } from './ops/metrics.ts';
 import { PAGES_CSS, PAGES_CSS_PATH } from './pages/pages.css.ts';
+import { mountDownloadRoute } from './publish/download-route.ts';
 import { mountUploadRoute } from './publish/upload-route.ts';
 
 /** Who is making the request, once `resolveAuth` has run. */
@@ -118,6 +119,8 @@ export function buildApp(
   app.route('/api/v1', buildApiRouter({ uploadIdleTimeoutMs: opts.uploadIdleTimeoutMs }));
   // The upload token is its only credential: no origin check, no cookie or bearer auth.
   mountUploadRoute(app, { idleTimeoutMs: opts.uploadIdleTimeoutMs });
+  // The download token is its only credential too: no origin check, no cookie or bearer auth.
+  mountDownloadRoute(app);
   app.route('/auth/oidc', buildOidcRouter());
   // `/a/:id/raw` and `/a/:id/v/:n/raw` take a cookie or a bearer token; the SPA owns `/a/:id`.
   mountRawLinks(app);

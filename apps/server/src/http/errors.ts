@@ -17,6 +17,7 @@ const MACHINE_PATHS = [
   '/oauth/revoke',
   '/.well-known',
   '/upload',
+  '/download',
 ];
 
 function isUnder(path: string, prefix: string): boolean {

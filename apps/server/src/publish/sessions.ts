@@ -35,13 +35,17 @@ export type UploadReceipt =
 const SESSION_PREFIX = 'upload:';
 const sessionKey = (h: string) => `${SESSION_PREFIX}${h}`;
 const receiptKey = (h: string) => `upload-receipt:${h}`;
-/** Every key of a user's upload URLs is put in this group, so a revocation can drop them all. */
-const userGroup = (userId: string) => ({ group: `upload-user:${userId}` });
+/**
+ * Every key of a user's upload URLs (and download URLs) is put in this group, so a revocation can
+ * drop them all.
+ */
+export const userGroup = (userId: string) => ({ group: `upload-user:${userId}` });
 
 /**
  * Ends every upload URL `userId` has ("Revoke now"): the sessions not used yet, and the
- * receipts, so an upload running now cannot give its session back when it fails. A URL then
- * answers as unknown. Returns how many entries were removed.
+ * receipts, so an upload running now cannot give its session back when it fails. The download
+ * URLs not used yet go with them. A URL then answers as unknown. Returns how many entries were
+ * removed.
  */
 export function revokeUploadSessions(deps: AppDeps, userId: string): Promise<number> {
   return deps.oneTime.deleteGroup(userGroup(userId).group);
@@ -149,7 +153,7 @@ export function uploadCommands(
 }
 
 /** `text` as one shell word: as is when every character is safe, else in single quotes. */
-function shellQuote(text: string): string {
+export function shellQuote(text: string): string {
   if (SHELL_SAFE.test(text)) return text;
   return `'${text.replaceAll("'", `'\\''`)}'`;
 }
@@ -251,7 +255,7 @@ async function refusal(deps: AppDeps, h: string): Promise<AppError> {
 }
 
 /** The session's creator, refused with `access_denied` when they were removed or blocked since. */
-async function activeUser(deps: AppDeps, id: string): Promise<UserRow> {
+export async function activeUser(deps: AppDeps, id: string): Promise<UserRow> {
   const user = await deps.db.db
     .selectFrom('users')
     .selectAll()

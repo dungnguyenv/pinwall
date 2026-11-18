@@ -39,6 +39,7 @@ test('tokens in paths never reach the log', () => {
   expect(loggablePath('/s/share-secret')).toBe('/s/:token');
   expect(loggablePath('/s/share-secret/original')).toBe('/s/:token/original');
   expect(loggablePath('/upload/upload-secret')).toBe('/upload/:token');
+  expect(loggablePath('/download/download-secret')).toBe('/download/:token');
   // The share viewer's API carries the share token too.
   expect(loggablePath('/api/v1/share/share-secret')).toBe('/api/v1/share/:token');
   expect(loggablePath('/api/v1/share/share-secret/unlock')).toBe('/api/v1/share/:token/unlock');

@@ -1,6 +1,6 @@
-import { gzipSync } from 'node:zlib';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { type ZipOptions, type Zippable, zipSync } from 'fflate';
-import { pack } from 'tar-stream';
+import { extract, pack } from 'tar-stream';
 
 export interface TarSpec {
   name: string;
@@ -23,6 +23,31 @@ export async function makeTar(entries: TarSpec[], o: { gzip?: boolean } = {}): P
   for await (const chunk of archive) chunks.push(chunk as Buffer);
   const tar = Buffer.concat(chunks);
   return o.gzip ? gzipSync(tar) : tar;
+}
+
+/**
+ * The entries of a tar archive, gzipped or not, in the order they are stored: a response, or its
+ * bytes. Reads it whole, so it is for archives a test made small.
+ */
+export async function untar(
+  source: Response | Buffer,
+): Promise<{ path: string; type: string; body: Buffer }[]> {
+  const bytes = Buffer.isBuffer(source) ? source : Buffer.from(await source.arrayBuffer());
+  const gzipped = bytes[0] === 0x1f && bytes[1] === 0x8b;
+  const archive = extract();
+  archive.end(gzipped ? gunzipSync(bytes) : bytes);
+  const entries: { path: string; type: string; body: Buffer }[] = [];
+  for await (const entry of archive) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of entry) chunks.push(chunk as Buffer);
+    entries.push({ path: entry.header.name, type: entry.header.type, body: Buffer.concat(chunks) });
+  }
+  return entries;
+}
+
+/** The paths of the entries of a tar archive, in the order they are stored; see `untar`. */
+export async function untarPaths(source: Response | Buffer): Promise<string[]> {
+  return (await untar(source)).map((entry) => entry.path);
 }
 
 export interface ZipSpec {

@@ -15,6 +15,7 @@ const SERVER_PATHS = [
   '/api',
   '/auth/oidc',
   '/upload',
+  '/download',
   '/c/',
   '/mcp',
   '/.well-known',

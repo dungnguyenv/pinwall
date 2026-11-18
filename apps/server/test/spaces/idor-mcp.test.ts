@@ -23,6 +23,7 @@ import {
 const TOOLS: [string, (ids: CaseIds) => Record<string, unknown>][] = [
   ['get_artifact', (i) => ({ artifact_id: i.q })],
   ['read_file', (i) => ({ artifact_id: i.q })],
+  ['create_download_session', (i) => ({ artifact_id: i.q })],
   [
     'edit_artifact',
     (i) => ({
