@@ -55,6 +55,12 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
   limit, so publishing needs no `whoami` call first. `whoami` shows the account's email.
 - **A new rate limit, `mcp-read`:** 600 calls an hour per person, shared by `read_file`,
   `create_download_session` and `list_comments`.
+- **Large reads at once are bounded.** `read_file`, `list_comments` when it locates threads, and
+  the diff a refusal carries read whole files: a person may run 2 of them at once, and the
+  instance 4 (an admin is held to their own 2). Past that, the call is refused with 429
+  `rate_limited` and `details.retry_after_seconds`; a refusal that would carry a diff goes out
+  without it. `edit_artifact` reads its files only once it holds a publish place, so it counts
+  toward the publishes one may run at once.
 - **Smaller fixed costs.** Each tool description is at most 350 characters, and the agent skill
   is under 5,000 bytes, from 9.7 KB. The skill gains a section on editing and says what to do on
   `edited_on_server`.

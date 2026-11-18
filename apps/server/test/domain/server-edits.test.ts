@@ -80,8 +80,8 @@ describe.each(dialects)('server edits on %s', (dialect) => {
     );
     const { version } = await ingestEdit(
       ctx.deps,
-      { artifactId: id, expectedVersionId: on.id, changed },
-      { actor: ada, source: 'mcp', message: null, serverEdits: paths },
+      { artifactId: id, expectedVersionId: on.id, prepare: async () => changed },
+      { actor: ada, source: 'mcp', message: null },
     );
     return version;
   }

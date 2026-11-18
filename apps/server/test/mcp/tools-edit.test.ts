@@ -6,6 +6,7 @@ import { usageOf } from '../../src/domain/usage.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { DESCRIPTIONS } from '../../src/mcp/descriptions.ts';
+import { INGESTS_PER_PERSON, takeIngestSlot } from '../../src/publish/ingest-slots.ts';
 import { createSignedInUser, createUserToken } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
@@ -464,6 +465,27 @@ describe.each(dialects)('MCP edit_artifact on %s', (dialect) => {
     expect(d.length).toBeLessThanOrEqual(350);
     expect(d).toContain('create_publish_session');
     expect(d).toMatch(/on disk/);
+  });
+
+  test('without a publish place, an edit reads no stored file', async () => {
+    await start();
+    const held = Array.from({ length: INGESTS_PER_PERSON }, () =>
+      takeIngestSlot(ctx.deps, ada.user),
+    );
+    const get = vi.spyOn(ctx.deps.blobs, 'get');
+    try {
+      const r = await edit([
+        { op: 'replace', path: 'notes.md', old_string: 'Hai', new_string: 'Ba' },
+      ]);
+      expect(r.isError).toBe(true);
+      expect(r.text).toContain('"reason":"publishes_running"');
+      expect(get).not.toHaveBeenCalled();
+    } finally {
+      get.mockRestore();
+      for (const release of held) release();
+    }
+    expect(await versions()).toHaveLength(1);
+    await ok([{ op: 'replace', path: 'notes.md', old_string: 'Hai', new_string: 'Ba' }]);
   });
 
   test('editing shares the publish rate limit', async () => {

@@ -325,7 +325,7 @@ describe.each(dialects)('locateThreads on %s', (dialect) => {
       textAnchor({ exact: 'x', prefix: '', suffix: '' }, 'gone/'),
     ]);
     const [row, quote, missing, point, gone] = threads.map((th) => th.id);
-    const located = await locateThreads(ctx.deps, version, threads);
+    const located = await locateThreads(ctx.deps, version, threads, ada);
     expect(located.get(row ?? '')).toEqual({
       path: 'index.html',
       start: 8,
@@ -358,7 +358,9 @@ describe.each(dialects)('locateThreads on %s', (dialect) => {
     const { version, threads } = await threadsOn({ 'index.html': html }, [
       elementAnchorAt('body > section'),
     ]);
-    expect((await locateThreads(ctx.deps, version, threads)).get(threads[0]?.id ?? '')).toEqual({
+    expect(
+      (await locateThreads(ctx.deps, version, threads, ada)).get(threads[0]?.id ?? ''),
+    ).toEqual({
       path: 'index.html',
       start: 2,
       end: 6,
@@ -373,7 +375,7 @@ describe.each(dialects)('locateThreads on %s', (dialect) => {
     const { version, threads } = await threadsOn({ 'index.html': minified }, [
       elementAnchorAt('#x'),
     ]);
-    const at = (await locateThreads(ctx.deps, version, threads)).get(threads[0]?.id ?? '');
+    const at = (await locateThreads(ctx.deps, version, threads, ada)).get(threads[0]?.id ?? '');
     expect(at).toMatchObject({ path: 'index.html', start: 1, end: 1 });
     const [line] = typeof at === 'object' && at !== null ? at.snippet : [];
     // The line is shown from the element, with a mark at each end where text was left out.
@@ -386,7 +388,7 @@ describe.each(dialects)('locateThreads on %s', (dialect) => {
       elementAnchorAt('#prices', 'notes.md'),
       elementAnchorAt('#prices', ''),
     ]);
-    const located = await locateThreads(ctx.deps, version, threads);
+    const located = await locateThreads(ctx.deps, version, threads, ada);
     for (const th of threads) {
       expect(located.get(th.id)).toEqual({
         path: 'notes.md',
@@ -409,7 +411,7 @@ describe.each(dialects)('locateThreads on %s', (dialect) => {
         elementAnchorAt('#x', 'huge.html'),
       ],
     );
-    const located = await locateThreads(ctx.deps, version, threads);
+    const located = await locateThreads(ctx.deps, version, threads, ada);
     expect(threads.map((th) => located.get(th.id))).toEqual([null, null, null]);
   });
 
@@ -422,7 +424,7 @@ describe.each(dialects)('locateThreads on %s', (dialect) => {
       elementAnchorAt('#prices', 'b.md'),
       elementAnchorAt('#prices', 'c.md'),
     ]);
-    const located = await locateThreads(ctx.deps, version, threads);
+    const located = await locateThreads(ctx.deps, version, threads, ada);
     expect(threads.map((th) => located.get(th.id))).toEqual([
       expect.objectContaining({ path: 'a.md', start: 1 }),
       expect.objectContaining({ path: 'b.md', start: 1 }),
@@ -437,7 +439,7 @@ describe.each(dialects)('locateThreads on %s', (dialect) => {
       textAnchor({ exact: 'row 1', prefix: '', suffix: '' }),
     ]);
     const get = vi.spyOn(ctx.deps.blobs, 'get');
-    const located = await locateThreads(ctx.deps, version, threads);
+    const located = await locateThreads(ctx.deps, version, threads, ada);
     expect(threads.map((th) => (located.get(th.id) as { start: number }).start)).toEqual([8, 2, 4]);
     expect(get).toHaveBeenCalledTimes(1);
   });

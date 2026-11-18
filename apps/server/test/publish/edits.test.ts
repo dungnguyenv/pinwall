@@ -454,12 +454,13 @@ describe.each(dialects)('ingestEdit on %s', (dialect) => {
       {
         artifactId: v2.artifact.id,
         expectedVersionId: v2.version.id,
-        changed: new Map([
-          ['b.css', null],
-          ['docs/new.md', Buffer.from('# New\n')],
-        ]),
+        prepare: async () =>
+          new Map([
+            ['b.css', null],
+            ['docs/new.md', Buffer.from('# New\n')],
+          ]),
       },
-      { ...opts, serverEdits: ['b.css', 'docs/new.md'] },
+      opts,
     );
 
     expect(version).toMatchObject({ number: 3, parent_version_id: v2.version.id, source: 'mcp' });
@@ -481,8 +482,12 @@ describe.each(dialects)('ingestEdit on %s', (dialect) => {
     const { v2 } = await twoVersions();
     const { version } = await ingestEdit(
       ctx.deps,
-      { artifactId: v2.artifact.id, expectedVersionId: v2.version.id, changed: new Map() },
-      { ...opts, serverEdits: [] },
+      {
+        artifactId: v2.artifact.id,
+        expectedVersionId: v2.version.id,
+        prepare: async () => new Map(),
+      },
+      opts,
     );
     expect(JSON.parse(version.meta)).toEqual({ warnings: [] });
   });
@@ -495,9 +500,9 @@ describe.each(dialects)('ingestEdit on %s', (dialect) => {
         {
           artifactId: v1.artifact.id,
           expectedVersionId: v1.version.id,
-          changed: new Map([['index.html', Buffer.from('<p>three</p>')]]),
+          prepare: async () => new Map([['index.html', Buffer.from('<p>three</p>')]]),
         },
-        { ...opts, serverEdits: ['index.html'] },
+        opts,
       ),
     ).rejects.toMatchObject({
       code: 'version_conflict',
@@ -523,12 +528,13 @@ describe.each(dialects)('ingestEdit on %s', (dialect) => {
         {
           artifactId: v2.artifact.id,
           expectedVersionId: v2.version.id,
-          changed: new Map([
-            ['a.css', Buffer.from('a{}')],
-            ['big.css', Buffer.from('x'.repeat(101))],
-          ]),
+          prepare: async () =>
+            new Map([
+              ['a.css', Buffer.from('a{}')],
+              ['big.css', Buffer.from('x'.repeat(101))],
+            ]),
         },
-        { ...opts, serverEdits: ['a.css', 'big.css'] },
+        opts,
       ),
     ).rejects.toMatchObject({ status: 413, details: { limit: 'max_file_bytes', path: 'big.css' } });
     expect(await versions()).toHaveLength(2);
@@ -558,9 +564,9 @@ describe.each(dialects)('ingestEdit on %s', (dialect) => {
         {
           artifactId: v2.artifact.id,
           expectedVersionId: v2.version.id,
-          changed: new Map([['b.css', Buffer.from('c{}')]]),
+          prepare: async () => new Map([['b.css', Buffer.from('c{}')]]),
         },
-        { ...opts, serverEdits: ['b.css'] },
+        opts,
       ),
     ).rejects.toMatchObject({
       code: 'version_conflict',
@@ -597,9 +603,9 @@ describe.each(dialects)('ingestEdit on %s', (dialect) => {
         {
           artifactId: v2.artifact.id,
           expectedVersionId: v2.version.id,
-          changed: new Map([['b.css', Buffer.from('c{}')]]),
+          prepare: async () => new Map([['b.css', Buffer.from('c{}')]]),
         },
-        { ...opts, serverEdits: ['b.css'] },
+        opts,
       ),
     ).rejects.toMatchObject({
       code: 'version_conflict',

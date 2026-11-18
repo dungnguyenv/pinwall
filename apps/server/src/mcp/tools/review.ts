@@ -234,7 +234,9 @@ export const reviewTools: ToolModule = (server, ctx) => {
       const current = await currentVersionOf(deps, artifact);
       // Where each thread sits in the version the agent would edit.
       const located =
-        current === null ? new Map<string, Located>() : await locateThreads(deps, current, items);
+        current === null
+          ? new Map<string, Located>()
+          : await locateThreads(deps, current, items, user);
       const name = flatten(artifact.name);
       const status = t(`mcp.comments.status.${a.status}`);
       const summary =

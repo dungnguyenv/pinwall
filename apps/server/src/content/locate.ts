@@ -5,6 +5,8 @@ import type { AppDeps } from '../deps.ts';
 import { filesAt, pageCandidates, pageFilePath, readText } from '../domain/version-files.ts';
 import { AppError } from '../lib/errors.ts';
 import { cleaned, splitLines } from '../mcp/text-window.ts';
+import type { IngestActor } from '../publish/ingest-slots.ts';
+import { inReadSlot } from '../publish/read-slots.ts';
 import { elementAt, type HtmlElement, type HtmlPage, parseHtmlPage } from './html-tree.ts';
 import { MARKDOWN_RENDER_MAX_BYTES, renderMarkdownPage } from './markdown.ts';
 import { MARKDOWN_BUDGET_BYTES } from './metadata.ts';
@@ -281,11 +283,15 @@ async function pageText(
  * as `locateInHtml` or `locateInMarkdown` says, with a snippet of its first lines. Each file is
  * read and parsed at most once, and only while it is being located, so one call holds one parsed
  * page at a time. Point anchors and the files `pageText` refuses are not located (null).
+ *
+ * The files are read in a place `inReadSlot` gives `actor`, taken only when there is a page to
+ * open: without one, it throws the 429 before any file is read.
  */
 export async function locateThreads(
   deps: AppDeps,
   version: VersionRow,
   threads: readonly CommentThread[],
+  actor: IngestActor,
 ): Promise<Map<string, Located>> {
   const located = new Map<string, Located>();
   const wanted = threads.filter((th) => locatable(th.anchor));
@@ -308,13 +314,16 @@ export async function locateThreads(
     else onFile.push(th);
   }
 
-  const budget: Budget = { pages: LOCATE_BUDGET_BYTES, markdown: MARKDOWN_BUDGET_BYTES };
-  for (const [path, onFile] of byFile) {
-    const file = files.get(path);
-    const locate = file === undefined ? null : await openPage(deps, file, budget);
-    for (const th of onFile) located.set(th.id, locate === null ? null : locate(th.anchor));
-  }
-  return located;
+  if (byFile.size === 0) return located;
+  return inReadSlot(deps, actor, async () => {
+    const budget: Budget = { pages: LOCATE_BUDGET_BYTES, markdown: MARKDOWN_BUDGET_BYTES };
+    for (const [path, onFile] of byFile) {
+      const file = files.get(path);
+      const locate = file === undefined ? null : await openPage(deps, file, budget);
+      for (const th of onFile) located.set(th.id, locate === null ? null : locate(th.anchor));
+    }
+    return located;
+  });
 }
 
 /**

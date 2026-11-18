@@ -6,6 +6,7 @@ import { fileOf, readText, versionFor } from '../../domain/version-files.ts';
 import { badRequest } from '../../lib/errors.ts';
 import { t } from '../../lib/i18n.ts';
 import { createDownloadSession } from '../../publish/download.ts';
+import { inReadSlot } from '../../publish/read-slots.ts';
 import { DESCRIPTIONS, FIELDS } from '../descriptions.ts';
 import { flatten, minutesText, urlMinutes } from '../format.ts';
 import { runTool } from '../results.ts';
@@ -88,16 +89,18 @@ export const fileTools: ToolModule = (server, ctx) => {
         a.version,
       );
       const file = await fileOf(deps, version, a.path);
-      const lines = splitLines(await readText(deps, file));
-
-      const header = t('mcp.read.header', {
-        // A path is the publisher's: one line, whatever it holds.
-        path: flatten(file.path),
-        number: version.number,
-        version_id: version.id,
-        count: lines.length,
+      // The whole file is read, so how many reads hold one at once is bounded.
+      return inReadSlot(deps, auth.user, async () => {
+        const lines = splitLines(await readText(deps, file));
+        const header = t('mcp.read.header', {
+          // A path is the publisher's: one line, whatever it holds.
+          path: flatten(file.path),
+          number: version.number,
+          version_id: version.id,
+          count: lines.length,
+        });
+        return [header, t('mcp.read.notice'), ...bodyOf(a, lines)].join('\n');
       });
-      return [header, t('mcp.read.notice'), ...bodyOf(a, lines)].join('\n');
     }),
   );
 

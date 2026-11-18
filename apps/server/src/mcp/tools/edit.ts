@@ -105,26 +105,30 @@ export const editTools: ToolModule = (server, ctx) => {
         const { version } = await versionFor(deps, scope, a.artifact_id);
         if (version.id !== a.expected_version_id) throw versionConflict(version);
 
-        const base = await baseTexts(deps, version, ops);
-        const { texts, summary } = applyEdits(
-          ops,
-          (path) => base.get(path) ?? null,
-          version.entry_path,
-          config.limits,
-        );
-        const changed = new Map<string, Buffer | null>();
-        for (const [path, text] of texts) {
-          changed.set(path, text === null ? null : Buffer.from(text, 'utf8'));
-        }
+        let summary: FileEdit[] = [];
         const outcome = await ingestEdit(
           deps,
-          { artifactId: a.artifact_id, expectedVersionId: a.expected_version_id, changed },
           {
-            actor: user,
-            source: 'mcp',
-            message: messageOf(a.message),
-            serverEdits: summary.map((edit) => edit.path),
+            artifactId: a.artifact_id,
+            expectedVersionId: a.expected_version_id,
+            // In the publish's place, so that how many edits hold their files at once is bounded.
+            prepare: async () => {
+              const base = await baseTexts(deps, version, ops);
+              const applied = applyEdits(
+                ops,
+                (path) => base.get(path) ?? null,
+                version.entry_path,
+                config.limits,
+              );
+              summary = applied.summary;
+              const changed = new Map<string, Buffer | null>();
+              for (const [path, text] of applied.texts) {
+                changed.set(path, text === null ? null : Buffer.from(text, 'utf8'));
+              }
+              return changed;
+            },
           },
+          { actor: user, source: 'mcp', message: messageOf(a.message) },
         );
 
         const result = toPublishResult(config, outcome);

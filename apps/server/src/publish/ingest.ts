@@ -287,36 +287,46 @@ async function publishInline(
 
 /**
  * Publishes the version `edit_artifact` makes on top of `expectedVersionId`, which must be the
- * current one: each path in `changed` is stored with its new bytes, or left out when they are
- * null (deleted); every other file of that version is carried over by its hash
- * (`BlobStager.carry`), neither read nor stored again, though it counts in full toward the
- * version's size, its number of files and the space's quota. The paths in `changed` must already
- * be normalized as a publish normalizes them (`parseEdits` does). Otherwise it is a new-version
- * publish like any other: `checkTarget` first,
- * in a place `inIngestSlot` gives (`metered`, with the changed bytes as the request's), then the
- * entry is chosen again, metadata extracted and the version committed with
- * `opts.serverEdits` in its `meta`. On failure nothing is committed and the blobs it staged
- * that nothing else uses are removed.
+ * current one. `prepare` works out what changes, by path: the new bytes, or null to leave the
+ * file out (deleted). It runs in the publish's place (`inIngestSlot`, through `metered`), so the
+ * stored files an edit reads and the texts it builds count toward how many publishes run at once;
+ * without a place it never runs. Each changed path is stored with its new bytes, and every other
+ * file of that version is carried over by its hash (`BlobStager.carry`), neither read nor stored
+ * again, though it counts in full toward the version's size, its number of files and the space's
+ * quota. The changed paths must already be normalized as a publish normalizes them (`parseEdits`
+ * does). Otherwise it is a new-version publish like any other: `checkTarget` (with the changed
+ * bytes, which also count as the request's), then the entry is chosen again, metadata extracted
+ * and the version committed with the changed paths as `serverEdits` in its `meta`. On failure
+ * nothing is committed and the blobs it staged that nothing else uses are removed.
  */
 export function ingestEdit(
   deps: AppDeps,
-  p: { artifactId: string; expectedVersionId: string; changed: Map<string, Buffer | null> },
-  opts: PublishOptions & { serverEdits: readonly string[] },
+  p: {
+    artifactId: string;
+    expectedVersionId: string;
+    prepare: () => Promise<Map<string, Buffer | null>>;
+  },
+  opts: PublishOptions,
 ): Promise<PublishOutcome> {
   let bytes = 0;
-  for (const data of p.changed.values()) bytes += data?.length ?? 0;
   return metered(
     deps,
     opts,
     () => bytes,
     null,
-    (deadline) => publishEdit(deps, p, opts, bytes, deadline),
+    async (deadline) => {
+      const changed = await p.prepare();
+      for (const data of changed.values()) bytes += data?.length ?? 0;
+      const edit = { ...opts, serverEdits: [...changed.keys()] };
+      return publishEdit(deps, p, changed, edit, bytes, deadline);
+    },
   );
 }
 
 async function publishEdit(
   deps: AppDeps,
-  p: { artifactId: string; expectedVersionId: string; changed: Map<string, Buffer | null> },
+  p: { artifactId: string; expectedVersionId: string },
+  changed: Map<string, Buffer | null>,
   opts: PublishOptions,
   bytes: number,
   deadline: AbortSignal,
@@ -339,7 +349,7 @@ async function publishEdit(
       .execute();
     // Pinned first, as soon as they are read.
     for (const row of rows) {
-      if (p.changed.has(row.path)) continue;
+      if (changed.has(row.path)) continue;
       await stager.carry({
         path: row.path,
         sha256: row.sha256,
@@ -351,7 +361,7 @@ async function publishEdit(
     // a collection. A deleted version is never current again: if it is current here, it has
     // existed all along, so every carried blob is still stored, and pinned from now on.
     await checkTarget(deps, scope, target);
-    for (const [path, data] of p.changed) {
+    for (const [path, data] of changed) {
       if (data !== null) await stager.stage(path, data, data.length);
     }
     return { unwrap: false };

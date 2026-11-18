@@ -7,6 +7,7 @@ import { FixedClock } from '../../src/lib/clock.ts';
 import { conflict, notFound } from '../../src/lib/errors.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { MERGE_DIFF_MAX_CHARS, mergeDiff, refusalAppendix } from '../../src/mcp/merge-diff.ts';
+import { tryReadSlot } from '../../src/publish/read-slots.ts';
 import { createSignedInUser, createUserToken } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
@@ -187,6 +188,31 @@ describe.each(dialects)('merge diffs on refusals on %s', (dialect) => {
     expect(edit.text).toContain('-<h1>Một</h1>');
     expect(edit.text).toContain('+<h1>Hai</h1>');
     expect((await ctx.deps.db.db.selectFrom('versions').select('id').execute()).length).toBe(2);
+  });
+
+  test('without a free read place, the refusal still comes, without the diff', async () => {
+    await start();
+    await next({ 'index.html': '<h1>Hai</h1>', 'notes.md': '# Ghi chú\n', 'img/a.png': PNG });
+    const held = [tryReadSlot(ctx.deps, ada.user), tryReadSlot(ctx.deps, ada.user)];
+    expect(held).not.toContain(null);
+    const get = vi.spyOn(ctx.deps.blobs, 'get');
+    try {
+      const r = await staleInline();
+      expect(r.isError).toBe(true);
+      expect(r.text).toContain(t('publish.versionConflict', { number: 2 }));
+      expect(r.text).toContain(t('mcp.hint.version_conflict'));
+      expect(r.text).not.toContain(HEADING);
+      expect(r.text).not.toContain('reads_running');
+      expect(get).not.toHaveBeenCalled();
+    } finally {
+      get.mockRestore();
+      for (const release of held) release?.();
+    }
+    // With a place, the same refusal carries the diff, and gives the place back.
+    expect((await staleInline()).text).toContain(HEADING);
+    const again = [tryReadSlot(ctx.deps, ada.user), tryReadSlot(ctx.deps, ada.user)];
+    expect(again).not.toContain(null);
+    for (const release of again) release?.();
   });
 
   test('a diff past 4,000 characters names the file instead', async () => {

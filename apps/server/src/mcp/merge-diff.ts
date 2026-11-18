@@ -1,9 +1,10 @@
 import type { AppDeps } from '../deps.ts';
 import { diffTextFile, diffVersionFiles } from '../domain/diff.ts';
-import type { Scope } from '../domain/spaces.ts';
+import type { Scope, ViewerScope } from '../domain/spaces.ts';
 import { getVersionsById } from '../domain/versions.ts';
 import { AppError } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
+import { tryReadSlot } from '../publish/read-slots.ts';
 import { dropControls, flatten } from './format.ts';
 
 /** A merge diff, heading and every other line of it included, is this many characters at most. */
@@ -184,10 +185,14 @@ export interface StaleBaseArgs {
  * of this artifact's, or was deleted; the chain of edits broke at a deleted version), has none:
  * null. `requestId` is the request's, for the log when a file cannot be compared. The diff is
  * read as `scope`, so it shows only what the caller may already read.
+ *
+ * The diff reads files whole, so it is made in a read place of the caller's (`tryReadSlot`).
+ * Without a free one there is no diff (null): the refusal goes out without it, and its hint says
+ * what to do when no changes are shown.
  */
 export function refusalAppendix(
   deps: AppDeps,
-  scope: Scope,
+  scope: ViewerScope,
   args: StaleBaseArgs,
   requestId?: string,
 ): (err: unknown) => Promise<string | null> {
@@ -197,23 +202,28 @@ export function refusalAppendix(
       return null;
     }
     const { details } = err;
+    let between: { from: number; to: number; only: string[] | null } | null = null;
     if (err.code === 'version_conflict') {
       const current = details?.current_version_number;
       if (typeof current !== 'number') return null;
       const expected = await versionNumber(deps, artifactId, expectedId);
-      return expected === null
-        ? null
-        : mergeDiff(deps, scope, artifactId, expected, current, null, undefined, requestId);
-    }
-    if (err.code === 'conflict' && details?.reason === 'edited_on_server') {
+      if (expected !== null) between = { from: expected, to: current, only: null };
+    } else if (err.code === 'conflict' && details?.reason === 'edited_on_server') {
       const { base_version_number: base, paths } = details;
       if (typeof base !== 'number' || !Array.isArray(paths)) return null;
       const expected = await versionNumber(deps, artifactId, expectedId);
-      if (expected === null) return null;
       const edited = paths.filter((path): path is string => typeof path === 'string');
-      return mergeDiff(deps, scope, artifactId, base, expected, edited, undefined, requestId);
+      if (expected !== null) between = { from: base, to: expected, only: edited };
     }
-    return null;
+    if (between === null) return null;
+    const release = tryReadSlot(deps, scope.user);
+    if (release === null) return null;
+    try {
+      const { from, to, only } = between;
+      return await mergeDiff(deps, scope, artifactId, from, to, only, undefined, requestId);
+    } finally {
+      release();
+    }
   };
 }
 
