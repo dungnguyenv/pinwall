@@ -6,7 +6,7 @@ import { AppError } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { dropControls, flatten } from './format.ts';
 
-/** The patches in a merge diff add up to this many characters at most. */
+/** A merge diff, heading and every other line of it included, is this many characters at most. */
 export const MERGE_DIFF_MAX_CHARS = 4_000;
 
 /** The line separators that are not control characters, which a terminal may still break at. */
@@ -32,11 +32,15 @@ function patchText(patch: string): string {
  * instructions, then one unified diff for each file that differs (all of them, or only those in
  * `only`), in path order, then one line `mcp.merge.none` if no file does.
  *
- * The patches shown add up to `maxChars` at most. A file whose patch would cross it, a binary
- * file, and a file `diffTextFile` will not compare (too large) is named with
- * `mcp.merge.notShown` instead, so `read_file` can show it; the files after it are still shown
- * if their patches fit. A version or artifact that is missing, or that `scope` does not see, answers as
- * `diffVersionFiles` does.
+ * The whole text, heading and line breaks included, is at most `maxChars` (unless that is less
+ * than the heading and the last line below). A file whose patch would not fit, a binary file,
+ * and a file `diffTextFile` will not compare (too large) is named with `mcp.merge.notShown`
+ * instead, so `read_file` can show it; the files after it are still shown if their patches fit.
+ * When not even the next name fits, the text ends with one line, `mcp.merge.moreFiles`, with how
+ * many files are left; room for it is kept all along. A file whose patch cannot fit, however
+ * short (it has at least its two header lines), is not compared, so a large rebuild does not
+ * read hundreds of files for nothing. A version or artifact that is missing, or that `scope`
+ * does not see, answers as `diffVersionFiles` does.
  */
 export async function mergeDiff(
   deps: AppDeps,
@@ -49,24 +53,38 @@ export async function mergeDiff(
 ): Promise<string> {
   const wanted = only === null ? null : new Set(only);
   const changes = await diffVersionFiles(deps, scope, artifactId, from, to);
+  const paths = changes.map((change) => change.path).filter((path) => wanted?.has(path) ?? true);
+  const moreFiles = (count: number) => t('mcp.merge.moreFiles', { count });
 
-  const parts: string[] = [];
-  let used = 0;
-  for (const { path } of changes) {
-    if (wanted !== null && !wanted.has(path)) continue;
-    const { patch } = await diffTextFile(deps, scope, artifactId, from, to, path);
-    const shown = patch === null ? null : patchText(patch);
-    if (shown !== null && used + shown.length <= maxChars) {
-      parts.push(shown);
-      used += shown.length;
-    } else {
-      // A path is the publisher's: one line, whatever it holds.
-      parts.push(t('mcp.merge.notShown', { path: flatten(path) }));
+  const heading = t('mcp.merge.heading');
+  if (paths.length === 0) return [heading, t('mcp.merge.none')].join('\n');
+  const lines = [heading];
+  let length = heading.length;
+  /** Whether a line of `size` characters fits, with room left to say how many files `following` is. */
+  const fits = (size: number, following: number): boolean =>
+    length + 1 + size + (following === 0 ? 0 : 1 + moreFiles(following).length) <= maxChars;
+
+  for (const [i, path] of paths.entries()) {
+    const following = paths.length - i - 1;
+    let line: string | null = null;
+    // Every patch has these two lines at least.
+    const headers = `--- ${path}\tv${from}\n+++ ${path}\tv${to}`.length;
+    if (fits(headers, following)) {
+      const { patch } = await diffTextFile(deps, scope, artifactId, from, to, path);
+      const shown = patch === null ? null : patchText(patch);
+      if (shown !== null && fits(shown.length, following)) line = shown;
     }
+    // A path is the publisher's: one line, whatever it holds.
+    line ??= t('mcp.merge.notShown', { path: flatten(path) });
+    if (!fits(line.length, following)) {
+      // Room for this was kept when the line before was added.
+      lines.push(moreFiles(paths.length - i));
+      break;
+    }
+    lines.push(line);
+    length += 1 + line.length;
   }
-  return [t('mcp.merge.heading'), ...(parts.length === 0 ? [t('mcp.merge.none')] : parts)].join(
-    '\n',
-  );
+  return lines.join('\n');
 }
 
 /** What a writing tool was told it builds on. */

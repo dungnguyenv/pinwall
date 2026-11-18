@@ -1,5 +1,5 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { UserRow, VersionRow } from '../../src/db/schema.ts';
 import { scopeForUser } from '../../src/domain/spaces.ts';
 import { versionConflict } from '../../src/domain/versions.ts';
@@ -158,31 +158,100 @@ describe.each(dialects)('merge diffs on refusals on %s', (dialect) => {
     expect(r.text).toContain('+# Ghi chú mới');
   });
 
-  test('the patches shown add up to at most the cap, and not one character over', async () => {
+  test('the whole text, heading and name lines included, stays within the cap', async () => {
     await start({ 'index.html': '<p>x</p>\n', 'z.html': '<p>x</p>\n' });
     await next({ 'index.html': '<p>y</p>\n', 'z.html': '<p>y</p>\n' });
     const diff = (only: string[] | null, max: number) =>
       mergeDiff(ctx.deps, scope(), id, 1, 2, only, max);
+    const more = (count: number) => t('mcp.merge.moreFiles', { count });
     // One patch each, without the heading line before it.
     const a = (await diff(['index.html'], 10_000)).slice(HEADING.length + 1);
     const b = (await diff(['z.html'], 10_000)).slice(HEADING.length + 1);
     expect(a).toContain('+<p>y</p>');
     const full = await diff(null, 10_000);
     expect(full).toBe([HEADING, a, b].join('\n'));
+    const nameA = notShown('index.html');
+    const nameB = notShown('z.html');
+    expect(nameB.length).toBeLessThan(b.length);
 
     // Room for both, with no room to spare.
-    expect(await diff(null, a.length + b.length)).toBe(full);
+    expect(await diff(null, full.length)).toBe(full);
     // One character short: the second file is named instead.
-    expect(await diff(null, a.length + b.length - 1)).toBe(
-      [HEADING, a, notShown('z.html')].join('\n'),
-    );
-    // The first no longer fits, so it is named; the next, which is shorter, still does.
-    expect(await diff(null, a.length - 1)).toBe([HEADING, notShown('index.html'), b].join('\n'));
-    // Room for neither: both are named.
-    expect(await diff(null, b.length - 1)).toBe(
-      [HEADING, notShown('index.html'), notShown('z.html')].join('\n'),
-    );
+    expect(await diff(null, full.length - 1)).toBe([HEADING, a, nameB].join('\n'));
+    // The first patch leaves no room to say that a file follows: it is named, and the next one,
+    // which is shorter, is shown if it fits.
+    const withReserve = HEADING.length + 1 + a.length + 1 + more(1).length;
+    expect(await diff(null, withReserve - 1)).toBe([HEADING, nameA, nameB].join('\n'));
+    // Not even the second name fits: the text says how many files it leaves out.
+    const stop = HEADING.length + 1 + nameA.length + 1 + more(1).length;
+    expect(await diff(null, stop)).toBe([HEADING, nameA, more(1)].join('\n'));
+    // Room for one line only: the count of every file.
+    const least = HEADING.length + 1 + more(2).length;
+    expect(await diff(null, least)).toBe([HEADING, more(2)].join('\n'));
     expect(MERGE_DIFF_MAX_CHARS).toBe(4_000);
+  });
+
+  test('whatever the cap, the text fits and counts every file once', async () => {
+    const names = Array.from({ length: 6 }, (_, i) => `f${i}.html`);
+    await start({
+      'index.html': '<h1>x</h1>',
+      ...Object.fromEntries(names.map((name) => [name, '<p>x</p>'])),
+    });
+    await next({
+      'index.html': '<h1>y</h1>',
+      ...Object.fromEntries(names.map((name, i) => [name, i % 2 === 0 ? '<p>y</p>' : PNG])),
+    });
+    const more = /^and (\d+) more changed files$/;
+    const least = HEADING.length + 1 + t('mcp.merge.moreFiles', { count: 7 }).length;
+    for (let max = least; max < 1_100; max += 11) {
+      const text = await mergeDiff(ctx.deps, scope(), id, 1, 2, null, max);
+      expect(text.length, `cap ${max}`).toBeLessThanOrEqual(max);
+      const lines = text.split('\n').slice(1);
+      const last = more.exec(lines.at(-1) ?? '');
+      const listed = lines.filter((line) => line.startsWith('--- ') || line.endsWith(')')).length;
+      const left = last === null ? 0 : Number(last[1]);
+      expect(listed + left, `cap ${max}`).toBe(7);
+    }
+  });
+
+  test('300 changed files give a text of at most 4,000 characters, and a count of the rest', async () => {
+    const paths = Array.from(
+      { length: 300 },
+      (_, i) => `pages/page-${String(i).padStart(3, '0')}.html`,
+    );
+    const page = (path: string, word: string) => `<p>${word} ${path}</p>\n`;
+    await start({
+      'index.html': '<h1>Một</h1>',
+      ...Object.fromEntries(paths.map((path) => [path, page(path, 'cũ')])),
+    });
+    await next({
+      'index.html': '<h1>Hai</h1>',
+      ...Object.fromEntries(paths.map((path) => [path, page(path, 'mới')])),
+    });
+    const read = vi.spyOn(ctx.deps.blobs, 'get');
+    try {
+      const r = await staleInline();
+      expect(r.isError).toBe(true);
+      const text = r.text.slice(r.text.indexOf(HEADING));
+      expect(text.length).toBeLessThanOrEqual(MERGE_DIFF_MAX_CHARS);
+      expect(text.length).toBeGreaterThan(MERGE_DIFF_MAX_CHARS - 300);
+
+      const lines = text.split('\n');
+      const left = /^and (\d+) more changed files$/.exec(lines.at(-1) ?? '');
+      expect(left, lines.at(-1)).not.toBeNull();
+      // 301 files changed; every one is in a patch, a name line, or the count at the end.
+      const patches = lines.filter((line) => line.startsWith('--- ')).length;
+      const named = lines.filter((line) => line.endsWith('(diff not shown: use read_file)')).length;
+      expect(patches).toBeGreaterThan(10);
+      expect(Number(left?.[1])).toBeGreaterThan(200);
+      expect(patches + named + Number(left?.[1])).toBe(301);
+      expect(lines.at(-1)).toBe(t('mcp.merge.moreFiles', { count: Number(left?.[1]) }));
+      // The files left out were not compared, and neither was one whose patch could not fit:
+      // every file the text shows was read once, two sides each, and no other.
+      expect(read.mock.calls.length).toBeLessThanOrEqual(2 * (patches + named));
+    } finally {
+      read.mockRestore();
+    }
   });
 
   test('edited_on_server shows only the edited paths', async () => {
