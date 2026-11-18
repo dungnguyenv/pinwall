@@ -20,15 +20,17 @@ import {
 } from '../../domain/shares.ts';
 import { scopeForUser } from '../../domain/spaces.ts';
 import { getVersionsById } from '../../domain/versions.ts';
-import { gone } from '../../lib/errors.ts';
+import { AppError, gone } from '../../lib/errors.ts';
 import { t } from '../../lib/i18n.ts';
 import { DESCRIPTIONS, FIELDS } from '../descriptions.ts';
 import { flatten, formatThread, withMore } from '../format.ts';
-import { runTool } from '../results.ts';
+import { errorMessage, errorResult, runTool } from '../results.ts';
 import type { ToolModule } from '../server.ts';
 import type { ShareOut, ThreadOut } from '../types.ts';
 
 const DAY_MS = 86_400_000;
+/** The most threads one `resolve_comments` call takes. */
+const RESOLVE_LIMIT = 50;
 /** The most share links `list_share_links` shows. */
 const SHARE_LIST_LIMIT = 200;
 
@@ -62,15 +64,26 @@ const ReplyToCommentIn = z.object({
   body: CommentBody.describe('What you reply, up to 10,000 characters of plain text.'),
 });
 
-const ResolveCommentIn = z.object({
-  comment_id: commentIdField.describe(
-    `${FIELDS.commentId} The first comment of the thread, not a reply.`,
-  ),
+const ResolveCommentsIn = z.object({
   version_id: versionIdField
     .optional()
     .describe(
-      `${FIELDS.versionId} The version that fixed the comment. Leave out for the current version.`,
+      `${FIELDS.versionId} The version that fixed the threads. Leave out for the current version.`,
     ),
+  threads: z
+    .array(
+      z.object({
+        comment_id: commentIdField.describe(
+          `${FIELDS.commentId} The first comment of the thread, not a reply.`,
+        ),
+        reply: CommentBody.optional().describe(
+          'What you reply before resolving it, up to 10,000 characters of plain text. Leave out to resolve without a reply.',
+        ),
+      }),
+    )
+    .min(1)
+    .max(RESOLVE_LIMIT)
+    .describe(`The threads to resolve, 1 to ${RESOLVE_LIMIT}. Each is handled on its own.`),
 });
 
 const CreateShareLinkIn = z.object({
@@ -157,6 +170,19 @@ async function currentVersionOf(deps: AppDeps, artifact: ArtifactRow): Promise<V
   return (await getVersionsById(deps.db.db, [id])).get(id) ?? null;
 }
 
+/** The line of a thread `resolve_comments` resolved: with its reply when one was posted, and the version that fixed it. */
+function resolvedLine(id: string, replied: boolean, fixedIn: { number: number } | null): string {
+  if (fixedIn === null) {
+    return t(replied ? 'mcp.resolve.repliedResolvedNoVersion' : 'mcp.resolve.resolvedNoVersion', {
+      id,
+    });
+  }
+  return t(replied ? 'mcp.resolve.repliedResolved' : 'mcp.resolve.resolved', {
+    id,
+    number: fixedIn.number,
+  });
+}
+
 /** What a share link does, in a phrase: its version, password, comments and expiry. */
 function shareDetails(link: ShareOut): string {
   return [
@@ -172,7 +198,7 @@ function shareDetails(link: ShareOut): string {
 }
 
 /**
- * The review tools: read the comment threads of an artifact, reply to one and resolve it, and
+ * The review tools: read the comment threads of an artifact, reply to one, resolve several, and
  * make, list and revoke share links. They call the services the REST API calls, with the
  * caller's own user, so who may read, write or revoke is decided there and live listeners hear
  * every reply and resolve. Comment texts are reviewer input: they reach the model only as quoted
@@ -259,25 +285,48 @@ export const reviewTools: ToolModule = (server, ctx) => {
   );
 
   server.registerTool(
-    'resolve_comment',
+    'resolve_comments',
     {
-      ...DESCRIPTIONS.resolve_comment,
-      inputSchema: ResolveCommentIn,
+      ...DESCRIPTIONS.resolve_comments,
+      inputSchema: ResolveCommentsIn,
       annotations: WRITES,
     },
-    runTool(ctx, async (a: z.output<typeof ResolveCommentIn>) => {
-      await enforceRateLimit(ctx.c, RATE_RULES.comment, user.id);
-      const thread = toThreadOut(
-        await resolveThread(deps, user, a.comment_id, a.version_id ?? null),
-      );
-      const fixedIn = thread.resolved_in_version;
-      return fixedIn === null
-        ? t('mcp.comment.resolvedNoVersion', { id: thread.id })
-        : t('mcp.comment.resolved', {
-            id: thread.id,
-            number: fixedIn.number,
-            version_id: fixedIn.id,
-          });
+    runTool(ctx, async (a: z.output<typeof ResolveCommentsIn>) => {
+      const lines: string[] = [];
+      let resolved = 0;
+      // Set by the first item the comment rule turns away: it and the items after it fail alike.
+      let refusal: string | null = null;
+      for (const item of a.threads) {
+        const id = flatten(item.comment_id);
+        if (refusal !== null) {
+          lines.push(t('mcp.resolve.failed', { id, message: refusal }));
+          continue;
+        }
+        let replied = false;
+        try {
+          // The reply and the resolve of one item count once.
+          await enforceRateLimit(ctx.c, RATE_RULES.comment, user.id);
+          if (item.reply !== undefined) {
+            await addReply(deps, { kind: 'member', user }, item.comment_id, item.reply);
+            replied = true;
+          }
+          const thread = await resolveThread(deps, user, item.comment_id, a.version_id ?? null);
+          resolved += 1;
+          lines.push(resolvedLine(id, replied, thread.resolved_in_version));
+        } catch (err) {
+          const message = errorMessage(ctx, err);
+          if (err instanceof AppError && err.status === 429) refusal = message;
+          lines.push(
+            t(replied ? 'mcp.resolve.repliedNotResolved' : 'mcp.resolve.failed', { id, message }),
+          );
+        }
+      }
+      const text = [
+        t('mcp.resolve.summary', { ok: resolved, total: a.threads.length }),
+        ...lines,
+      ].join('\n');
+      // Only a call that resolved nothing is an error; the lines still say why for each item.
+      return resolved === 0 ? errorResult(text) : text;
     }),
   );
 

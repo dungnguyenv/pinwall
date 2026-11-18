@@ -285,13 +285,11 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
         body: 'Done in v2: the heading now reads "Xin chào".',
       });
       expect(reply).toContain(`thread ${pinned.id} `);
-      const resolved = await ok(client, 'resolve_comment', {
-        comment_id: pinned.id,
+      const resolved = await ok(client, 'resolve_comments', {
         version_id: v2.version_id,
+        threads: [{ comment_id: pinned.id }],
       });
-      expect(resolved).toBe(
-        t('mcp.comment.resolved', { id: pinned.id, number: 2, version_id: v2.version_id }),
-      );
+      expect(resolved).toBe(`Resolved 1 of 1 threads.\n- ${pinned.id}: resolved in v2`);
 
       // 3. The reviewer sees it resolved by v2, still pinned where they put it.
       const r = await app.request(

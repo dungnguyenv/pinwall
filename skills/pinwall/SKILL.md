@@ -108,8 +108,9 @@ Pinwall does not push comments to you. Work through them only when the user asks
    its `position` on the page only when nothing else matches. A thread written on an older version
    may point at text that has since moved.
 3. Fix the source, then publish one new version that carries every fix, not one per thread.
-4. Optionally `reply_to_comment` with one sentence on what changed. Then `resolve_comment` each
-   thread you fixed, passing the new `version_id`, so reviewers see which version fixed it.
+4. Optionally `reply_to_comment` with one sentence on what changed. Then `resolve_comments` once
+   for the threads you fixed, passing the new `version_id`, so reviewers see which version fixed
+   them.
 5. Leave threads you did not address open, and tell the user which ones and why (unclear,
    contradicting another thread, or needing their decision).
 
@@ -148,7 +149,7 @@ that an admin has to approve the account first. Viewers get the `role` refusal h
 - `publish_inline`: publishes text files passed in the call, for clients without a shell.
 - `list_comments`: an artifact's comment threads with their anchors and replies.
 - `reply_to_comment`: adds your reply to a thread.
-- `resolve_comment`: marks a thread resolved, naming the version that fixed it.
+- `resolve_comments`: marks threads resolved, each with an optional reply, naming the version that fixed them.
 - `create_share_link`: a link for people without an account; its URL is shown once.
 - `list_share_links`: an artifact's share links and their settings, without URLs.
 - `revoke_share_link`: ends a share link at once.

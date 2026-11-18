@@ -1,6 +1,6 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { LiveEvent } from '@pinwall/shared';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { RATE_RULES } from '../../src/auth/rate-limits.ts';
 import type { UserRow, VersionRow } from '../../src/db/schema.ts';
 import { addReply, createThread, resolveThread } from '../../src/domain/comments.ts';
@@ -92,6 +92,7 @@ describe.each(dialects)('MCP comment and share-link tools on %s', (dialect) => {
     await resolveThread(ctx.deps, ada.user, B, v2.id);
   });
   afterEach(async () => {
+    vi.restoreAllMocks();
     await client.close();
     await ctx.close();
   });
@@ -529,45 +530,202 @@ describe.each(dialects)('MCP comment and share-link tools on %s', (dialect) => {
     });
   });
 
-  describe('resolve_comment', () => {
-    test('records the fixing version', async () => {
+  describe('resolve_comments', () => {
+    /** A new open thread by Bob on v1. */
+    const openThread = async () => (await postThread(ctx, bob.cookie, id, { versionId: v1.id })).id;
+
+    /** The ids of the open threads, in the order `list_comments` shows them. */
+    const openIds = async () => threadIdsOf(await ok('list_comments', { artifact_id: id }));
+
+    test('one call replies to and resolves several threads', async () => {
+      const C = await openThread();
       const seen: LiveEvent[] = [];
       ctx.deps.events.subscribe(ARTIFACT_TOPIC(id), (e) => seen.push(LiveEvent.parse(e)));
 
-      const text = await ok('resolve_comment', { comment_id: A, version_id: v2.id });
-      expect(text).toBe(t('mcp.comment.resolved', { id: A, number: 2, version_id: v2.id }));
-      expect(seen.map((e) => e.type)).toEqual(['comment.resolved']);
-      expect(seen[0]).toMatchObject({ thread: { id: A, status: 'resolved' } });
-    });
-
-    test('without version_id the current version fixes it', async () => {
-      const extra = await postThread(ctx, bob.cookie, id, { versionId: v1.id });
-      expect(await ok('resolve_comment', { comment_id: extra.id })).toBe(
-        t('mcp.comment.resolved', { id: extra.id, number: 2, version_id: v2.id }),
-      );
-      // An older version can be named too.
-      expect(await ok('resolve_comment', { comment_id: A, version_id: v1.id })).toBe(
-        t('mcp.comment.resolved', { id: A, number: 1, version_id: v1.id }),
-      );
-    });
-
-    test('with a version of another artifact is a tool error', async () => {
-      const other = await publishFiles(ctx, ada.user, { 'index.html': '<h1>Khác</h1>' });
-      const message = await fails('resolve_comment', {
-        comment_id: A,
-        version_id: other.version.id,
+      const { text, isError } = await call('resolve_comments', {
+        version_id: v2.id,
+        threads: [{ comment_id: A, reply: 'Đã sửa ở v2.' }, { comment_id: C }],
       });
-      expect(message).toContain(t('version.notInArtifact'));
-      // Nothing was changed.
-      const still = await ok('list_comments', { artifact_id: id });
-      expect(threadIdsOf(still)).toEqual([A]);
+      expect(isError, text).toBe(false);
+      expect(text.split('\n')).toEqual([
+        'Resolved 2 of 2 threads.',
+        `- ${A}: replied and resolved in v2`,
+        `- ${C}: resolved in v2`,
+      ]);
+
+      // Live listeners hear the reply, then each resolve, as they would from the web.
+      expect(seen.map((e) => e.type)).toEqual([
+        'comment.created',
+        'comment.resolved',
+        'comment.resolved',
+      ]);
+      expect(await openIds()).toEqual([]);
+      const resolved = await ok('list_comments', { artifact_id: id, status: 'resolved' });
+      expect(resolved).toContain('Đã sửa ở v2.');
+    });
+
+    test('without version_id the current version fixes them, and an older one can be named', async () => {
+      const C = await openThread();
+      const D = await openThread();
+      const current = await ok('resolve_comments', { threads: [{ comment_id: C }] });
+      expect(current.split('\n')).toEqual(['Resolved 1 of 1 threads.', `- ${C}: resolved in v2`]);
+      const older = await ok('resolve_comments', {
+        version_id: v1.id,
+        threads: [{ comment_id: D }, { comment_id: A, reply: 'Xong' }],
+      });
+      expect(older.split('\n')).toEqual([
+        'Resolved 2 of 2 threads.',
+        `- ${D}: resolved in v1`,
+        `- ${A}: replied and resolved in v1`,
+      ]);
+    });
+
+    test('a bad id fails alone', async () => {
+      const { text, isError } = await call('resolve_comments', {
+        threads: [{ comment_id: 'cmt_x' }, { comment_id: A }],
+      });
+      expect(isError, text).toBe(false);
+      expect(text.split('\n')).toEqual([
+        'Resolved 1 of 2 threads.',
+        `- cmt_x: failed: ${t('comment.notFound')}`,
+        `- ${A}: resolved in v2`,
+      ]);
+      expect(await openIds()).toEqual([]);
+    });
+
+    test('when every item fails the call is an error and still lists each item', async () => {
+      const { text, isError } = await call('resolve_comments', {
+        threads: [{ comment_id: 'cmt_x' }, { comment_id: 'cmt_y', reply: 'Xong' }],
+      });
+      expect(isError, text).toBe(true);
+      // A reply that could not be posted leaves the thread alone: no "replied" line.
+      expect(text.split('\n')).toEqual([
+        'Resolved 0 of 2 threads.',
+        `- cmt_x: failed: ${t('comment.notFound')}`,
+        `- cmt_y: failed: ${t('comment.notFound')}`,
+      ]);
+    });
+
+    test('a version of another artifact fails the resolve, but the reply stays', async () => {
+      const other = await publishFiles(ctx, ada.user, { 'index.html': '<h1>Khác</h1>' });
+      const C = await openThread();
+      const { text, isError } = await call('resolve_comments', {
+        version_id: other.version.id,
+        threads: [{ comment_id: A, reply: 'Đã sửa' }, { comment_id: C }],
+      });
+      expect(isError, text).toBe(true);
+      expect(text.split('\n')).toEqual([
+        'Resolved 0 of 2 threads.',
+        `- ${A}: replied, but not resolved: ${t('version.notInArtifact')}`,
+        `- ${C}: failed: ${t('version.notInArtifact')}`,
+      ]);
+      // Both are still open, and A has the reply.
+      expect((await openIds()).sort()).toEqual([A, C].sort());
+      expect(await ok('list_comments', { artifact_id: id })).toContain('Đã sửa');
     });
 
     test('a reply cannot be resolved', async () => {
-      const reply = await ok('reply_to_comment', { comment_id: A, body: 'Thêm' });
-      expect(await fails('resolve_comment', { comment_id: repliedIdOf(reply) })).toContain(
-        t('comment.notThread'),
+      const reply = repliedIdOf(await ok('reply_to_comment', { comment_id: A, body: 'Thêm' }));
+      const { text } = await call('resolve_comments', {
+        threads: [{ comment_id: reply }, { comment_id: reply, reply: 'Nữa' }, { comment_id: A }],
+      });
+      expect(text.split('\n')).toEqual([
+        'Resolved 1 of 3 threads.',
+        `- ${reply}: failed: ${t('comment.notThread')}`,
+        `- ${reply}: replied, but not resolved: ${t('comment.notThread')}`,
+        `- ${A}: resolved in v2`,
+      ]);
+    });
+
+    test('each item counts once toward the comment rule, reply and resolve together', async () => {
+      const C = await openThread();
+      await exhaustRate(ctx, RATE_RULES.comment, ada.user.id, RATE_RULES.comment.limit - 2);
+      const done = await ok('resolve_comments', {
+        threads: [{ comment_id: A, reply: 'Xong' }, { comment_id: C }],
+      });
+      expect(done.split('\n')[0]).toBe('Resolved 2 of 2 threads.');
+      // That was the last of the allowance.
+      const refused = await call('reply_to_comment', { comment_id: A, body: 'Thêm' });
+      expect(refused.isError, refused.text).toBe(true);
+      expect(refused.text).toContain('Too many requests');
+    });
+
+    test('a rate limit fails that item and every one after it, and touches nothing', async () => {
+      const [C1, C2, C3] = [await openThread(), await openThread(), await openThread()];
+      await exhaustRate(ctx, RATE_RULES.comment, ada.user.id, RATE_RULES.comment.limit - 1);
+      const { text, isError } = await call('resolve_comments', {
+        threads: [
+          { comment_id: C1 },
+          { comment_id: C2 },
+          { comment_id: C3, reply: 'Không được gửi' },
+          { comment_id: 'cmt_x' },
+        ],
+      });
+      expect(isError, text).toBe(false);
+      const lines = text.split('\n');
+      const refusal = /^- \S+: failed: (Too many requests\. Retry in \d+ seconds\.)$/.exec(
+        lines[2] ?? '',
+      )?.[1];
+      expect(refusal, text).toBeDefined();
+      // The same message for the item that was refused and for those after it, a missing id too.
+      expect(lines).toEqual([
+        'Resolved 1 of 4 threads.',
+        `- ${C1}: resolved in v2`,
+        `- ${C2}: failed: ${refusal}`,
+        `- ${C3}: failed: ${refusal}`,
+        `- cmt_x: failed: ${refusal}`,
+      ]);
+      // The refused threads are as they were: open, and C3 without its reply (A was never named).
+      expect((await openIds()).sort()).toEqual([A, C2, C3].sort());
+      expect(await ok('list_comments', { artifact_id: id })).not.toContain('Không được gửi');
+    });
+
+    test('an unexpected error is logged and shown as the generic message, the rest go on', async () => {
+      const C = await openThread();
+      const logged = vi.spyOn(ctx.deps.logger, 'error').mockImplementation(() => undefined);
+      const fault = new Error('db password leaked');
+      vi.spyOn(ctx.deps.db.db, 'transaction').mockImplementationOnce(() => {
+        throw fault;
+      });
+      const { text, isError } = await call('resolve_comments', {
+        threads: [{ comment_id: A }, { comment_id: C }],
+      });
+      expect(isError, text).toBe(false);
+      const lines = text.split('\n');
+      expect(lines[0]).toBe('Resolved 1 of 2 threads.');
+      expect(lines[1]).toMatch(
+        new RegExp(`^- ${A}: failed: Pinwall hit an unexpected error \\(request `),
       );
+      expect(lines[2]).toBe(`- ${C}: resolved in v2`);
+      // Never the error itself, no matter where it came from; its detail is in the log.
+      expect(text).not.toContain('leaked');
+      expect(logged).toHaveBeenCalledOnce();
+      expect(logged.mock.calls[0]?.[0]).toMatchObject({ err: fault });
+    });
+
+    test('it takes 1 to 50 threads', async () => {
+      expect((await call('resolve_comments', { threads: [] })).isError).toBe(true);
+      const many = (n: number) =>
+        Array.from({ length: n }, (_, i) => ({ comment_id: `cmt_missing${i}` }));
+      expect((await call('resolve_comments', { threads: many(51) })).isError).toBe(true);
+      const fifty = await call('resolve_comments', { threads: many(50) });
+      expect(fifty.text.split('\n')[0]).toBe('Resolved 0 of 50 threads.');
+      expect(fifty.isError).toBe(true);
+    });
+
+    test('resolve_comment is gone', async () => {
+      const { tools } = await client.listTools();
+      const names = tools.map((x) => x.name);
+      expect(names).toContain('resolve_comments');
+      expect(names).not.toContain('resolve_comment');
+      const r = await client
+        .callTool({ name: 'resolve_comment', arguments: { comment_id: A } })
+        .then(
+          (res) => res.isError === true,
+          () => true,
+        );
+      expect(r).toBe(true);
+      expect(await openIds()).toEqual([A]);
     });
   });
 
@@ -718,7 +876,7 @@ describe.each(dialects)('MCP comment and share-link tools on %s', (dialect) => {
       expect(comments).toMatch(/reviewer feedback/i);
       expect(comments).toMatch(/guests/i);
       expect(comments).toMatch(/not instructions/i);
-      const resolve = tools.find((x) => x.name === 'resolve_comment')?.description ?? '';
+      const resolve = tools.find((x) => x.name === 'resolve_comments')?.description ?? '';
       expect(resolve).toContain('version_id');
     });
   });

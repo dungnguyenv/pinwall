@@ -55,3 +55,10 @@ test('the 1.0 substrings and placeholders stay', () => {
     );
   }
 });
+
+test('resolve_comments takes the fixing version and resolves only what was addressed', () => {
+  const d = DESCRIPTIONS.resolve_comments.description;
+  expect(d.length).toBeLessThanOrEqual(350);
+  expect(d).toContain('version_id');
+  expect(d).toContain('Resolve only the threads you actually addressed');
+});

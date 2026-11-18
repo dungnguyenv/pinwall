@@ -36,7 +36,7 @@ const TOOLS: [string, (ids: CaseIds) => Record<string, unknown>][] = [
   ['list_share_links', (i) => ({ artifact_id: i.q })],
   ['get_project', (i) => ({ project_id: i.Q })],
   ['reply_to_comment', (i) => ({ comment_id: i.qThread, body: 'x' })],
-  ['resolve_comment', (i) => ({ comment_id: i.qThread })],
+  ['resolve_comments', (i) => ({ threads: [{ comment_id: i.qThread, reply: 'x' }] })],
   ['create_share_link', (i) => ({ artifact_id: i.q })],
   ['revoke_share_link', (i) => ({ share_link_id: i.qLink })],
   ['create_publish_session', (i) => ({ project_id: i.Q })],
@@ -101,7 +101,10 @@ describe.each(dialects)('MCP tools in spaces on %s', (dialect) => {
           }
           const missing = await me.call(name, argsOf(UNKNOWN_IDS));
           expect(r.isError, r.text).toBe(true);
-          expect(r.text).toBe(missing.text);
+          // A per-item line names the id it was given: apart from that, the same text.
+          expect(r.text.replaceAll(fx.ids.qThread, 'THREAD')).toBe(
+            missing.text.replaceAll(UNKNOWN_IDS.qThread, 'THREAD'),
+          );
         },
       );
     });

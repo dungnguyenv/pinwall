@@ -122,13 +122,13 @@ export const DESCRIPTIONS = {
       'the reply at once. The text is shown as plain text, so write characters such as < and & ' +
       'as they are, never as HTML entities.',
   },
-  resolve_comment: {
-    title: 'Resolve a comment',
+  resolve_comments: {
+    title: 'Resolve comments',
     description:
-      'Marks a comment thread as resolved once you have addressed what it asked for. Pass the ' +
-      'version_id of the version that fixed it (from the publish result); without it the thread ' +
-      'counts as fixed in the current version. comment_id is the first comment of the thread, as ' +
-      'list_comments shows it. Resolve only the threads you actually addressed.',
+      'Resolves comment threads in one call, each with an optional reply posted first. Pass ' +
+      'the version_id of the version that fixed them, else the current version counts. ' +
+      'comment_id is the first comment of a thread, as list_comments shows it; a bad one fails ' +
+      'alone and the rest go on. Resolve only the threads you actually addressed.',
   },
   create_share_link: {
     title: 'Create a share link',

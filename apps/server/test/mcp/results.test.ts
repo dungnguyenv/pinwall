@@ -5,7 +5,7 @@ import { versionConflict } from '../../src/domain/versions.ts';
 import { AppError, conflict, forbidden, notFound } from '../../src/lib/errors.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { formatBytes } from '../../src/mcp/format.ts';
-import { runTool, toolError } from '../../src/mcp/results.ts';
+import { errorMessage, errorResult, runTool, toolError } from '../../src/mcp/results.ts';
 import type { ToolContext } from '../../src/mcp/server.ts';
 import { createSignedInUser } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
@@ -64,6 +64,31 @@ test('unexpected errors are logged and hidden', () => {
   expect(toolError(toolCtx, fault)).toEqual(textError(internal));
   expect(logged).toHaveBeenCalledTimes(2);
   logged.mockRestore();
+});
+
+test('errorMessage is the message of a client error, alone', () => {
+  const err = versionConflict({ id: 'ver_2', number: 2 });
+  // Neither the hint nor the details of toolError: a line of a batch result, not a whole answer.
+  expect(errorMessage(toolCtx, err)).toBe(err.message);
+  expect(errorMessage(toolCtx, notFound('No comment.'))).toBe('No comment.');
+});
+
+test('errorMessage logs an unexpected error and hides it', () => {
+  const logged = vi.spyOn(ctx.deps.logger, 'error');
+  const internal = t('mcp.error.internal', { requestId: REQUEST_ID });
+  const err = new Error('db password leaked');
+  expect(errorMessage(toolCtx, err)).toBe(internal);
+  expect(logged).toHaveBeenCalledOnce();
+  expect(logged.mock.calls[0]?.[0]).toMatchObject({ err, request_id: REQUEST_ID });
+  expect(errorMessage(toolCtx, new AppError('internal', 500, 'pool exhausted'))).toBe(internal);
+  expect(logged).toHaveBeenCalledTimes(2);
+  logged.mockRestore();
+});
+
+test('a tool may answer with an error result of its own text', async () => {
+  expect(errorResult('Resolved 0 of 1 threads.')).toEqual(textError('Resolved 0 of 1 threads.'));
+  const run = runTool(toolCtx, async (_args: Record<string, never>) => errorResult('As written.'));
+  expect(await run({})).toEqual(textError('As written.'));
 });
 
 test('runTool answers one text block, or the tool error', async () => {

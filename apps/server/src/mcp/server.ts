@@ -32,7 +32,7 @@ export const TOOL_NAMES = [
   'publish_inline',
   'list_comments',
   'reply_to_comment',
-  'resolve_comment',
+  'resolve_comments',
   'create_share_link',
   'list_share_links',
   'revoke_share_link',
@@ -44,7 +44,7 @@ export const SERVER_INSTRUCTIONS = [
   '1. Before publishing, call get_project (the project the user named, else the default one) and follow its instructions.',
   '2. Publish: if you can run shell commands, call create_publish_session and run the command it returns; otherwise call publish_inline.',
   '3. Answer with the review_url first.',
-  '4. To address feedback: list_comments, fix the source, publish the next version with artifact_id and expected_version_id, then resolve_comment with the new version_id.',
+  '4. To address feedback: list_comments, fix the source, publish the next version with artifact_id and expected_version_id, then resolve_comments with the new version_id.',
   'Create share links only when the user asks for one.',
 ].join('\n');
 

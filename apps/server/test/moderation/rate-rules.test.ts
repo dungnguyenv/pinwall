@@ -259,10 +259,14 @@ describe.each(dialects)('per-person rate rules on %s', (dialect) => {
     await asAgent(ctx, A, async (call) => {
       const replied = await call('reply_to_comment', { comment_id: pThread, body: 'By an agent' });
       expect(replied.isError, toolText(replied)).toBeFalsy();
-      const resolved = await call('resolve_comment', { comment_id: pThread });
+      const resolve = () => call('resolve_comments', { threads: [{ comment_id: pThread }] });
+      const resolved = await resolve();
       expect(resolved.isError, toolText(resolved)).toBeFalsy();
       expectRefusedByRate(await call('reply_to_comment', { comment_id: pThread, body: 'More' }));
-      expectRefusedByRate(await call('resolve_comment', { comment_id: pThread }));
+      // Each item of a resolve counts as one, and a refused item says so in its line.
+      const refused = await resolve();
+      expect(refused.isError).toBe(true);
+      expect(toolText(refused)).toContain(`- ${pThread}: failed: Too many requests`);
     });
     for (const [name, send] of Object.entries(ways)) {
       const r = await send();
@@ -383,12 +387,17 @@ describe.each(dialects)('rate refusals reveal nothing about other spaces on %s',
     await asAgent(ctx, S, async (call) => {
       const calls: [string, (id: string) => Record<string, unknown>][] = [
         ['reply_to_comment', (id) => ({ comment_id: id, body: 'A reply' })],
-        ['resolve_comment', (id) => ({ comment_id: id })],
+        ['resolve_comments', (id) => ({ threads: [{ comment_id: id, reply: 'A reply' }] })],
       ];
       for (const [tool, args] of calls) {
         const refused = await call(tool, args(fx.ids.pThread));
-        expectRefusedByRate(refused);
-        expect(toolText(await call(tool, args(UNKNOWN_IDS.pThread))), tool).toBe(toolText(refused));
+        expect(refused.isError, tool).toBe(true);
+        expect(toolText(refused), tool).toContain('Too many requests');
+        // A per-item line names the id it was given: apart from that, the same text.
+        const same = (r: CallToolResult, id: string) => toolText(r).replaceAll(id, 'THREAD');
+        expect(same(await call(tool, args(UNKNOWN_IDS.pThread)), UNKNOWN_IDS.pThread), tool).toBe(
+          same(refused, fx.ids.pThread),
+        );
       }
     });
   });
