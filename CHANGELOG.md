@@ -38,9 +38,10 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
   of what changed, at most 4,000 characters, so the agent can merge without another call. The
   REST API's error bodies are unchanged.
 - **A stale copy cannot undo server edits.** A version made with `edit_artifact` records the files
-  it changed. A full publish over it through `create_publish_session` or `publish_inline` is
-  refused as `conflict` with `details.reason` `edited_on_server`, naming those files, unless the
-  call sets `replace_server_edits` to true. An agent sets it once it has merged those files'
+  it changed. A full publish over it through `create_publish_session` or `publish_inline`, or an
+  `edit_artifact` `write` that replaces one of those files whole, is refused as `conflict` with
+  `details.reason` `edited_on_server`, naming those files, unless the call sets
+  `replace_server_edits` to true. An agent sets it once it has merged those files'
   changes into its copy, or when the user asks to discard them. `get_artifact` and
   `list_artifacts` mark such versions "edited on server".
 - **`list_comments` shows where each thread sits in the source:** the file and lines in the

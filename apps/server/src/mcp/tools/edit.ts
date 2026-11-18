@@ -4,6 +4,7 @@ import { messageOf } from '../../api/publish.ts';
 import { enforceRateLimit, RATE_RULES } from '../../auth/rate-limits.ts';
 import type { VersionRow } from '../../db/schema.ts';
 import type { AppDeps } from '../../deps.ts';
+import { assertNoWritesOverServerEdits } from '../../domain/server-edits.ts';
 import { scopeForUser } from '../../domain/spaces.ts';
 import { filesAt, readText, versionFor } from '../../domain/version-files.ts';
 import { checkTarget, type PublishTarget, versionConflict } from '../../domain/versions.ts';
@@ -69,6 +70,7 @@ const EditArtifactIn = z.object({
       'The operations, applied in order: each one sees the text the earlier ones left. If one ' +
         'fails, nothing is changed.',
     ),
+  replace_server_edits: z.boolean().default(false).describe(FIELDS.replaceServerEdits),
 });
 
 /**
@@ -104,6 +106,11 @@ export const editTools: ToolModule = (server, ctx) => {
         await checkTarget(deps, scope, target);
         const { version } = await versionFor(deps, scope, a.artifact_id);
         if (version.id !== a.expected_version_id) throw versionConflict(version);
+        if (!a.replace_server_edits) {
+          // A write replaces a whole file, as a publish does: it must not undo edits made here.
+          const written = ops.flatMap((op) => (op.op === 'write' ? [op.path] : []));
+          await assertNoWritesOverServerEdits(deps, version, written);
+        }
 
         let summary: FileEdit[] = [];
         const outcome = await ingestEdit(

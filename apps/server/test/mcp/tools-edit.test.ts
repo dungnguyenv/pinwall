@@ -5,7 +5,7 @@ import type { UserRow, VersionRow } from '../../src/db/schema.ts';
 import { usageOf } from '../../src/domain/usage.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
-import { DESCRIPTIONS } from '../../src/mcp/descriptions.ts';
+import { DESCRIPTIONS, FIELDS } from '../../src/mcp/descriptions.ts';
 import { INGESTS_PER_PERSON, takeIngestSlot } from '../../src/publish/ingest-slots.ts';
 import { createSignedInUser, createUserToken } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
@@ -465,6 +465,76 @@ describe.each(dialects)('MCP edit_artifact on %s', (dialect) => {
     expect(d.length).toBeLessThanOrEqual(350);
     expect(d).toContain('create_publish_session');
     expect(d).toMatch(/on disk/);
+    const field = tool?.inputSchema.properties?.replace_server_edits;
+    expect(field).toMatchObject({ type: 'boolean', default: false });
+    expect(field).toMatchObject({ description: FIELDS.replaceServerEdits });
+  });
+
+  /** v2, made on the server: index.html replaced in, and a.css written. */
+  async function serverEdited(): Promise<VersionRow> {
+    await ok([
+      { op: 'replace', path: 'index.html', old_string: 'Một', new_string: 'Hai' },
+      { op: 'write', path: 'a.css', content: 'a{}' },
+    ]);
+    return currentOf(ctx, id);
+  }
+
+  test('a write over a file edited on the server is refused with its diff, unless replace_server_edits', async () => {
+    await start();
+    const v2 = await serverEdited();
+    const stale = [
+      { op: 'write', path: 'index.html', content: '<h1>Một</h1>' },
+      { op: 'write', path: 'new.css', content: 'p{}' },
+      { op: 'replace', path: 'notes.md', old_string: 'Hai', new_string: 'Ba' },
+    ];
+    const get = vi.spyOn(ctx.deps.blobs, 'get');
+    const refused = await edit(stale, { expected_version_id: v2.id });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain(
+      t('publish.editedOnServer', { versions: 'v2', paths: 'index.html' }),
+    );
+    expect(refused.text).toContain(t('mcp.hint.conflict.edited_on_server'));
+    // Only the paths the writes would undo are named.
+    expect(refused.text).toContain(
+      '"reason":"edited_on_server","paths":["index.html"],"more":0,"versions":[2],"base_version_number":1',
+    );
+    // The diff to merge, of those paths alone: the only files read.
+    expect(refused.text).toContain(t('mcp.merge.heading'));
+    expect(refused.text).toContain('-<h1>Một</h1>');
+    expect(refused.text).toContain('+<h1>Hai</h1>');
+    expect(refused.text).not.toContain('a.css');
+    const index = (await filesOfCurrent(ctx, id)).get('index.html');
+    const read = new Set(get.mock.calls.map((call) => call[0]));
+    expect([...read].sort()).toEqual([index, v1Files.get('index.html')].sort());
+    get.mockRestore();
+    expect(await versions()).toHaveLength(2);
+
+    const text = await ok(stale, { expected_version_id: v2.id, replace_server_edits: true });
+    expect(text).toContain('index.html: written');
+    expect(await textOf(ctx, id, 'index.html')).toBe('<h1>Một</h1>');
+  });
+
+  test('replace and delete on edited files, and writes to files not edited, need no flag', async () => {
+    await start();
+    const v2 = await serverEdited();
+    const text = await ok(
+      [
+        { op: 'replace', path: 'index.html', old_string: 'Hai', new_string: 'Ba' },
+        { op: 'delete', path: 'a.css' },
+        { op: 'write', path: 'notes.md', content: '# Mới\n' },
+        { op: 'write', path: 'b.css', content: 'b{}' },
+      ],
+      { expected_version_id: v2.id },
+    );
+    expect(text.split('\n').slice(2)).toEqual([
+      'index.html: 1 replacement, now lines 1–1',
+      'a.css: deleted',
+      'notes.md: written',
+      'b.css: written',
+    ]);
+    // A file the server deleted is a new file to a write.
+    const v3 = await currentOf(ctx, id);
+    await ok([{ op: 'write', path: 'a.css', content: 'a{}' }], { expected_version_id: v3.id });
   });
 
   test('without a publish place, an edit reads no stored file', async () => {
@@ -510,7 +580,13 @@ describe.each(dialects)('MCP edit_artifact in personal spaces on %s', (dialect) 
   afterEach(() => Promise.all(clients.map((client) => client.close())));
   afterAll(() => ctx?.close());
 
-  async function editAs(token: string, artifactId: string, versionId: string, edits?: unknown[]) {
+  async function editAs(
+    token: string,
+    artifactId: string,
+    versionId: string,
+    edits?: unknown[],
+    more: Record<string, unknown> = {},
+  ) {
     const client = await connectMcp(ctx, { bearer: token });
     clients.push(client);
     return callText(client, 'edit_artifact', {
@@ -519,8 +595,36 @@ describe.each(dialects)('MCP edit_artifact in personal spaces on %s', (dialect) 
       edits: edits ?? [
         { op: 'replace', path: 'index.html', old_string: 'Version 2', new_string: 'Bản 2' },
       ],
+      ...more,
     });
   }
+
+  test('a viewer or a stranger is refused before any path edited on the server is named', async () => {
+    const fx = await spacesFixture(ctx);
+    const { V, S, E } = fx.people;
+    const { p, pV2 } = fx.ids;
+    const edited = await editAs(E.token, p, pV2);
+    expect(edited.isError, edited.text).toBe(false);
+    const v3 = /\(version_id (\S+), artifact_id/.exec(edited.text)?.[1] ?? '';
+    const write = [{ op: 'write', path: 'index.html', content: '<h1>Cũ</h1>' }];
+
+    for (const more of [{}, { replace_server_edits: true }]) {
+      const viewed = await editAs(V.token, p, v3, write, more);
+      expect(viewed.isError).toBe(true);
+      expect(viewed.text).toContain('"reason":"role"');
+      expect(viewed.text).not.toContain('edited_on_server');
+      expect(viewed.text).not.toContain('index.html');
+
+      const missing = await editAs(S.token, UNKNOWN_IDS.p, UNKNOWN_IDS.pV2, write, more);
+      const outsider = await editAs(S.token, p, v3, write, more);
+      expect(outsider.isError).toBe(true);
+      expect(outsider.text).toBe(missing.text);
+      expect(outsider.text).toContain(t('artifact.notFound'));
+    }
+    const editor = await editAs(E.token, p, v3, write);
+    expect(editor.isError).toBe(true);
+    expect(editor.text).toContain('"reason":"edited_on_server","paths":["index.html"]');
+  });
 
   test('a viewer cannot edit (forbidden, reason role); another space answers not_found', async () => {
     const fx = await spacesFixture(ctx);

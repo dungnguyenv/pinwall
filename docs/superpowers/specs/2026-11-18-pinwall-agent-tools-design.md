@@ -205,6 +205,12 @@ That is correct: the restored files contain the edits.
   that has merged the server edits is refused as well. An agent therefore passes
   `replace_server_edits: true` once it has brought the named files' changes into its copy, and
   without that merge only when the user asks to discard the edits.
+- **Ruling R25 (2026-11-18).** A `write` of `edit_artifact` replaces a whole file, as a publish
+  does, so it is checked too: a `write` to a path that the version it edits has, and that was
+  edited on the server since the last full publish, needs `replace_server_edits: true`. Without
+  it the call is refused the same way, naming only those paths, with their merge diff.
+  `replace`, `delete` and a `write` to a new path are not checked. `checkTarget` runs first
+  (R12), and the check runs before any file is read.
 - A session URL already issued needs no second check at upload time. A version made after the
   session was issued changes the current version, so the upload fails with `version_conflict`.
 

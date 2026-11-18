@@ -1,10 +1,11 @@
 import type { Db } from '../auth/passkeys.ts';
 import type { VersionRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
-import { conflict } from '../lib/errors.ts';
+import { type AppError, conflict } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { flatten } from '../mcp/format.ts';
 import type { Scope } from './spaces.ts';
+import { filesAt } from './version-files.ts';
 import { checkTarget, type PublishTarget } from './versions.ts';
 
 /** A refusal names this many paths at most, then says how many more there are. */
@@ -93,12 +94,47 @@ export async function assertNoServerEdits(
   if (version === undefined) return;
   const { paths, versionNumbers, baseNumber } = await serverEditsSince(db, version);
   if (paths.length === 0) return;
+  throw editedOnServer(paths, versionNumbers, baseNumber);
+}
 
+/**
+ * Refuses the `write` operations of an `edit_artifact` call on top of `version` that would
+ * replace whole files edited on the server since the last full publish, as a publish of those
+ * files would (R25): the 409 `assertNoServerEdits` gives, naming only those files, in `written`.
+ * A write to a path `version` does not have makes a new file, and `replace` and `delete` work on
+ * the current text, so neither is refused. The caller has run `checkTarget` (R12).
+ */
+export async function assertNoWritesOverServerEdits(
+  deps: AppDeps,
+  version: VersionRow,
+  written: readonly string[],
+): Promise<void> {
+  if (written.length === 0) return;
+  const { paths, versionNumbers, baseNumber } = await serverEditsSince(deps.db.db, version);
+  const edited = new Set(paths);
+  const candidates = [...new Set(written)].filter((path) => edited.has(path));
+  if (candidates.length === 0) return;
+  const existing = await filesAt(deps, version, candidates);
+  const overwritten = sorted(candidates.filter((path) => existing.has(path)));
+  if (overwritten.length === 0) return;
+  throw editedOnServer(overwritten, versionNumbers, baseNumber);
+}
+
+/**
+ * The 409 `conflict` with `details.reason: 'edited_on_server'`: the first 20 of `paths` (`paths`,
+ * and `more` for the rest), the versions made with edits since the last full publish (`versions`,
+ * newest first) and the version they stop at (`base_version_number`).
+ */
+function editedOnServer(
+  paths: readonly string[],
+  versionNumbers: readonly number[],
+  baseNumber: number | null,
+): AppError {
   const named = paths.slice(0, PATHS_NAMED_MAX);
   const more = paths.length - named.length;
   // Paths are the publisher's: one line each, whatever they hold.
   const list = named.map(flatten).join(', ');
-  throw conflict(
+  return conflict(
     t('publish.editedOnServer', {
       versions: versionNumbers.map((n) => `v${n}`).join(', '),
       paths: more === 0 ? list : `${list} ${t('publish.editedOnServerMore', { count: more })}`,

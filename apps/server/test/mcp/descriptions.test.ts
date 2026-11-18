@@ -161,9 +161,9 @@ describe('what the tools are served with', () => {
     expect([...new Set(named.filter((name) => !known.has(name)))]).toEqual([]);
   });
 
-  test('both publish tools describe replace_server_edits alike', async () => {
+  test('the publish tools and edit_artifact describe replace_server_edits alike', async () => {
     const { tools } = await client.listTools();
-    for (const name of ['create_publish_session', 'publish_inline']) {
+    for (const name of ['create_publish_session', 'publish_inline', 'edit_artifact']) {
       const schema = tools.find((tool) => tool.name === name)?.inputSchema as {
         properties: Record<string, { description?: string }>;
       };
