@@ -6,6 +6,8 @@ import {
 import { z } from 'zod';
 import { messageOf, toPublishTarget } from '../../api/publish.ts';
 import { enforceRateLimit, RATE_RULES } from '../../auth/rate-limits.ts';
+import { assertNoServerEdits } from '../../domain/server-edits.ts';
+import { scopeForUser } from '../../domain/spaces.ts';
 import type { PublishTarget } from '../../domain/versions.ts';
 import { badRequest } from '../../lib/errors.ts';
 import { t } from '../../lib/i18n.ts';
@@ -48,6 +50,14 @@ const TargetIn = z.object({
     'The name of a new artifact. Default: the title of the entry page.',
   ),
   tags: NEW_ARTIFACT_FIELDS.tags.describe('Tags for a new artifact, at most 20.'),
+  replace_server_edits: z
+    .boolean()
+    .default(false)
+    .describe(
+      'Set it to true only when the user wants the edits made on the server with edit_artifact ' +
+        'discarded. Otherwise a publish over a version made that way is refused, so that stale ' +
+        'local files do not undo them.',
+    ),
 });
 export type TargetArgs = z.output<typeof TargetIn>;
 
@@ -128,6 +138,7 @@ export const publishTools: ToolModule = (server, ctx) => {
     runTool(ctx, async (a: z.output<typeof CreatePublishSessionIn>) => {
       await enforceRateLimit(ctx.c, RATE_RULES.publish, user.id);
       const target = targetFromArgs(a);
+      await assertNoServerEdits(deps, scopeForUser(deps, user), target, a.replace_server_edits);
       const session = await createPublishSession(deps, user, {
         target,
         message: messageOf(a.message),
@@ -157,6 +168,7 @@ export const publishTools: ToolModule = (server, ctx) => {
     runTool(ctx, async (a: z.output<typeof PublishInlineIn>) => {
       await enforceRateLimit(ctx.c, RATE_RULES.publish, user.id);
       const target = targetFromArgs(a);
+      await assertNoServerEdits(deps, scopeForUser(deps, user), target, a.replace_server_edits);
       const outcome = await ingestInline(deps, target, a.files, {
         actor: user,
         source: 'inline',

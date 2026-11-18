@@ -52,6 +52,8 @@ export interface ArtifactOut {
   /** `null` only while an artifact has no committed version. */
   current_version: { id: string; number: number } | null;
   open_thread_count: number;
+  /** Whether the current version was made with `edit_artifact`, set where the list says so. */
+  edited_on_server?: boolean;
   /** The review page, which follows the newest version. */
   review_url: string;
 }
@@ -68,6 +70,8 @@ export interface VersionOut {
   /** Epoch milliseconds. */
   created_at: number;
   is_current: boolean;
+  /** The paths `edit_artifact` changed to make it, as it recorded them; none for any other version. */
+  server_edits: string[];
 }
 
 /**

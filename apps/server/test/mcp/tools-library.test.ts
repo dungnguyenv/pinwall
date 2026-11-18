@@ -427,6 +427,7 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
         size: formatBytes(v.total_bytes),
         source: 'api',
         created: new Date(T + (number - 1) * 1000).toISOString(),
+        edits: '',
         message: '',
       });
     expect(text).toBe(

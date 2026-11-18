@@ -1,5 +1,5 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { UserRow } from '../../src/db/schema.ts';
 import { createProject } from '../../src/domain/projects.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
@@ -10,6 +10,7 @@ import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 import { callText, connectMcp, uploadUrlOf } from '../helpers/mcp.ts';
 import { publishFiles } from '../helpers/publish.ts';
+import { spacesContext, spacesFixture, UNKNOWN_IDS } from '../spaces/fixture.ts';
 
 const T = Date.UTC(2026, 10, 10);
 
@@ -391,6 +392,217 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
     }
   });
 
+  /**
+   * An artifact whose version 2 was made by `edit_artifact` on top of a full publish: the ids of
+   * the artifact and of both versions.
+   */
+  async function edited(
+    files: Record<string, string> = { 'index.html': '<h1>Một</h1>', 'notes.md': '# Ghi chú\n' },
+  ) {
+    const { artifact, version: v1 } = await existing(files);
+    const text = await ok('edit_artifact', {
+      artifact_id: artifact.id,
+      expected_version_id: v1.id,
+      edits: [{ op: 'replace', path: 'index.html', old_string: 'Một', new_string: 'Hai' }],
+    });
+    return { id: artifact.id, v1: v1.id, v2: publishedIds(text).versionId };
+  }
+
+  const stale = [{ path: 'index.html', content: '<h1>Một</h1>' }];
+
+  test('publish_inline over an edited version is refused, then allowed with replace_server_edits', async () => {
+    await start();
+    const { id, v2 } = await edited();
+    const refused = await call('publish_inline', {
+      artifact_id: id,
+      expected_version_id: v2,
+      files: stale,
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('"reason":"edited_on_server"');
+    expect(refused.text).toContain('index.html');
+    expect(refused.text).toContain(t('mcp.hint.conflict.edited_on_server'));
+    expect(refused.text).toContain(
+      '"paths":["index.html"],"more":0,"versions":[2],"base_version_number":1',
+    );
+    expect(await versions()).toHaveLength(2);
+
+    const done = await call('publish_inline', {
+      artifact_id: id,
+      expected_version_id: v2,
+      files: stale,
+      replace_server_edits: true,
+    });
+    expect(done.isError, done.text).toBe(false);
+    expect(await versions()).toHaveLength(3);
+  });
+
+  test('create_publish_session is refused the same way before any URL is made', async () => {
+    await start();
+    const { id, v2 } = await edited();
+    const put = vi.spyOn(ctx.deps.oneTime, 'put');
+    const refused = await call('create_publish_session', {
+      artifact_id: id,
+      expected_version_id: v2,
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('"reason":"edited_on_server"');
+    expect(refused.text).toContain('index.html');
+    expect(refused.text).toContain(t('mcp.hint.conflict.edited_on_server'));
+    expect(uploadUrlOf(refused.text)).toBe('');
+    expect(put).not.toHaveBeenCalled();
+
+    const allowed = await ok('create_publish_session', {
+      artifact_id: id,
+      expected_version_id: v2,
+      replace_server_edits: true,
+    });
+    expect(uploadUrlOf(allowed)).not.toBe('');
+    expect(put).toHaveBeenCalled();
+  });
+
+  test('a full publish on top of a full publish is not checked', async () => {
+    await start();
+    const { artifact, version: v1 } = await existing();
+    const text = await ok('publish_inline', {
+      artifact_id: artifact.id,
+      expected_version_id: v1.id,
+      files: stale,
+    });
+    // The flag is harmless where there is nothing to discard.
+    await ok('publish_inline', {
+      artifact_id: artifact.id,
+      expected_version_id: publishedIds(text).versionId,
+      files: stale,
+      replace_server_edits: true,
+    });
+    const session = await ok('create_publish_session', {
+      artifact_id: artifact.id,
+      expected_version_id: (await versions()).at(-1)?.id,
+    });
+    expect(uploadUrlOf(session)).not.toBe('');
+
+    // Once a full publish has replaced the edits, the next one is not checked either.
+    const { id, v2 } = await edited();
+    const replaced = await ok('publish_inline', {
+      artifact_id: id,
+      expected_version_id: v2,
+      files: stale,
+      replace_server_edits: true,
+    });
+    await ok('publish_inline', {
+      artifact_id: id,
+      expected_version_id: publishedIds(replaced).versionId,
+      files: stale,
+    });
+  });
+
+  test('a new artifact is never checked', async () => {
+    await start();
+    await edited();
+    await ok('publish_inline', inlineHtml('<p>x</p>', { name: 'Mới' }));
+    expect(uploadUrlOf(await ok('create_publish_session', { name: 'Mới nữa' }))).not.toBe('');
+  });
+
+  test('a stale expected_version_id is a version conflict, even over edits', async () => {
+    await start();
+    const { id, v1 } = await edited();
+    const r = await call('publish_inline', {
+      artifact_id: id,
+      expected_version_id: v1,
+      files: stale,
+    });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain(t('mcp.hint.version_conflict'));
+    expect(r.text).not.toContain('edited_on_server');
+  });
+
+  test('edits on top of edits are listed once each, the newest version first', async () => {
+    await start();
+    const { id, v2 } = await edited();
+    const more = await ok('edit_artifact', {
+      artifact_id: id,
+      expected_version_id: v2,
+      edits: [
+        { op: 'replace', path: 'notes.md', old_string: 'Ghi chú', new_string: 'Ghi chú mới' },
+        { op: 'replace', path: 'index.html', old_string: 'Hai', new_string: 'Ba' },
+      ],
+    });
+    const refused = await call('publish_inline', {
+      artifact_id: id,
+      expected_version_id: publishedIds(more).versionId,
+      files: stale,
+    });
+    expect(refused.text).toContain(
+      '"paths":["index.html","notes.md"],"more":0,"versions":[3,2],"base_version_number":1',
+    );
+  });
+
+  test('both publish tools take replace_server_edits, off by default, for discarding on purpose', async () => {
+    await start();
+    const { tools } = await client.listTools();
+    for (const name of ['create_publish_session', 'publish_inline']) {
+      const field = tools.find((x) => x.name === name)?.inputSchema.properties
+        ?.replace_server_edits;
+      expect(field, name).toMatchObject({ type: 'boolean', default: false });
+      expect(JSON.stringify(field), name).toContain('discard');
+    }
+  });
+
+  test('list_artifacts and get_artifact mark edited versions', async () => {
+    await start();
+    const plain = await existing();
+    const { id, v1, v2 } = await edited();
+    const list = await ok('list_artifacts');
+    const lineOf = (artifactId: string) =>
+      list.split('\n').find((line) => line.startsWith(`- ${artifactId}:`)) ?? '';
+    expect(lineOf(id)).toContain(
+      `${t('mcp.artifact.openThreads', { count: 0 })}; ${t('mcp.artifact.editedOnServer')}) `,
+    );
+    expect(lineOf(plain.artifact.id)).not.toContain(t('mcp.artifact.editedOnServer'));
+
+    const got = await ok('get_artifact', { artifact_id: id });
+    const versionLine = (versionId: string) =>
+      got.split('\n').find((line) => line.startsWith('- v') && line.includes(versionId)) ?? '';
+    expect(versionLine(v2)).toContain(t('mcp.version.editedOnServer', { paths: 'index.html' }));
+    expect(versionLine(v1)).not.toContain('edited on server');
+    expect(versionLine(v2)).toContain(' (current): ');
+
+    // A full publish over the edits takes the marks off the current version, not off the history.
+    await ok('publish_inline', {
+      artifact_id: id,
+      expected_version_id: v2,
+      files: stale,
+      replace_server_edits: true,
+    });
+    const after = await ok('list_artifacts');
+    expect(after.split('\n').find((line) => line.startsWith(`- ${id}:`))).not.toContain(
+      t('mcp.artifact.editedOnServer'),
+    );
+    const history = await ok('get_artifact', { artifact_id: id });
+    expect(history.match(/edited on server/g)).toHaveLength(1);
+  });
+
+  test('a version line names at most 5 paths and how many more', async () => {
+    await start();
+    const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((n) => `${n}.html`);
+    const files = { 'index.html': '<h1>x</h1>', ...Object.fromEntries(names.map((n) => [n, n])) };
+    const { artifact, version: v1 } = await existing(files);
+    await ok('edit_artifact', {
+      artifact_id: artifact.id,
+      expected_version_id: v1.id,
+      edits: names.map((path) => ({ op: 'write', path, content: `<p>${path}</p>` })),
+    });
+    const got = await ok('get_artifact', { artifact_id: artifact.id });
+    const line = got.split('\n').find((l) => l.startsWith('- v2 ')) ?? '';
+    expect(line).toContain(
+      t('mcp.version.editedOnServer', {
+        paths: `a.html, b.html, c.html, d.html, e.html ${t('mcp.version.editedMore', { count: 2 })}`,
+      }),
+    );
+    expect(line).not.toContain('f.html');
+  });
+
   test('the descriptions state the configured limit and lifetime', async () => {
     await start();
     const described = async () => {
@@ -446,3 +658,71 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
     expect(await versions()).toEqual([]);
   });
 });
+
+describe.each(dialects)(
+  'MCP publish tools over server edits in personal spaces on %s',
+  (dialect) => {
+    let ctx: TestContext;
+    let clients: Client[];
+    beforeAll(async () => {
+      ctx = await spacesContext(dialect, 'personal');
+    });
+    beforeEach(() => {
+      clients = [];
+    });
+    afterEach(() => Promise.all(clients.map((client) => client.close())));
+    afterAll(() => ctx?.close());
+
+    async function as(token: string): Promise<Client> {
+      const client = await connectMcp(ctx, { bearer: token });
+      clients.push(client);
+      return client;
+    }
+
+    test('only a caller who may publish there hears of the edits; another space answers not_found', async () => {
+      const fx = await spacesFixture(ctx);
+      const { A, E, V, S } = fx.people;
+      const { p, pV2 } = fx.ids;
+      const edit = await callText(await as(E.token), 'edit_artifact', {
+        artifact_id: p,
+        expected_version_id: pV2,
+        edits: [
+          { op: 'replace', path: 'index.html', old_string: 'Version 2', new_string: 'Bản 2' },
+        ],
+      });
+      expect(edit.isError, edit.text).toBe(false);
+      const v3 = publishedIds(edit.text).versionId;
+      const files = [{ path: 'index.html', content: '<h1>Cũ</h1>' }];
+      const publishAs = async (token: string, artifactId: string, versionId: string) => {
+        const client = await as(token);
+        return [
+          await callText(client, 'publish_inline', {
+            artifact_id: artifactId,
+            expected_version_id: versionId,
+            files,
+          }),
+          await callText(client, 'create_publish_session', {
+            artifact_id: artifactId,
+            expected_version_id: versionId,
+          }),
+        ];
+      };
+
+      for (const viewed of await publishAs(V.token, p, v3)) {
+        expect(viewed.isError).toBe(true);
+        expect(viewed.text).toContain('"reason":"role"');
+        expect(viewed.text).not.toContain('edited_on_server');
+      }
+      const missing = await publishAs(S.token, UNKNOWN_IDS.p, UNKNOWN_IDS.pV2);
+      for (const [i, outsider] of (await publishAs(S.token, p, v3)).entries()) {
+        expect(outsider.isError).toBe(true);
+        expect(outsider.text).toBe(missing[i]?.text);
+        expect(outsider.text).not.toContain('edited_on_server');
+      }
+      for (const owner of await publishAs(A.token, p, v3)) {
+        expect(owner.isError).toBe(true);
+        expect(owner.text).toContain('"reason":"edited_on_server"');
+      }
+    });
+  },
+);

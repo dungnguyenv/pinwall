@@ -13,8 +13,14 @@ import {
   getProject,
   listProjects,
 } from '../../domain/projects.ts';
+import { serverEditsOf } from '../../domain/server-edits.ts';
 import { defaultProjectFor, type Scope, scopeForUser, seesAll } from '../../domain/spaces.ts';
-import { getCurrentVersion, listVersionFiles, listVersions } from '../../domain/versions.ts';
+import {
+  getCurrentVersion,
+  getVersionsById,
+  listVersionFiles,
+  listVersions,
+} from '../../domain/versions.ts';
 import { badRequest } from '../../lib/errors.ts';
 import { t } from '../../lib/i18n.ts';
 import { DESCRIPTIONS, FIELDS } from '../descriptions.ts';
@@ -32,6 +38,8 @@ const QUERY_MAX_LIMIT = 50;
 const FILE_LIST_MAX = 50;
 /** A version's message is shown cut to this many characters. */
 const MESSAGE_MAX_CHARS = 120;
+/** A version line names this many of the paths edited on the server, then how many more. */
+const EDITED_PATHS_MAX = 5;
 
 const cursorField = z.string().min(1).max(1000).optional().describe(FIELDS.cursor);
 const projectIdField = z.string().min(1).max(100).optional().describe(FIELDS.projectId);
@@ -119,16 +127,30 @@ function toVersionOut(row: VersionRow, currentVersionId: string | null): Version
     message: row.message,
     created_at: row.created_at,
     is_current: row.id === currentVersionId,
+    server_edits: serverEditsOf(row.meta),
   };
 }
 
-/** Artifacts with their tags, versions and thread counts loaded together, as the API lists them. */
+/**
+ * Artifacts with their tags, versions and thread counts loaded together, as the API lists them,
+ * and which of them have a current version made with `edit_artifact` (read in one query).
+ */
 async function artifactsOf(
   deps: AppDeps,
   scope: Scope,
   rows: Parameters<typeof toArtifactSummary>[2],
 ): Promise<ArtifactOut[]> {
-  return (await toArtifactSummary(deps, scope, rows)).map(toArtifactOut);
+  const artifacts = (await toArtifactSummary(deps, scope, rows)).map(toArtifactOut);
+  const current = await getVersionsById(
+    deps.db.db,
+    artifacts.flatMap((a) => a.current_version?.id ?? []),
+  );
+  return artifacts.map((a) => {
+    const row = a.current_version === null ? undefined : current.get(a.current_version.id);
+    return row !== undefined && serverEditsOf(row.meta).length > 0
+      ? { ...a, edited_on_server: true }
+      : a;
+  });
 }
 
 /**
@@ -181,6 +203,7 @@ function artifactDetails(a: ArtifactOut): string {
         }),
     t('mcp.artifact.openThreads', { count: a.open_thread_count }),
     ...(a.tags.length === 0 ? [] : [t('mcp.artifact.tags', { tags: a.tags.join(', ') })]),
+    ...(a.edited_on_server === true ? [t('mcp.artifact.editedOnServer')] : []),
   ].join('; ');
 }
 
@@ -205,6 +228,20 @@ function messageText(message: string | null): string {
   return t('mcp.version.message', { message: shown });
 }
 
+/**
+ * What a version line says about the paths `edit_artifact` changed to make it: the first
+ * `EDITED_PATHS_MAX` and how many more; '' for a version that was not made that way.
+ */
+function editsText(paths: readonly string[]): string {
+  if (paths.length === 0) return '';
+  const shown = paths.slice(0, EDITED_PATHS_MAX).map(flatten).join(', ');
+  const more = paths.length - EDITED_PATHS_MAX;
+  return t('mcp.version.editedOnServer', {
+    // A path is the publisher's: one line, whatever it holds.
+    paths: more > 0 ? `${shown} ${t('mcp.version.editedMore', { count: more })}` : shown,
+  });
+}
+
 /** The line of `get_artifact` for one version: its number and id first. */
 function versionLine(v: VersionOut): string {
   return t('mcp.version.item', {
@@ -215,6 +252,7 @@ function versionLine(v: VersionOut): string {
     size: formatBytes(v.total_bytes),
     source: v.source,
     created: new Date(v.created_at).toISOString(),
+    edits: editsText(v.server_edits),
     message: messageText(v.message),
   });
 }
