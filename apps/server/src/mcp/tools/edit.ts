@@ -141,7 +141,7 @@ export const editTools: ToolModule = (server, ctx) => {
       },
       {
         // A stale base ends the refusal with what changed, so the agent can merge without another call.
-        appendix: (err, a) => refusalAppendix(deps, scope, a)(err),
+        appendix: (err, a) => refusalAppendix(deps, scope, a, ctx.c.var.requestId)(err),
       },
     ),
   );

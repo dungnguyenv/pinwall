@@ -127,7 +127,7 @@ export const publishTools: ToolModule = (server, ctx) => {
   const minutes = Math.max(1, Math.floor(ttlMs / 60_000));
   // A refusal of a stale base ends with what changed, so the agent can merge without another call.
   const appendix = (err: unknown, args: TargetArgs) =>
-    refusalAppendix(deps, scopeForUser(deps, user), args)(err);
+    refusalAppendix(deps, scopeForUser(deps, user), args, ctx.c.var.requestId)(err);
 
   server.registerTool(
     'create_publish_session',

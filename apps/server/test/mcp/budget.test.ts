@@ -119,15 +119,15 @@ interface TextPick {
 }
 
 /**
- * The rows the reviewer commented on: two spots of the table, 20 rows apart. Rows 55 and 75
- * carry the long note, so their lines are longer than a snippet line.
+ * The rows the reviewer commented on: four spots of the table, far apart (about 150 rows, a few
+ * hundred lines of source, between one and the next). Rows 355 and 515 carry the long note, so
+ * their lines are longer than a snippet line.
  *
- * The merge diff of a refusal holds 4,000 characters, three lines of context either side. On
- * this page (lines of about 135 characters) it fits two groups of edits like these, 3,600
- * characters in all; four edits apart from each other make four hunks of about 1,100 characters
- * and are named "diff not shown: use read_file" instead.
+ * The edits are far enough apart to make four hunks of the merge diff, and the diff holds only
+ * so many characters whatever the page weighs: the refusal shows the hunks that fit, in order,
+ * and says how many it left out.
  */
-const ROW = { t1: 48, t2: 50, t3: 55, element: 75 } as const;
+const ROW = { t1: 48, t2: 212, t3: 355, element: 515 } as const;
 
 const T1: TextPick = {
   row: ROW.t1,
@@ -482,19 +482,36 @@ describe.each(dialects)('the review loop budget on %s', (dialect) => {
     expect(refused.text).toContain('"paths":["index.html"]');
     expect(refused.text).toContain(t('mcp.hint.conflict.edited_on_server'));
 
-    // The diff is the part after its heading: the lines the 4 edits changed, old and new.
+    // The diff is the part after its heading, and the heading is part of its 4,000 characters.
     const diff = refused.text.split(t('mcp.merge.heading'))[1] ?? '';
+    expect(diff.length).toBeLessThanOrEqual(BUDGET);
+    expect(t('mcp.merge.heading').length + diff.length).toBeLessThanOrEqual(BUDGET);
     expect(diff, refused.text).toContain('--- index.html\tv1');
     expect(diff).toContain('+++ index.html\tv2');
-    for (const row of [T1.row, T2.row, T3.row, ELEMENT.row]) {
+
+    // The 4 edits are 4 hunks. The diff shows the first ones whole, old line and new, in the
+    // order of the page, and says how many it left out: none missing, none twice.
+    const shown = diff.match(/^@@ /gm)?.length ?? 0;
+    const left = Number(/^index\.html: (\d+) more changes not shown/m.exec(diff)?.[1] ?? 0);
+    expect(shown).toBeGreaterThanOrEqual(1);
+    expect(shown + left).toBe(4);
+    if (left > 0) {
+      expect(diff).toContain(t('mcp.merge.moreHunks', { path: 'index.html', count: left }));
+      expect(diff).not.toContain('diff not shown');
+    }
+    for (const [k, row] of [T1.row, T2.row, T3.row, ELEMENT.row].entries()) {
       const was = rowOf(row);
       const now = FOUR_REPLACES.reduce(
         (line, { old_string, new_string }) => line.split(old_string).join(new_string),
         was,
       );
       expect(now, `row ${row}`).not.toBe(was);
-      expect(diff).toContain(`-${was}\n`);
-      expect(diff).toContain(`+${now}`);
+      expect(diff.includes(`-${was}\n`), `row ${row} is ${k < shown ? '' : 'not '}shown`).toBe(
+        k < shown,
+      );
+      expect(diff.includes(`+${now}`), `row ${row} is ${k < shown ? '' : 'not '}shown`).toBe(
+        k < shown,
+      );
     }
     expect(
       await ctx.deps.db.db
