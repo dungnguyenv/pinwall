@@ -192,6 +192,8 @@ export const reviewTools: ToolModule = (server, ctx) => {
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof ListCommentsIn>) => {
+      // It reads and parses the pages its threads are on, as read_file reads files.
+      await enforceRateLimit(ctx.c, RATE_RULES.mcpRead, user.id);
       // Answers 404 or 410 for an artifact that is missing or deleted, or that the caller does
       // not see, before any thread is read.
       const viewer = scope();

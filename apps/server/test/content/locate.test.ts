@@ -265,6 +265,16 @@ describe('locateInMarkdown', () => {
     });
   });
 
+  test('a document of repeated headings is located in linear time', () => {
+    const src = '# a\n\n'.repeat(39_800);
+    const started = performance.now();
+    expect(locateInMarkdown(src, 'index.md', elementAnchorAt('#a-39799'))).toEqual({
+      start: 79_599,
+      end: 79_599,
+    });
+    expect(performance.now() - started).toBeLessThan(3000);
+  });
+
   test('a point anchor, and a document served unrendered, are not located', () => {
     expect(locateInMarkdown(doc, 'guide.md', pointAnchor())).toBeNull();
     const big = `# Big\n\n${'word '.repeat(MARKDOWN_RENDER_MAX_BYTES / 5)}\n`;

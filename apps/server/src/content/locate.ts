@@ -20,9 +20,12 @@ import { isHtmlType, isMarkdownType } from './mime.ts';
 /** A page file larger than this is not located. */
 export const LOCATE_MAX_BYTES = 2_000_000;
 /**
- * Bytes of page files one call reads in all (five files at `LOCATE_MAX_BYTES`, about half a second
- * of parsing); a file past it is not located. Markdown files also count toward
- * `MARKDOWN_BUDGET_BYTES`, as rendering hostile Markdown is slow.
+ * Bytes of page files one call reads in all (five files at `LOCATE_MAX_BYTES`); a file past it is
+ * not located. Parsing and rendering take time in proportion to what is read, so the bytes bound
+ * a call's time: HTML parses at about 0.1 s per 2 MB, about 0.6 s for this budget. Markdown takes
+ * up to about 0.5 s per file at `MARKDOWN_RENDER_MAX_BYTES` (hostile input: unmatched `![`, or
+ * tens of thousands of headings), so Markdown files also count toward `MARKDOWN_BUDGET_BYTES`,
+ * which holds a call to two such files, about 1 s. Each call counts toward the `mcpRead` rule.
  */
 const LOCATE_BUDGET_BYTES = 5 * LOCATE_MAX_BYTES;
 

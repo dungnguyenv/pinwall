@@ -1,5 +1,4 @@
 import MarkdownIt, { type Token } from 'markdown-it';
-import anchor from 'markdown-it-anchor';
 import { t } from '../lib/i18n.ts';
 import { RESERVED_DIR } from '../publish/paths.ts';
 import { highlightCode } from './syntax-highlight.js';
@@ -62,12 +61,55 @@ function highlight(code: string, language: string): string {
 }
 
 /**
+ * The text a heading's id is made from: its text and code spans, joined, as markdown-it-anchor
+ * read it.
+ */
+function headingText(inline: Token | undefined): string {
+  return (inline?.children ?? [])
+    .filter((child) => child.type === 'text' || child.type === 'code_inline')
+    .map((child) => child.content)
+    .join('');
+}
+
+/**
+ * Gives every heading an `id`: `slugify` of its text, made unique in the document by the first
+ * free suffix `-1`, `-2`, … (`a`, `a-1`, `a-2`). These are the ids markdown-it-anchor 10 gave
+ * (with `slugify` and `tabIndex: false`) when it made them, and comments (`#id` paths) and links
+ * name them, so they must not change.
+ *
+ * The plugin tried every suffix from `-1` again for each repeat of a heading, and looked each
+ * heading up in the whole token list again, so a document of repeated headings took quadratic
+ * time. Here each base remembers the suffix it reached: an id once taken is never freed, so the
+ * first free suffix is never below it, and the answer is the plugin's in linear time. `taken` is a
+ * plain object, as the plugin's was: `__proto__` cannot be stored in one, so a heading slugged
+ * `__proto__` repeats as it did.
+ */
+function headingIds(state: { tokens: Token[] }): void {
+  const taken: Record<string, true> = {};
+  const next = new Map<string, number>();
+  const { tokens } = state;
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (token?.type !== 'heading_open') continue;
+    const base = slugify(headingText(tokens[index + 1]));
+    let id = base;
+    if (Object.hasOwn(taken, id)) {
+      let suffix = next.get(base) ?? 1;
+      while (Object.hasOwn(taken, `${base}-${suffix}`)) suffix++;
+      next.set(base, suffix + 1);
+      id = `${base}-${suffix}`;
+    }
+    taken[id] = true;
+    token.attrSet('id', id);
+  }
+}
+
+/**
  * Raw HTML passes through: the page is served inside the grant's sandbox or on its own content
- * host, exactly like an HTML artifact. Heading ids come from `slugify`, made unique per document
- * by markdown-it-anchor (`a`, `a-1`, `a-2`).
+ * host, exactly like an HTML artifact. Headings get ids from `headingIds`, after every other rule.
  */
 const markdown = new MarkdownIt({ html: true, linkify: true, typographer: false, highlight });
-markdown.use(anchor, { slugify, tabIndex: false });
+markdown.core.ruler.push('heading_ids', headingIds);
 
 /** The attribute that names a block's source lines, `{first}-{last}` from 1, under `sourceLines`. */
 const SOURCE_LINES = 'data-pw-lines';
@@ -107,8 +149,8 @@ function markSourceLines(src: string, tokens: Token[]): void {
 }
 
 /**
- * The headings of a parsed document in order. markdown-it-anchor has given each its id by the
- * time `parse` returns; the text is what the heading shows, without markup.
+ * The headings of a parsed document in order. `headingIds` has given each its id by the time
+ * `parse` returns; the text is what the heading shows, without markup.
  */
 function headingsOf(tokens: ReturnType<typeof markdown.parse>): Heading[] {
   const headings: Heading[] = [];
@@ -117,12 +159,7 @@ function headingsOf(tokens: ReturnType<typeof markdown.parse>): Heading[] {
     const id = token.attrGet('id');
     const inline = tokens[index + 1];
     if (typeof id !== 'string' || inline === undefined) return;
-    const text = (inline.children ?? [])
-      .filter((child) => child.type === 'text' || child.type === 'code_inline')
-      .map((child) => child.content)
-      .join('')
-      .trim();
-    headings.push({ level: Number(token.tag.slice(1)), id, text });
+    headings.push({ level: Number(token.tag.slice(1)), id, text: headingText(inline).trim() });
   });
   return headings;
 }

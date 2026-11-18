@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
+import MarkdownIt from 'markdown-it';
+import anchor from 'markdown-it-anchor';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { createGrant, type GrantMode } from '../../src/content/grants.ts';
 import { type ContentHooks, contentHooks } from '../../src/content/hooks.ts';
@@ -265,6 +267,85 @@ describe('renderMarkdown', () => {
         expect(performance.now() - started).toBeLessThan(5000);
       }
     });
+  });
+});
+
+describe('heading ids', () => {
+  /** How headings got their ids before: comments (`#id` paths) and links still name those ids. */
+  const oracle = new MarkdownIt({ html: true, linkify: true, typographer: false }).use(anchor, {
+    slugify,
+    tabIndex: false,
+  });
+
+  const adversarial = [
+    '# a\n# a-1\n# a\n# a-2\n# a\n# a\n',
+    '# a-1\n# a\n# a\n# a\n',
+    '# a\n# a\n# a-1\n# a-1\n# a-1-1\n# a\n',
+    '# x-2\n# x\n# x\n# x\n# x-1\n# x\n',
+    '#\n##\n# !!!\n# ???\n# section\n# section-1\n#\n',
+    '# Chụp ảnh\n## Chụp ảnh\n### Chụp ảnh\n# Đà Nẵng\n# chụp-ảnh-1\n# Chụp   ảnh\n',
+    '# Cha\u0309\n# Chả\n# CHẢ\n',
+    '# `__proto__`\n# `__proto__`\n# constructor\n# constructor\n# toString\n# hasOwnProperty\n',
+    '# Hello *world*\n# Hello world\n# Hello `world`\n# Hello [world](x)\n# Hello \\_world\\_\n',
+    'Setext\n======\n\nSetext\n------\n\n# Setext\n',
+    '> # quoted\n\n- # in list\n\n# quoted\n',
+    '<h1 id="raw">Raw</h1>\n\n# Raw\n\n# raw\n',
+    '# a\n\n'.repeat(300),
+    Array.from({ length: 200 }, (_, i) => `# t${i % 7}${i % 3 === 0 ? '-1' : ''}\n`).join(''),
+  ];
+
+  /** Documents of headings over a small alphabet, so slugs and their suffixed forms collide. */
+  function randomDocuments(count: number): string[] {
+    let seed = 7;
+    const next = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed % n;
+    };
+    const words = [
+      'a',
+      'a-1',
+      'a-2',
+      'b',
+      'a 1',
+      'A',
+      '',
+      '!',
+      'a-1-1',
+      'ả',
+      'a\u0309',
+      '`a`',
+      'a-01',
+    ];
+    return Array.from({ length: count }, () => {
+      const lines = Array.from(
+        { length: 1 + next(25) },
+        () => `${'#'.repeat(1 + next(6))} ${words[next(words.length)]}`,
+      );
+      return `${lines.join('\n')}\n`;
+    });
+  }
+
+  test('are the ones markdown-it-anchor gave, for every document', () => {
+    for (const src of [...adversarial, ...randomDocuments(500)]) {
+      expect(renderMarkdownFragment(src), src).toBe(oracle.render(src));
+    }
+    expect(renderMarkdownFragment(adversarial[0] ?? '')).toMatch(
+      /id="a".*id="a-1".*id="a-2".*id="a-2-1".*id="a-3".*id="a-4"/s,
+    );
+  });
+
+  test('repeated headings render in linear time', () => {
+    for (const [src, last] of [
+      ['# a\n\n'.repeat(39_800), 'a-39799'],
+      ['#\n'.repeat(99_000), 'section-98999'],
+      ['## a\n\n'.repeat(33_000), 'a-32999'],
+    ] as const) {
+      expect(Buffer.byteLength(src)).toBeLessThanOrEqual(MARKDOWN_RENDER_MAX_BYTES);
+      const started = performance.now();
+      const page = renderMarkdownPage(src, 'index.md');
+      expect(performance.now() - started, src.slice(0, 6)).toBeLessThan(3000);
+      expect(page).toContain(` id="${last}"`);
+    }
   });
 });
 

@@ -1,6 +1,7 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { LiveEvent } from '@pinwall/shared';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { RATE_RULES } from '../../src/auth/rate-limits.ts';
 import type { UserRow, VersionRow } from '../../src/db/schema.ts';
 import { addReply, createThread, resolveThread } from '../../src/domain/comments.ts';
 import { deleteArtifact } from '../../src/domain/deletion.ts';
@@ -15,6 +16,7 @@ import { dialects } from '../helpers/db.ts';
 import { callText, connectMcp, nextCursor } from '../helpers/mcp.ts';
 import { publishFiles } from '../helpers/publish.ts';
 import { postThread, sampleAnchor } from '../helpers/review.ts';
+import { exhaustRate } from '../moderation/helpers.ts';
 
 const T = Date.UTC(2026, 10, 10);
 const DAY_MS = 86_400_000;
@@ -329,6 +331,14 @@ describe.each(dialects)('MCP comment and share-link tools on %s', (dialect) => {
       expect(text).toContain(`"Một [2J Hai" (${id})`);
       expect(text).toContain('  Bob [31m: Sửa giá');
       expect(text).not.toContain('\u001b');
+    });
+
+    test('it counts toward the mcpRead rule, as it reads the pages', async () => {
+      await exhaustRate(ctx, RATE_RULES.mcpRead, ada.user.id, 599);
+      expect((await call('list_comments', { artifact_id: id })).isError).toBe(false);
+      const refused = await call('list_comments', { artifact_id: id });
+      expect(refused.isError).toBe(true);
+      expect(refused.text).toContain('Too many requests');
     });
 
     test('a missing or deleted artifact is a tool error', async () => {
