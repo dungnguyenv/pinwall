@@ -86,6 +86,16 @@ export function nextCursor(text: string): string | null {
   return /^.* with cursor (\S+)\.$/m.exec(text)?.[1] ?? null;
 }
 
+/** The ids of the artifacts a list text shows, in the order it shows them. */
+export function artifactIdsOf(text: string): string[] {
+  return [...text.matchAll(/^- (art_[^:\s]+):/gm)].flatMap((m) => m[1] ?? []);
+}
+
+/** The upload URL a `create_publish_session` text gives, or `''` when it has none. */
+export function uploadUrlOf(text: string): string {
+  return /(http:\/\/localhost:8080\/upload\/[A-Za-z0-9_-]{43})/.exec(text)?.[1] ?? '';
+}
+
 /**
  * An MCP client's OAuth side as a desktop agent keeps it, all in memory: a public client that
  * registers itself with one redirect URL, its tokens and its PKCE verifier. Where an agent would

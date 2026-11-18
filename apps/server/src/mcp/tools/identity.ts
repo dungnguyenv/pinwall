@@ -1,29 +1,14 @@
 import { z } from 'zod';
 import { effectiveRole } from '../../auth/roles.ts';
-import type { Config } from '../../config/types.ts';
 import { mayExpose } from '../../domain/exposure.ts';
 import { limitsOf, quotaApplies, usageOf } from '../../domain/usage.ts';
 import { t } from '../../lib/i18n.ts';
 import { DESCRIPTIONS } from '../descriptions.ts';
 import { formatBytes } from '../format.ts';
+import { authoringNotes } from '../notes.ts';
 import { runTool } from '../results.ts';
 import type { ToolContext, ToolModule } from '../server.ts';
 import type { WhoamiOut } from '../types.ts';
-
-/**
- * How published pages behave here: always the entry, link and completeness rules, then what the
- * isolation mode means for a page's storage.
- */
-function authoringNotes(config: Config): string[] {
-  return [
-    t('mcp.notes.entry'),
-    t('mcp.notes.relativeLinks'),
-    t('mcp.notes.selfContained'),
-    config.isolation.mode === 'single-domain'
-      ? t('mcp.notes.opaqueOrigin')
-      : t('mcp.notes.perVersionOrigin'),
-  ];
-}
 
 async function whoami({ deps, auth }: ToolContext): Promise<WhoamiOut> {
   const { user } = auth;

@@ -17,7 +17,7 @@ const CONTROL_EXCEPT_TAB = /[^\P{Cc}\t]/gu;
 const CONTINUATION = '    ';
 
 /** `text` on one line: line breaks and control characters become one space; spaces at the ends stay. */
-const flatten = (text: string): string => text.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ');
+export const flatten = (text: string): string => text.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ');
 
 /**
  * A comment's text as quoted data: control characters (terminal escapes included) are dropped,

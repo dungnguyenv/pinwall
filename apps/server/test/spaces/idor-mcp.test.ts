@@ -4,7 +4,7 @@ import { DEFAULT_PROJECT_ID, ensureDefaultProject } from '../../src/domain/proje
 import { t } from '../../src/lib/i18n.ts';
 import type { TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
-import { callText, connectMcp } from '../helpers/mcp.ts';
+import { artifactIdsOf, callText, connectMcp } from '../helpers/mcp.ts';
 import { publishFiles } from '../helpers/publish.ts';
 import {
   type CaseIds,
@@ -40,10 +40,6 @@ const TOOLS: [string, (ids: CaseIds) => Record<string, unknown>][] = [
 const TEAM_REFUSED: Record<string, string> = { revoke_share_link: t('share.revokeForbidden') };
 
 const WHO: Who[] = ['E', 'S'];
-
-/** The ids of the artifacts a list or search text shows, in the order it shows them. */
-const artifactIdsOf = (text: string): string[] =>
-  [...text.matchAll(/^- (art_[^:\s]+):/gm)].flatMap((m) => m[1] ?? []);
 
 /** The id a `get_project` text names in its heading. */
 const projectIdOf = (text: string): string => /^Project (\S+):/.exec(text)?.[1] ?? '';
@@ -100,7 +96,7 @@ describe.each(dialects)('MCP tools in spaces on %s', (dialect) => {
       );
     });
 
-    test('list_artifacts and search_artifacts leave out other spaces', async () => {
+    test('list_artifacts, with or without a query, leaves out other spaces', async () => {
       const { P, Q, p, q, e } = fx.ids;
       const idsOf = (text: string) => artifactIdsOf(text).sort();
       const stranger = await agent('S');
@@ -110,21 +106,19 @@ describe.each(dialects)('MCP tools in spaces on %s', (dialect) => {
         const inP = [p, e].sort();
         expect(idsOf(await stranger.ok('list_artifacts', { project_id: P }))).toEqual(inP);
         expect(idsOf(await stranger.ok('list_artifacts', { project_id: Q }))).toEqual([q]);
-        const search = await stranger.ok('search_artifacts', { query: 'Version', project_id: Q });
+        const search = await stranger.ok('list_artifacts', { query: 'Version', project_id: Q });
         expect(idsOf(search)).toEqual([q]);
         return;
       }
 
       // S is in no project: nothing of A's or E's, however it is asked for.
       expect(idsOf(await stranger.ok('list_artifacts'))).toEqual([]);
-      expect(idsOf(await stranger.ok('search_artifacts', { query: 'Version' }))).toEqual([]);
+      expect(idsOf(await stranger.ok('list_artifacts', { query: 'Version' }))).toEqual([]);
 
       // E is in P: p and e, never q.
       const editor = await agent('E');
       expect(idsOf(await editor.ok('list_artifacts'))).toEqual([p, e].sort());
-      expect(idsOf(await editor.ok('search_artifacts', { query: 'Version' }))).toEqual(
-        [p, e].sort(),
-      );
+      expect(idsOf(await editor.ok('list_artifacts', { query: 'Version' }))).toEqual([p, e].sort());
     });
 
     test('a viewer is told why it cannot publish or share', async () => {
@@ -244,7 +238,7 @@ describe.each(dialects)('MCP tools in spaces on %s', (dialect) => {
 const PROJECT_TOOLS: [string, (projectId: string) => Record<string, unknown>][] = [
   ['get_project', (projectId) => ({ project_id: projectId })],
   ['list_artifacts', (projectId) => ({ project_id: projectId })],
-  ['search_artifacts', (projectId) => ({ query: 'Default', project_id: projectId })],
+  ['list_artifacts', (projectId) => ({ query: 'Default', project_id: projectId })],
   ['create_publish_session', (projectId) => ({ project_id: projectId })],
   [
     'publish_inline',

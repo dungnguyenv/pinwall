@@ -22,7 +22,6 @@ export const TOOL_NAMES = [
   'get_project',
   'create_project',
   'list_artifacts',
-  'search_artifacts',
   'get_artifact',
   'create_publish_session',
   'publish_inline',

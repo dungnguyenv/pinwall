@@ -49,14 +49,6 @@ export const DESCRIPTIONS = {
       'threads and its review link. Artifacts of archived projects appear only when you name ' +
       'that project.',
   },
-  search_artifacts: {
-    title: 'Search artifacts',
-    description:
-      'Finds, among the artifacts you can see, those matching words in their name, tags or ' +
-      'text; accents and capital letters do not matter, and each word may be the start of a ' +
-      'longer one. Use it when the user describes a page without giving its id. The best ' +
-      'matches come first.',
-  },
   get_artifact: {
     title: 'Get an artifact',
     description:
@@ -154,7 +146,7 @@ export function fillDescription(template: string, values: Record<string, string 
 /** What the arguments that several tools share mean. */
 export const FIELDS = {
   projectId: 'The id of a project (prj_...), from list_projects.',
-  artifactId: 'The id of an artifact (art_...), from list_artifacts or search_artifacts.',
+  artifactId: 'The id of an artifact (art_...), from list_artifacts.',
   cursor: 'The next_cursor of the previous page, to continue the list.',
   commentId: 'The id of a comment (cmt_...), from list_comments.',
   versionId: 'The id of a version (ver_...), from get_artifact or the publish result.',

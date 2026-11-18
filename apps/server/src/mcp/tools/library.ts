@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { toArtifactSummary } from '../../api/artifacts.ts';
 import { type SpaceFields, spaceFieldsOf } from '../../api/projects.ts';
 import { enforceRateLimit, RATE_RULES } from '../../auth/rate-limits.ts';
-import type { ProjectRow, VersionRow } from '../../db/schema.ts';
+import type { ArtifactRow, ProjectRow, VersionRow } from '../../db/schema.ts';
 import type { AppDeps } from '../../deps.ts';
 import { getArtifact, listArtifacts, SEARCH_MAX_CHARS } from '../../domain/artifacts.ts';
 import {
@@ -14,16 +14,24 @@ import {
   listProjects,
 } from '../../domain/projects.ts';
 import { defaultProjectFor, type Scope, scopeForUser, seesAll } from '../../domain/spaces.ts';
-import { listVersions } from '../../domain/versions.ts';
-import { publicUrl } from '../../http/public-url.ts';
+import { getCurrentVersion, listVersionFiles, listVersions } from '../../domain/versions.ts';
+import { badRequest } from '../../lib/errors.ts';
 import { t } from '../../lib/i18n.ts';
 import { DESCRIPTIONS, FIELDS } from '../descriptions.ts';
-import { formatBytes, oneLine, withMore } from '../format.ts';
+import { flatten, formatBytes, oneLine, withMore } from '../format.ts';
+import { authoringNotes } from '../notes.ts';
 import { runTool } from '../results.ts';
 import type { ToolModule } from '../server.ts';
 import type { ArtifactOut, ProjectOut, VersionOut } from '../types.ts';
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
+
+/** With `query`, a list is one page of the best matches, and at most this long. */
+const QUERY_MAX_LIMIT = 50;
+/** `get_artifact` lists at most this many files of the current version. */
+const FILE_LIST_MAX = 50;
+/** A version's message is shown cut to this many characters. */
+const MESSAGE_MAX_CHARS = 120;
 
 const cursorField = z.string().min(1).max(1000).optional().describe(FIELDS.cursor);
 const projectIdField = z.string().min(1).max(100).optional().describe(FIELDS.projectId);
@@ -50,19 +58,18 @@ const CreateProjectIn = z.object({
 const ListArtifactsIn = z.object({
   project_id: projectIdField.describe(`Only artifacts of this project. ${FIELDS.projectId}`),
   tag: z.string().min(1).max(200).optional().describe('Only artifacts with this tag.'),
-  limit: z.number().int().min(1).max(100).default(20).describe('Most artifacts to return.'),
-  cursor: cursorField,
-});
-
-const SearchArtifactsIn = z.object({
   query: z
     .string()
     .trim()
     .min(1)
     .max(SEARCH_MAX_CHARS)
-    .describe('Words to look for, such as part of a name, a tag or the text of the page.'),
-  project_id: projectIdField.describe(`Only search this project. ${FIELDS.projectId}`),
-  limit: z.number().int().min(1).max(50).default(10).describe('Most artifacts to return.'),
+    .optional()
+    .describe(
+      'Words to look for, such as part of a name, a tag or the text of the page. Lists the best ' +
+        `matches first, in one list: limit is at most ${QUERY_MAX_LIMIT}, and cursor is not allowed.`,
+    ),
+  limit: z.number().int().min(1).max(100).default(20).describe('Most artifacts to return.'),
+  cursor: cursorField,
 });
 
 const GetArtifactIn = z.object({
@@ -72,7 +79,7 @@ const GetArtifactIn = z.object({
     .int()
     .min(1)
     .max(50)
-    .default(10)
+    .default(3)
     .describe('How many of the newest versions to list.'),
 });
 
@@ -102,23 +109,16 @@ function toArtifactOut(summary: ArtifactSummary): ArtifactOut {
   };
 }
 
-function toVersionOut(
-  deps: AppDeps,
-  artifactId: string,
-  row: VersionRow,
-  currentVersionId: string | null,
-): VersionOut {
-  const page = `/a/${artifactId}/v/${row.number}`;
+function toVersionOut(row: VersionRow, currentVersionId: string | null): VersionOut {
   return {
     id: row.id,
     number: row.number,
     file_count: row.file_count,
     total_bytes: row.total_bytes,
     source: row.source,
+    message: row.message,
     created_at: row.created_at,
     is_current: row.id === currentVersionId,
-    review_url: publicUrl(deps.config, page),
-    raw_url: publicUrl(deps.config, `${page}/raw`),
   };
 }
 
@@ -152,8 +152,8 @@ function spaceDetails({ role, owner }: ProjectOut): string[] {
     ...(role === undefined ? [] : [t('mcp.project.role', { role })]),
     ...(owner === undefined || owner === null
       ? []
-      : // A person without a name is known by their id.
-        [t('mcp.project.owner', { owner: oneLine(owner.name ?? '') || owner.id })]),
+      : // A person without a name is known by their id. A name is data: the person chose it.
+        [t('mcp.project.owner', { owner: flatten(owner.name ?? '').trim() || owner.id })]),
   ];
 }
 
@@ -175,7 +175,10 @@ function artifactDetails(a: ArtifactOut): string {
     a.kind,
     a.current_version === null
       ? t('mcp.artifact.unpublished')
-      : t('mcp.artifact.version', { number: a.current_version.number }),
+      : t('mcp.artifact.version', {
+          number: a.current_version.number,
+          version_id: a.current_version.id,
+        }),
     t('mcp.artifact.openThreads', { count: a.open_thread_count }),
     ...(a.tags.length === 0 ? [] : [t('mcp.artifact.tags', { tags: a.tags.join(', ') })]),
   ].join('; ');
@@ -191,6 +194,18 @@ function artifactLine(a: ArtifactOut): string {
   });
 }
 
+/** A version's message as one line of at most `MESSAGE_MAX_CHARS` characters; '' when it says nothing. */
+function messageText(message: string | null): string {
+  const chars = [...flatten(message ?? '').trim()];
+  if (chars.length === 0) return '';
+  const shown =
+    chars.length > MESSAGE_MAX_CHARS
+      ? `${chars.slice(0, MESSAGE_MAX_CHARS - 1).join('')}…`
+      : chars.join('');
+  return t('mcp.version.message', { message: shown });
+}
+
+/** The line of `get_artifact` for one version: its number and id first. */
 function versionLine(v: VersionOut): string {
   return t('mcp.version.item', {
     id: v.id,
@@ -200,15 +215,39 @@ function versionLine(v: VersionOut): string {
     size: formatBytes(v.total_bytes),
     source: v.source,
     created: new Date(v.created_at).toISOString(),
-    review: v.review_url,
-    raw: v.raw_url,
+    message: messageText(v.message),
   });
 }
 
 /**
- * The library tools: read the projects (and the instructions agents publish by), create a
- * project, list and search artifacts, and read one artifact with its versions. They read through
- * the same services as `/api/v1`, so a caller sees what the API shows them.
+ * What `get_artifact` says about changing an artifact: the files of its current version, up to
+ * `FILE_LIST_MAX`, and the ids to name. Publishing on top of it needs the current version's id.
+ */
+async function changeLines(
+  deps: AppDeps,
+  artifact: ArtifactRow,
+  current: { id: string; number: number },
+): Promise<string[]> {
+  const [version, files] = await Promise.all([
+    getCurrentVersion(deps.db.db, artifact),
+    listVersionFiles(deps, current.id, { limit: FILE_LIST_MAX, cursor: null }),
+  ]);
+  const more = version.file_count - files.items.length;
+  return [
+    t('mcp.artifact.files', { number: current.number }),
+    // A path is the publisher's: one line, whatever it holds.
+    ...files.items.map((f) =>
+      t('mcp.file.item', { path: flatten(f.path), size: formatBytes(f.size) }),
+    ),
+    ...(more > 0 ? [t('mcp.artifact.moreFiles', { count: more })] : []),
+    t('mcp.artifact.next', { artifact_id: artifact.id, version_id: current.id }),
+  ];
+}
+
+/**
+ * The library tools: read the projects (and the instructions and notes agents publish by), create
+ * a project, list and search artifacts, and read one artifact with its versions and files. They
+ * read through the same services as `/api/v1`, so a caller sees what the API shows them.
  */
 export const libraryTools: ToolModule = (server, ctx) => {
   const { deps, auth } = ctx;
@@ -262,7 +301,14 @@ export const libraryTools: ToolModule = (server, ctx) => {
       const guidance = project.has_instructions
         ? `${t('mcp.project.followInstructions')}\n\n${row.instructions}`
         : t('mcp.project.noInstructions');
-      return `${heading}\n${guidance}`;
+      return [
+        heading,
+        guidance,
+        // What `whoami` says too, so that publishing needs no other call first.
+        t('mcp.project.notes'),
+        ...authoringNotes(deps.config).map((note) => `- ${note}`),
+        t('mcp.project.inlineLimit', { size: formatBytes(deps.config.limits.maxInlineBytes) }),
+      ].join('\n');
     }),
   );
 
@@ -291,43 +337,28 @@ export const libraryTools: ToolModule = (server, ctx) => {
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof ListArtifactsIn>) => {
+      const { query } = a;
+      if (query !== undefined) {
+        // A search has one list of its best matches, not pages.
+        if (a.cursor !== undefined)
+          throw badRequest(t('mcp.artifacts.queryCursor'), { field: 'cursor' });
+        if (a.limit > QUERY_MAX_LIMIT)
+          throw badRequest(t('mcp.artifacts.queryLimit'), { field: 'limit' });
+      }
       const viewer = scope();
       const { items, nextCursor } = await listArtifacts(deps, viewer, {
         ...(a.project_id === undefined ? {} : { projectId: a.project_id }),
         ...(a.tag === undefined ? {} : { tag: a.tag }),
+        ...(query === undefined ? {} : { q: query }),
         limit: a.limit,
         cursor: a.cursor ?? null,
       });
-      const artifacts = await artifactsOf(deps, viewer, items);
-      const lines = [
-        t('mcp.artifacts.summary', { count: artifacts.length }),
-        ...artifacts.map(artifactLine),
-      ];
+      const artifacts = (await artifactsOf(deps, viewer, items)).map(artifactLine);
+      if (query !== undefined) {
+        return [t('mcp.artifacts.found', { count: artifacts.length }), ...artifacts].join('\n');
+      }
+      const lines = [t('mcp.artifacts.summary', { count: artifacts.length }), ...artifacts];
       return withMore(lines, 'list_artifacts', nextCursor);
-    }),
-  );
-
-  server.registerTool(
-    'search_artifacts',
-    {
-      ...DESCRIPTIONS.search_artifacts,
-      inputSchema: SearchArtifactsIn,
-      annotations: READ_ONLY,
-    },
-    runTool(ctx, async (a: z.output<typeof SearchArtifactsIn>) => {
-      const viewer = scope();
-      const { items } = await listArtifacts(deps, viewer, {
-        q: a.query,
-        ...(a.project_id === undefined ? {} : { projectId: a.project_id }),
-        limit: a.limit,
-        cursor: null,
-      });
-      const artifacts = await artifactsOf(deps, viewer, items);
-      const lines = [
-        t('mcp.artifacts.found', { count: artifacts.length }),
-        ...artifacts.map(artifactLine),
-      ];
-      return lines.join('\n');
     }),
   );
 
@@ -348,10 +379,10 @@ export const libraryTools: ToolModule = (server, ctx) => {
         cursor: null,
       });
       const artifact = { ...toArtifactOut(summary), raw_url: summary.links.raw };
-      const versions = page.items.map((v) => toVersionOut(deps, row.id, v, page.currentVersionId));
+      const versions = page.items.map((v) => toVersionOut(v, page.currentVersionId));
 
       const current = artifact.current_version;
-      const lines = [
+      return [
         t('mcp.artifact.heading', {
           id: artifact.id,
           name: oneLine(artifact.name),
@@ -361,12 +392,8 @@ export const libraryTools: ToolModule = (server, ctx) => {
         t('mcp.artifact.versions'),
         ...versions.map(versionLine),
         ...(page.nextCursor === null ? [] : [t('mcp.artifact.olderVersions')]),
-        // Publishing on top of this artifact needs the current version's id.
-        ...(current === null
-          ? []
-          : [t('mcp.artifact.next', { artifact_id: artifact.id, version_id: current.id })]),
-      ];
-      return lines.join('\n');
+        ...(current === null ? [] : await changeLines(deps, row, current)),
+      ].join('\n');
     }),
   );
 };

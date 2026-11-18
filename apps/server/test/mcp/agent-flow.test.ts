@@ -16,11 +16,13 @@ import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 import {
   approveInBrowser,
+  artifactIdsOf,
   callText,
   connectMcp,
   inProcessFetch,
   mcpTransport,
   TestOAuthProvider,
+  uploadUrlOf,
 } from '../helpers/mcp.ts';
 import { approve, consentRequestId, tokenRequest } from '../helpers/oauth.ts';
 import { signInOidcUser } from '../helpers/oidc-browser.ts';
@@ -51,14 +53,6 @@ async function ok(
   expect(r.isError, `${name}: ${r.text}`).toBe(false);
   return r.text;
 }
-
-/** The upload URL a `create_publish_session` text gives. */
-const uploadUrlOf = (text: string): string =>
-  /(http:\/\/localhost:8080\/upload\/[A-Za-z0-9_-]{43})/.exec(text)?.[1] ?? '';
-
-/** The ids of the artifacts a list text shows, in the order it shows them. */
-const artifactIdsOf = (text: string): string[] =>
-  [...text.matchAll(/^- (art_[^:\s]+):/gm)].flatMap((m) => m[1] ?? []);
 
 /**
  * The agent's `fetch`: in-process, noting each call to `/mcp` and to the OAuth endpoints as

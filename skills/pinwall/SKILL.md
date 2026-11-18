@@ -138,8 +138,8 @@ that an admin has to approve the account first. Viewers get the `role` refusal h
 - `list_projects`: your projects and those shared with you, with ids, counts and your role.
 - `get_project`: one project and its instructions for agents; no id means your default project.
 - `create_project`: a new project with a name and optional instructions, when the user asks.
-- `list_artifacts`: artifacts, newest first, by project or tag, with review links and open threads.
-- `search_artifacts`: artifacts matching words in their name, tags or text, best match first.
+- `list_artifacts`: artifacts, newest first, by project or tag, with review links and open threads;
+  with `query`, those matching words in their name, tags or text, best match first.
 - `get_artifact`: one artifact, its current version id and its newest versions with their links.
 - `create_publish_session`: a one-time upload URL with the shell command that publishes to it.
 - `publish_inline`: publishes text files passed in the call, for clients without a shell.

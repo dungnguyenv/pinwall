@@ -56,18 +56,18 @@ export interface ArtifactOut {
   review_url: string;
 }
 
-/** One version of an artifact, with the links to review it and to fetch its raw files. */
+/** One version of an artifact, as `get_artifact` lists it. */
 export interface VersionOut {
   id: string;
   number: number;
   file_count: number;
   total_bytes: number;
   source: 'mcp' | 'inline' | 'api' | 'web' | 'restore';
+  /** What the publisher said about it; written by people, so data. */
+  message: string | null;
   /** Epoch milliseconds. */
   created_at: number;
   is_current: boolean;
-  review_url: string;
-  raw_url: string;
 }
 
 /**

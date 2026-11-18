@@ -6,23 +6,20 @@ import { addTombstones } from '../../src/domain/tombstones.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { formatBytes } from '../../src/mcp/format.ts';
+import { authoringNotes } from '../../src/mcp/notes.ts';
 import { createSignedInUser, createUserToken } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
-import { callText, connectMcp, nextCursor } from '../helpers/mcp.ts';
+import { artifactIdsOf, callText, connectMcp, nextCursor } from '../helpers/mcp.ts';
 import { publishFiles } from '../helpers/publish.ts';
 import { postThread } from '../helpers/review.ts';
 
 const T = Date.UTC(2026, 10, 10);
 const PAGE = { 'index.html': '<h1>Trang</h1>' };
 
-/** The ids of the artifacts a list or search text shows, in the order it shows them. */
-const idsOf = (text: string): string[] =>
-  [...text.matchAll(/^- (art_[^:\s]+):/gm)].flatMap((m) => m[1] ?? []);
-
 /** The numbers of the versions `get_artifact` lists, in the order it lists them. */
 const versionNumbersOf = (text: string): number[] =>
-  [...text.matchAll(/^- ver_[^:\s]+: version (\d+)/gm)].map((m) => Number(m[1]));
+  [...text.matchAll(/^- v(\d+) ver_/gm)].map((m) => Number(m[1]));
 
 describe.each(dialects)('MCP library tools on %s', (dialect) => {
   let ctx: TestContext;
@@ -59,6 +56,13 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
       ...(instructions === undefined ? {} : { instructions }),
     });
 
+  /** What `get_project` ends with: the authoring notes, then the inline limit. */
+  const authoringBlock = (): string[] => [
+    t('mcp.project.notes'),
+    ...authoringNotes(ctx.deps.config).map((note) => `- ${note}`),
+    t('mcp.project.inlineLimit', { size: formatBytes(ctx.deps.config.limits.maxInlineBytes) }),
+  ];
+
   test('get_project returns the instructions and says to follow them', async () => {
     const p = await site('Dùng tiếng Việt. Màu chính #0a7.');
     const text = await ok('get_project', { project_id: p.id });
@@ -67,6 +71,7 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
       [
         t('mcp.project.heading', { id: p.id, name: 'Site' }),
         `${t('mcp.project.followInstructions')}\n\nDùng tiếng Việt. Màu chính #0a7.`,
+        ...authoringBlock(),
       ].join('\n'),
     );
   });
@@ -77,8 +82,15 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
       [
         t('mcp.project.heading', { id: DEFAULT_PROJECT_ID, name: t('project.defaultName') }),
         t('mcp.project.noInstructions'),
+        ...authoringBlock(),
       ].join('\n'),
     );
+  });
+
+  test('get_project carries the authoring notes and the inline limit', async () => {
+    const { text } = await callText(client, 'get_project', {});
+    expect(text).toContain(`- ${t('mcp.notes.relativeLinks')}`);
+    expect(text).toMatch(/Inline publish limit: \d/);
   });
 
   test('instructions of blank space are no instructions', async () => {
@@ -186,38 +198,88 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
     expect(Number(count.n)).toBe(2);
   });
 
-  test('search_artifacts finds Vietnamese without diacritics', async () => {
-    const { artifact } = await publishFiles(ctx, ada.user, { 'index.html': '<p>chụp ảnh</p>' });
+  test('list_artifacts with query finds Vietnamese without diacritics', async () => {
+    const { artifact, version } = await publishFiles(ctx, ada.user, {
+      'index.html': '<p>chụp ảnh</p>',
+    });
     await publishFiles(ctx, ada.user, { 'index.html': '<p>bảng giá</p>' });
-    const text = await ok('search_artifacts', { query: 'chup anh' });
-    expect(idsOf(text)).toEqual([artifact.id]);
+    const text = await ok('list_artifacts', { query: 'chup anh' });
+    expect(artifactIdsOf(text)).toEqual([artifact.id]);
     expect(text).toContain(t('mcp.artifacts.found', { count: 1 }));
+    expect(text).toContain(`v1 ${version.id}`);
     expect(text.endsWith(`http://localhost:8080/a/${artifact.id}`)).toBe(true);
+    expect(nextCursor(text)).toBeNull();
 
-    const none = await ok('search_artifacts', { query: 'khong co gi' });
+    const none = await ok('list_artifacts', { query: 'khong co gi' });
     expect(none).toBe(t('mcp.artifacts.found', { count: 0 }));
   });
 
-  test('search_artifacts can stay inside one project', async () => {
+  test('list_artifacts with query finds by words, best match first', async () => {
+    // The best match is the older artifact, so recency would put it second.
+    const pricing = await publishFiles(
+      ctx,
+      ada.user,
+      { 'index.html': '<h1>Bảng giá</h1><p>Bảng giá chụp ảnh</p>' },
+      { kind: 'new_artifact', projectId: null, name: 'Bảng giá', tags: ['bảng giá'] },
+    );
+    clock.advance(1000);
+    await publishFiles(
+      ctx,
+      ada.user,
+      {
+        'index.html':
+          '<p>Studio chụp ảnh cưới, quay phim, in album; xem bảng ở quầy, giá thương lượng.</p>',
+      },
+      { kind: 'new_artifact', projectId: null, name: 'Studio', tags: [] },
+    );
+    const { text } = await callText(client, 'list_artifacts', { query: 'bang gia' });
+    expect(text.split('\n')[1]).toMatch(
+      new RegExp(`^- ${pricing.artifact.id}: .*v1 ${pricing.version.id}`),
+    );
+    expect(artifactIdsOf(text)).toHaveLength(2);
+  });
+
+  test('list_artifacts with query can stay inside one project or one tag', async () => {
     const p = await site();
     await publishFiles(ctx, ada.user, { 'index.html': '<p>báo giá</p>' });
     const inSite = await publishFiles(
       ctx,
       ada.user,
       { 'index.html': '<p>báo giá</p>' },
-      {
-        kind: 'new_artifact',
-        projectId: p.id,
-        name: null,
-        tags: [],
-      },
+      { kind: 'new_artifact', projectId: p.id, name: null, tags: ['draft'] },
     );
-    const r = await ok('search_artifacts', { query: 'bao gia', project_id: p.id });
-    expect(idsOf(r)).toEqual([inSite.artifact.id]);
-    const both = await ok('search_artifacts', { query: 'bao gia' });
-    expect(idsOf(both)).toHaveLength(2);
-    const limited = await ok('search_artifacts', { query: 'bao gia', limit: 1 });
-    expect(idsOf(limited)).toHaveLength(1);
+    const r = await ok('list_artifacts', { query: 'bao gia', project_id: p.id });
+    expect(artifactIdsOf(r)).toEqual([inSite.artifact.id]);
+    const tagged = await ok('list_artifacts', { query: 'bao gia', tag: 'draft' });
+    expect(artifactIdsOf(tagged)).toEqual([inSite.artifact.id]);
+    const both = await ok('list_artifacts', { query: 'bao gia' });
+    expect(artifactIdsOf(both)).toHaveLength(2);
+    const limited = await ok('list_artifacts', { query: 'bao gia', limit: 1 });
+    expect(artifactIdsOf(limited)).toHaveLength(1);
+    expect(nextCursor(limited)).toBeNull();
+  });
+
+  test('query with cursor is refused', async () => {
+    const r = await callText(client, 'list_artifacts', { query: 'x', cursor: 'abc' });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain(t('mcp.artifacts.queryCursor'));
+    expect(r.text).toContain('"field":"cursor"');
+  });
+
+  test('query takes at most 50 artifacts', async () => {
+    const r = await callText(client, 'list_artifacts', { query: 'x', limit: 51 });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain(t('mcp.artifacts.queryLimit'));
+    const edge = await callText(client, 'list_artifacts', { query: 'x', limit: 50 });
+    expect(edge.isError, edge.text).toBe(false);
+    // Without a query the limit still goes to 100.
+    const plain = await callText(client, 'list_artifacts', { limit: 100 });
+    expect(plain.isError, plain.text).toBe(false);
+  });
+
+  test('search_artifacts is gone', async () => {
+    const { tools } = await client.listTools();
+    expect(tools.map((tool) => tool.name)).not.toContain('search_artifacts');
   });
 
   test('list_artifacts filters by project and tag, with open thread counts', async () => {
@@ -235,19 +297,19 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
     const c = await publishFiles(ctx, ada.user, PAGE, target(p.id, []));
     await postThread(ctx, ada.cookie, b.artifact.id);
     const all = await ok('list_artifacts');
-    expect(idsOf(all)).toEqual([c.artifact.id, b.artifact.id, a.artifact.id]);
+    expect(artifactIdsOf(all)).toEqual([c.artifact.id, b.artifact.id, a.artifact.id]);
     expect(nextCursor(all)).toBeNull();
 
     const inSite = await ok('list_artifacts', { project_id: p.id });
-    expect(idsOf(inSite)).toEqual([c.artifact.id, b.artifact.id]);
+    expect(artifactIdsOf(inSite)).toEqual([c.artifact.id, b.artifact.id]);
     const blog = await ok('list_artifacts', { tag: 'blog' });
-    expect(idsOf(blog)).toEqual([b.artifact.id, a.artifact.id]);
+    expect(artifactIdsOf(blog)).toEqual([b.artifact.id, a.artifact.id]);
     const both = await ok('list_artifacts', { project_id: p.id, tag: 'blog' });
-    expect(idsOf(both)).toEqual([b.artifact.id]);
+    expect(artifactIdsOf(both)).toEqual([b.artifact.id]);
 
     const detail = [
       'html',
-      t('mcp.artifact.version', { number: 1 }),
+      t('mcp.artifact.version', { number: 1, version_id: b.version.id }),
       t('mcp.artifact.openThreads', { count: 1 }),
       t('mcp.artifact.tags', { tags: 'blog, draft' }),
     ].join('; ');
@@ -266,14 +328,14 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
     expect(quiet).toContain(t('mcp.artifact.openThreads', { count: 0 }));
 
     const paged = await ok('list_artifacts', { limit: 2 });
-    expect(idsOf(paged)).toEqual([c.artifact.id, b.artifact.id]);
+    expect(artifactIdsOf(paged)).toEqual([c.artifact.id, b.artifact.id]);
     const cursor = nextCursor(paged);
     expect(cursor).toEqual(expect.any(String));
     expect(
       paged.endsWith(t('mcp.list.more', { tool: 'list_artifacts', cursor: cursor ?? '' })),
     ).toBe(true);
     const rest = await ok('list_artifacts', { limit: 2, cursor: cursor ?? '' });
-    expect(idsOf(rest)).toEqual([a.artifact.id]);
+    expect(artifactIdsOf(rest)).toEqual([a.artifact.id]);
     expect(nextCursor(rest)).toBeNull();
   });
 
@@ -305,9 +367,13 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
       .set({ archived_at: T })
       .where('id', '=', p.id)
       .execute();
-    expect(idsOf(await ok('list_artifacts'))).toEqual([kept.artifact.id]);
-    expect(idsOf(await ok('list_artifacts', { project_id: p.id }))).toEqual([shelved.artifact.id]);
-    expect(idsOf(await ok('search_artifacts', { query: 'trang' }))).toEqual([kept.artifact.id]);
+    expect(artifactIdsOf(await ok('list_artifacts'))).toEqual([kept.artifact.id]);
+    expect(artifactIdsOf(await ok('list_artifacts', { project_id: p.id }))).toEqual([
+      shelved.artifact.id,
+    ]);
+    expect(artifactIdsOf(await ok('list_artifacts', { query: 'trang' }))).toEqual([
+      kept.artifact.id,
+    ]);
   });
 
   test('list_artifacts with an unknown project is a tool error', async () => {
@@ -320,37 +386,48 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
     expect(p.text).toContain(t('project.notFound'));
   });
 
-  test('get_artifact lists versions newest first with links and the next step', async () => {
-    const first = await publishFiles(ctx, ada.user, PAGE, {
+  /** An artifact of `count` versions in the default project; each version's files come from `filesOf`. */
+  async function versioned(count: number, filesOf: (number: number) => Record<string, string>) {
+    let outcome = await publishFiles(ctx, ada.user, filesOf(1), {
       kind: 'new_artifact',
       projectId: null,
       name: 'Bảng giá',
       tags: ['pricing'],
     });
-    clock.advance(1000);
-    const second = await publishFiles(
-      ctx,
-      ada.user,
-      { 'index.html': '<h1>Trang 2</h1>' },
-      {
+    const outcomes = [outcome];
+    for (let n = 2; n <= count; n++) {
+      clock.advance(1000);
+      outcome = await publishFiles(ctx, ada.user, filesOf(n), {
         kind: 'new_version',
-        artifactId: first.artifact.id,
-        expectedVersionId: first.version.id,
-      },
+        artifactId: outcome.artifact.id,
+        expectedVersionId: outcome.version.id,
+      });
+      outcomes.push(outcome);
+    }
+    return { id: outcome.artifact.id, outcomes };
+  }
+
+  test('get_artifact lists versions newest first, the files and the next step', async () => {
+    const { id, outcomes } = await versioned(
+      2,
+      (n): Record<string, string> =>
+        n === 1
+          ? { 'index.html': '<h1>Trang</h1>' }
+          : { 'index.html': '<h1>Trang 2</h1>', 'css/site.css': 'h1{color:red}' },
     );
-    const id = first.artifact.id;
+    const [first, second] = outcomes;
+    if (first === undefined || second === undefined) throw new Error('two versions expected');
     const text = await ok('get_artifact', { artifact_id: id });
-    const version = (v: typeof first.version, number: number, current: boolean, bytes: number) =>
+    const version = (v: typeof first.version, number: number, current: boolean, files: number) =>
       t('mcp.version.item', {
         id: v.id,
         number,
         current: current ? t('mcp.version.current') : '',
-        files: 1,
-        size: formatBytes(bytes),
+        files,
+        size: formatBytes(v.total_bytes),
         source: 'api',
         created: new Date(T + (number - 1) * 1000).toISOString(),
-        review: `http://localhost:8080/a/${id}/v/${number}`,
-        raw: `http://localhost:8080/a/${id}/v/${number}/raw`,
+        message: '',
       });
     expect(text).toBe(
       [
@@ -359,7 +436,7 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
           name: 'Bảng giá',
           details: [
             'html',
-            t('mcp.artifact.version', { number: 2 }),
+            t('mcp.artifact.version', { number: 2, version_id: second.version.id }),
             t('mcp.artifact.openThreads', { count: 0 }),
             t('mcp.artifact.tags', { tags: 'pricing' }),
           ].join('; '),
@@ -369,11 +446,68 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
           raw: `http://localhost:8080/a/${id}/raw`,
         }),
         t('mcp.artifact.versions'),
-        version(second.version, 2, true, Buffer.byteLength('<h1>Trang 2</h1>')),
-        version(first.version, 1, false, Buffer.byteLength(PAGE['index.html'])),
+        version(second.version, 2, true, 2),
+        version(first.version, 1, false, 1),
+        t('mcp.artifact.files', { number: 2 }),
+        t('mcp.file.item', { path: 'css/site.css', size: formatBytes(13) }),
+        t('mcp.file.item', { path: 'index.html', size: formatBytes(16) }),
         t('mcp.artifact.next', { artifact_id: id, version_id: second.version.id }),
       ].join('\n'),
     );
+  });
+
+  test('get_artifact lists 3 versions, the files and the next step, without per-version links', async () => {
+    const { id, outcomes } = await versioned(
+      4,
+      (n): Record<string, string> =>
+        n < 4
+          ? { 'index.html': `<h1>v${n}</h1>` }
+          : { 'index.html': '<h1>v4</h1>', 'css/site.css': 'h1{}' },
+    );
+    const v4 = outcomes[3];
+    if (v4 === undefined) throw new Error('four versions expected');
+    const { text } = await callText(client, 'get_artifact', { artifact_id: id });
+    expect(text.match(/^- v\d+ ver_/gm)).toHaveLength(3);
+    expect(versionNumbersOf(text)).toEqual([4, 3, 2]);
+    expect(text).toContain('- css/site.css (');
+    expect(text).not.toMatch(/\/v\/\d+\/raw/);
+    expect(text).toMatch(`expected_version_id ${v4.version.id}.`);
+    expect(text).toContain(t('mcp.artifact.olderVersions'));
+  });
+
+  test('get_artifact lists at most 50 files, then how many more', async () => {
+    const files = Object.fromEntries(
+      Array.from({ length: 53 }, (_, i) => [`f${String(i).padStart(2, '0')}.html`, '<p>x</p>']),
+    );
+    files['index.html'] = '<h1>Trang</h1>';
+    const { id } = await versioned(1, () => files);
+    const text = await ok('get_artifact', { artifact_id: id });
+    const listed = text.split('\n').filter((line) => /^- \S+\.html \(/.test(line));
+    expect(listed).toHaveLength(50);
+    expect(text).toContain(`\n${t('mcp.artifact.moreFiles', { count: 4 })}\n`);
+    expect(text).toContain(t('mcp.artifact.files', { number: 1 }));
+  });
+
+  test('a version message is one line of at most 120 characters', async () => {
+    const { id, outcomes } = await versioned(2, () => PAGE);
+    const [first, second] = outcomes;
+    if (first === undefined || second === undefined) throw new Error('two versions expected');
+    await ctx.deps.db.db
+      .updateTable('versions')
+      .set({ message: 'Fix the\nheading\u001b[31m now' })
+      .where('id', '=', first.version.id)
+      .execute();
+    await ctx.deps.db.db
+      .updateTable('versions')
+      .set({ message: 'x'.repeat(300) })
+      .where('id', '=', second.version.id)
+      .execute();
+    const text = await ok('get_artifact', { artifact_id: id });
+    const [newest, older] = text.split('\n').filter((line) => /^- v\d+ ver_/.test(line));
+    expect(newest).toMatch(/; message: x+…$/);
+    expect((newest ?? '').split('; message: ')[1]).toHaveLength(120);
+    expect(older).toMatch(/; message: Fix the heading \[31m now$/);
+    expect(text).not.toContain('\u001b');
   });
 
   test('get_artifact shows only versions_limit versions', async () => {
@@ -419,10 +553,10 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
       ['list_projects', { limit: 0 }],
       ['list_projects', { limit: 101 }],
       ['list_artifacts', { limit: 101 }],
-      ['search_artifacts', { query: '' }],
-      ['search_artifacts', { query: '   ' }],
-      ['search_artifacts', { query: 'x'.repeat(257) }],
-      ['search_artifacts', { query: 'x', limit: 51 }],
+      ['list_artifacts', { query: '' }],
+      ['list_artifacts', { query: '   ' }],
+      ['list_artifacts', { query: 'x'.repeat(257) }],
+      ['list_artifacts', { query: 'x', limit: 51 }],
       ['get_artifact', {}],
     ] as const) {
       const r = await call(name, args);
@@ -436,13 +570,7 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
   test('the tools are listed as reads, except create_project', async () => {
     const { tools } = await client.listTools();
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
-    for (const name of [
-      'list_projects',
-      'get_project',
-      'list_artifacts',
-      'search_artifacts',
-      'get_artifact',
-    ]) {
+    for (const name of ['list_projects', 'get_project', 'list_artifacts', 'get_artifact']) {
       const tool = byName.get(name);
       expect(tool?.annotations, name).toMatchObject({ readOnlyHint: true, openWorldHint: false });
       expect(tool?.outputSchema, name).toBeUndefined();
@@ -454,6 +582,36 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
       destructiveHint: false,
       openWorldHint: false,
     });
+  });
+});
+
+describe.each(dialects)('MCP library tools in personal spaces on %s', (dialect) => {
+  test('an owner name with control characters is flattened to one line', async () => {
+    const ctx = await createTestContext({
+      dialect,
+      clock: new FixedClock(T),
+      env: { PINWALL_VISIBILITY: 'personal' },
+    });
+    const ada = await createSignedInUser(ctx, { kind: 'oidc', name: 'Ada' });
+    const client = await connectMcp(ctx, { bearer: await createUserToken(ctx, ada.user.id) });
+    try {
+      // A display name comes from the IdP, so it is data.
+      await ctx.deps.db.db
+        .updateTable('users')
+        .set({ name: 'Ada\n\u001b[2Jx' })
+        .where('id', '=', ada.user.id)
+        .execute();
+      const owner = t('mcp.project.owner', { owner: 'Ada [2Jx' });
+      const listed = await callText(client, 'list_projects');
+      expect(listed.text).toContain(owner);
+      expect(listed.text).not.toContain('\u001b');
+      const project = await callText(client, 'get_project');
+      expect(project.text.split('\n')[0]).toContain(owner);
+      expect(project.text).not.toContain('\u001b');
+    } finally {
+      await client.close();
+      await ctx.close();
+    }
   });
 });
 
@@ -470,7 +628,9 @@ describe.each(dialects)('MCP library tool links on %s', (dialect) => {
       const { artifact } = await publishFiles(ctx, ada.user, PAGE);
       const { text } = await callText(client, 'get_artifact', { artifact_id: artifact.id });
       expect(text).toContain(`Review page: https://pinwall.test/a/${artifact.id}\n`);
-      expect(text).toContain(`raw: https://pinwall.test/a/${artifact.id}/v/1/raw`);
+      expect(text).toContain(
+        `Raw files of the current version: https://pinwall.test/a/${artifact.id}/raw`,
+      );
       expect(text).not.toContain('localhost');
     } finally {
       await client.close();

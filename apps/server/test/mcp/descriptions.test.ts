@@ -21,11 +21,10 @@ test('revoke_share_link states the 1.1 rule and the 1.0 one', () => {
   expect(d).toMatch(/admin/);
 });
 
-test('list and search speak of what the account can see', () => {
+test('the lists speak of what the account can see', () => {
   expect(DESCRIPTIONS.list_projects.description).toMatch(/shared with you/);
   expect(DESCRIPTIONS.list_projects.description).toMatch(/your role/);
   expect(DESCRIPTIONS.list_artifacts.description).toMatch(/you can see/);
-  expect(DESCRIPTIONS.search_artifacts.description).toMatch(/you can see/);
 });
 
 test('create_share_link warns that an admin may have to approve the account', () => {

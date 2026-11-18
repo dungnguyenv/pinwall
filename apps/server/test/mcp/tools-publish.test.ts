@@ -8,14 +8,10 @@ import { makeTar } from '../helpers/archives.ts';
 import { apiInit, createSignedInUser, createUserToken } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
-import { callText, connectMcp } from '../helpers/mcp.ts';
+import { callText, connectMcp, uploadUrlOf } from '../helpers/mcp.ts';
 import { publishFiles } from '../helpers/publish.ts';
 
 const T = Date.UTC(2026, 10, 10);
-
-/** The upload URL a `create_publish_session` text gives. */
-const uploadUrlOf = (text: string): string =>
-  /(http:\/\/localhost:8080\/upload\/[A-Za-z0-9_-]{43})/.exec(text)?.[1] ?? '';
 
 /** The version and artifact ids a `publish_inline` text names. */
 function publishedIds(text: string): { versionId: string; artifactId: string } {
