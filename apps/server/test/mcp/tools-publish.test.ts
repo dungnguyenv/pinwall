@@ -1,26 +1,27 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, describe, expect, test } from 'vitest';
 import type { UserRow } from '../../src/db/schema.ts';
 import { createProject } from '../../src/domain/projects.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
-import type { CreatePublishSessionOut, PublishInlineOut } from '../../src/mcp/schemas.ts';
 import { makeTar } from '../helpers/archives.ts';
 import { apiInit, createSignedInUser, createUserToken } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
-import { connectMcp, toolText } from '../helpers/mcp.ts';
+import { callText, connectMcp } from '../helpers/mcp.ts';
 import { publishFiles } from '../helpers/publish.ts';
 
 const T = Date.UTC(2026, 10, 10);
 
-/** What each tool's `structuredContent` holds. */
-interface Outputs {
-  create_publish_session: CreatePublishSessionOut;
-  publish_inline: PublishInlineOut;
+/** The upload URL a `create_publish_session` text gives. */
+const uploadUrlOf = (text: string): string =>
+  /(http:\/\/localhost:8080\/upload\/[A-Za-z0-9_-]{43})/.exec(text)?.[1] ?? '';
+
+/** The version and artifact ids a `publish_inline` text names. */
+function publishedIds(text: string): { versionId: string; artifactId: string } {
+  const m = /\(version_id (\S+), artifact_id (\S+)\)/.exec(text);
+  return { versionId: m?.[1] ?? '', artifactId: m?.[2] ?? '' };
 }
-type Ok<N extends keyof Outputs> = CallToolResult & { structuredContent: Outputs[N] };
 
 const inlineHtml = (content: string, extra: Record<string, unknown> = {}) => ({
   files: [{ path: 'index.html', content }],
@@ -53,24 +54,19 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
     await ctx.close();
   });
 
-  /** A call as the client sees it, errors included. */
-  async function call(
+  /** A call as the agent reads it, errors included. */
+  const call = (name: string, args: Record<string, unknown> = {}, on: Client = client) =>
+    callText(on, name, args);
+
+  /** A call that must succeed: the text it answers with. */
+  async function ok(
     name: string,
     args: Record<string, unknown> = {},
     on: Client = client,
-  ): Promise<CallToolResult> {
-    return (await on.callTool({ name, arguments: args })) as CallToolResult;
-  }
-
-  /** A call that must succeed. */
-  async function ok<N extends keyof Outputs>(
-    name: N,
-    args: Record<string, unknown> = {},
-    on: Client = client,
-  ): Promise<Ok<N>> {
+  ): Promise<string> {
     const r = await call(name, args, on);
-    expect(r.isError, toolText(r)).toBeFalsy();
-    return r as Ok<N>;
+    expect(r.isError, r.text).toBe(false);
+    return r.text;
   }
 
   const versions = () =>
@@ -84,40 +80,33 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
 
   test('create_publish_session returns the upload URL and ready commands', async () => {
     await start();
-    const r = await ok('create_publish_session', { directory: './site' });
-    const s = r.structuredContent;
-    expect(s.upload_url).toMatch(/^http:\/\/localhost:8080\/upload\/[A-Za-z0-9_-]{43}$/);
-    expect(s.commands.archive).toBe(
-      `tar -czf - -C ./site . | curl --fail-with-body --data-binary @- "${s.upload_url}"`,
-    );
-    expect(s.commands.single_file).toBe(
-      `curl --fail-with-body -H 'Content-Type: text/html' --data-binary @./index.html "${s.upload_url}"`,
-    );
-    expect(s).toMatchObject({
-      expires_at: clock.now() + 600_000,
-      expires_in_seconds: 600,
-      max_upload_bytes: 95_000_000,
-      target: { kind: 'new_artifact', artifact_id: null },
-    });
-    expect(toolText(r)).toBe(
+    const text = await ok('create_publish_session', { directory: './site' });
+    const url = uploadUrlOf(text);
+    expect(url).toMatch(/^http:\/\/localhost:8080\/upload\/[A-Za-z0-9_-]{43}$/);
+    expect(text).toBe(
       t('mcp.publish.session', {
         minutes: 10,
-        url: s.upload_url,
-        archive: s.commands.archive,
-        single: s.commands.single_file,
+        url,
+        archive: `tar -czf - -C ./site . | curl --fail-with-body --data-binary @- "${url}"`,
+        single: `curl --fail-with-body -H 'Content-Type: text/html' --data-binary @./index.html "${url}"`,
       }),
     );
   });
 
   test('the commands follow the directory and file the agent names', async () => {
     await start();
-    const r = await ok('create_publish_session', { directory: 'my site', file: 'notes/plan.md' });
-    const { upload_url: url, commands } = r.structuredContent;
-    expect(commands.archive).toBe(
-      `tar -czf - -C 'my site' . | curl --fail-with-body --data-binary @- "${url}"`,
-    );
-    expect(commands.single_file).toBe(
-      `curl --fail-with-body -H 'Content-Type: text/markdown' --data-binary @notes/plan.md "${url}"`,
+    const text = await ok('create_publish_session', {
+      directory: 'my site',
+      file: 'notes/plan.md',
+    });
+    const url = uploadUrlOf(text);
+    expect(text).toBe(
+      t('mcp.publish.session', {
+        minutes: 10,
+        url,
+        archive: `tar -czf - -C 'my site' . | curl --fail-with-body --data-binary @- "${url}"`,
+        single: `curl --fail-with-body -H 'Content-Type: text/markdown' --data-binary @notes/plan.md "${url}"`,
+      }),
     );
     // Control characters would reach the agent's shell and terminal.
     expect((await call('create_publish_session', { directory: 'a\nb' })).isError).toBe(true);
@@ -127,9 +116,9 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
 
   test("posting a tar to the upload URL publishes as the agent's user", async () => {
     await start();
-    const r = await ok('create_publish_session', { message: 'First cut' });
+    const text = await ok('create_publish_session', { message: 'First cut' });
     const body = await makeTar([{ name: 'index.html', body: '<h1>Hi</h1>' }], { gzip: true });
-    const up = await ctx.app.request(r.structuredContent.upload_url, { method: 'POST', body });
+    const up = await ctx.app.request(uploadUrlOf(text), { method: 'POST', body });
     expect(up.status, await up.clone().text()).toBe(201);
     const result = (await up.json()) as { version_number: number; review_url: string };
     expect(result.version_number).toBe(1);
@@ -160,14 +149,14 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
 
     const bare = await call('create_publish_session', { artifact_id: artifact.id });
     expect(bare.isError).toBe(true);
-    expect(toolText(bare)).toBe(t('mcp.publish.needExpected'));
+    expect(bare.text).toBe(t('mcp.publish.needExpected'));
 
     const stale = await call('create_publish_session', {
       artifact_id: artifact.id,
       expected_version_id: v1.id,
     });
     expect(stale.isError).toBe(true);
-    const text = toolText(stale);
+    const text = stale.text;
     expect(text).toContain(t('publish.versionConflict', { number: 2 }));
     expect(text).toContain(t('mcp.hint.version_conflict'));
     expect(text).toContain(`"current_version_id":"${v2.version.id}"`);
@@ -176,20 +165,17 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
       artifact_id: artifact.id,
       expected_version_id: v2.version.id,
     });
-    expect(fresh.structuredContent.target).toEqual({
-      kind: 'new_version',
-      artifact_id: artifact.id,
-    });
+    expect(uploadUrlOf(fresh)).not.toBe('');
   });
 
   test('an upload from a new-version session lands on top of that version', async () => {
     await start();
     const { artifact, version: v1 } = await existing();
-    const r = await ok('create_publish_session', {
+    const text = await ok('create_publish_session', {
       artifact_id: artifact.id,
       expected_version_id: v1.id,
     });
-    const up = await ctx.app.request(r.structuredContent.upload_url, {
+    const up = await ctx.app.request(uploadUrlOf(text), {
       method: 'POST',
       headers: { 'content-type': 'text/html' },
       body: '<h1>Hai</h1>',
@@ -211,12 +197,12 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
         const args = tool === 'publish_inline' ? inlineHtml('<p>x</p>', target) : { ...target };
         const r = await call(tool, { ...args, ...extra });
         expect(r.isError, `${tool} ${JSON.stringify(extra)}`).toBe(true);
-        expect(toolText(r)).toBe(t('mcp.publish.mixedTarget'));
+        expect(r.text).toBe(t('mcp.publish.mixedTarget'));
       }
     }
     // The same holds when expected_version_id is missing too.
     const bare = await call('create_publish_session', { artifact_id: artifact.id, name: 'Mới' });
-    expect(toolText(bare)).toBe(t('mcp.publish.mixedTarget'));
+    expect(bare.text).toBe(t('mcp.publish.mixedTarget'));
     expect(await versions()).toHaveLength(1);
   });
 
@@ -228,7 +214,7 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
       inlineHtml('<p>x</p>', { expected_version_id: version.id }),
     );
     expect(r.isError).toBe(true);
-    expect(toolText(r)).toBe(t('mcp.publish.mixedTarget'));
+    expect(r.text).toBe(t('mcp.publish.mixedTarget'));
     expect(await versions()).toHaveLength(1);
   });
 
@@ -239,15 +225,15 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
       expected_version_id: 'ver_nope',
     });
     expect(artifact.isError).toBe(true);
-    expect(toolText(artifact)).toContain(t('mcp.hint.not_found'));
+    expect(artifact.text).toContain(t('mcp.hint.not_found'));
     const project = await call('create_publish_session', { project_id: 'prj_nope' });
     expect(project.isError).toBe(true);
-    expect(toolText(project)).toContain(t('mcp.hint.not_found'));
+    expect(project.text).toContain(t('mcp.hint.not_found'));
   });
 
   test('publish_inline publishes text files and leads with the review link', async () => {
     await start();
-    const r = await ok('publish_inline', {
+    const text = await ok('publish_inline', {
       files: [
         {
           path: 'index.html',
@@ -257,38 +243,32 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
       ],
       message: 'Bản đầu',
     });
-    const s = r.structuredContent;
-    expect(s).toMatchObject({
-      version_number: 1,
-      kind: 'html',
-      entry_path: 'index.html',
-      file_count: 2,
-      warnings: [],
-    });
-    expect(s.review_url).toBe(`http://localhost:8080/a/${s.artifact_id}`);
-    expect(s.raw_url).toBe(`http://localhost:8080/a/${s.artifact_id}/v/1/raw`);
-    expect(toolText(r)).toBe(
+    const { versionId, artifactId } = publishedIds(text);
+    expect(text).toBe(
       t('mcp.publish.done', {
-        review_url: s.review_url,
+        review_url: `http://localhost:8080/a/${artifactId}`,
         number: 1,
-        version_id: s.version_id,
-        artifact_id: s.artifact_id,
+        version_id: versionId,
+        artifact_id: artifactId,
       }),
     );
 
     const [version] = await versions();
     expect(version).toMatchObject({
-      id: s.version_id,
+      id: versionId,
+      artifact_id: artifactId,
       source: 'inline',
       created_by: ada.user.id,
       message: 'Bản đầu',
+      entry_path: 'index.html',
+      file_count: 2,
     });
   });
 
   test('publish_inline puts a new artifact in the named project with its name and tags', async () => {
     await start();
     const project = await createProject(ctx.deps, ada.user, { name: 'Site' });
-    const r = await ok(
+    const text = await ok(
       'publish_inline',
       inlineHtml('<h1>Hi</h1>', {
         project_id: project.id,
@@ -299,7 +279,7 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
     const row = await ctx.deps.db.db
       .selectFrom('artifacts')
       .selectAll()
-      .where('id', '=', r.structuredContent.artifact_id)
+      .where('id', '=', publishedIds(text).artifactId)
       .executeTakeFirstOrThrow();
     expect(row).toMatchObject({ project_id: project.id, name: 'Bảng giá' });
     const tags = await ctx.deps.db.db
@@ -314,34 +294,38 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
   test('publish_inline adds a version on top of the one named, and refuses a stale one', async () => {
     await start();
     const { artifact, version: v1 } = await existing();
-    const r = await ok(
+    const text = await ok(
       'publish_inline',
       inlineHtml('<h1>Hai</h1>', { artifact_id: artifact.id, expected_version_id: v1.id }),
     );
-    expect(r.structuredContent).toMatchObject({ artifact_id: artifact.id, version_number: 2 });
+    const published = publishedIds(text);
+    expect(published.artifactId).toBe(artifact.id);
+    expect(text).toContain('Published v2 ');
 
     const stale = await call(
       'publish_inline',
       inlineHtml('<h1>Ba</h1>', { artifact_id: artifact.id, expected_version_id: v1.id }),
     );
     expect(stale.isError).toBe(true);
-    expect(toolText(stale)).toContain(t('publish.versionConflict', { number: 2 }));
-    expect(toolText(stale)).toContain(`"current_version_id":"${r.structuredContent.version_id}"`);
+    expect(stale.text).toContain(t('publish.versionConflict', { number: 2 }));
+    expect(stale.text).toContain(`"current_version_id":"${published.versionId}"`);
     expect(await versions()).toHaveLength(2);
   });
 
   test('publish_inline adds one line per warning', async () => {
     await start();
-    const r = await ok(
+    const text = await ok(
       'publish_inline',
       inlineHtml('<h1>Hi</h1><link rel="stylesheet" href="/css/site.css"><img src="/logo.png">'),
     );
-    const { warnings } = r.structuredContent;
-    expect(warnings).toHaveLength(2);
-    const lines = toolText(r).split('\n');
-    expect(lines).toHaveLength(2 + warnings.length);
-    for (const [i, w] of warnings.entries()) {
-      expect(lines[2 + i]).toBe(t('mcp.publish.warning', { message: w.message }));
+    const lines = text.split('\n');
+    expect(lines).toHaveLength(4);
+    for (const [i, url] of ['/css/site.css', '/logo.png'].entries()) {
+      expect(lines[2 + i]).toBe(
+        t('mcp.publish.warning', {
+          message: t('publish.warning.rootAbsolute', { file: 'index.html', url }),
+        }),
+      );
     }
   });
 
@@ -350,7 +334,7 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
     const refused = async (files: { path: string; content: string }[], message: string) => {
       const r = await call('publish_inline', { files });
       expect(r.isError, JSON.stringify(files)).toBe(true);
-      expect(toolText(r)).toContain(message);
+      expect(r.text).toContain(message);
     };
     await refused(
       [{ path: '../evil.html', content: '<p>x</p>' }],
@@ -390,7 +374,7 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
       ],
     });
     expect(r.isError).toBe(true);
-    expect(toolText(r)).toContain(t('publish.inline.textOnly', { path: 'a.png' }));
+    expect(r.text).toContain(t('publish.inline.textOnly', { path: 'a.png' }));
     expect(await versions()).toEqual([]);
   });
 
@@ -400,11 +384,11 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
     try {
       // About 12 MB of JSON on the wire, three times the SDK's own default cap.
       const atLimit = await call('publish_inline', inlineHtml('<'.repeat(1_999_000)), esc);
-      expect(atLimit.isError, toolText(atLimit)).toBeFalsy();
+      expect(atLimit.isError, atLimit.text).toBe(false);
       const over = await call('publish_inline', inlineHtml('<'.repeat(2_000_001)), esc);
       expect(over.isError).toBe(true);
-      expect(toolText(over)).toContain('max_inline_bytes');
-      expect(toolText(over)).toContain('create_publish_session');
+      expect(over.text).toContain('max_inline_bytes');
+      expect(over.text).toContain('create_publish_session');
       expect(await versions()).toHaveLength(1);
     } finally {
       await esc.close();
@@ -430,9 +414,7 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
     d = await described();
     expect(d.inline).toContain('at most 500 KB in total');
     expect(d.session).toContain('(valid 30 minutes)');
-    const s = await ok('create_publish_session');
-    expect(s.structuredContent.expires_in_seconds).toBe(1800);
-    expect(toolText(s)).toContain('expires in 30 minutes');
+    expect(await ok('create_publish_session')).toContain('expires in 30 minutes');
   });
 
   test('the tools say what they change', async () => {
@@ -441,8 +423,8 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
     for (const name of ['create_publish_session', 'publish_inline']) {
       expect(tools.find((x) => x.name === name)).toMatchObject({
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-        outputSchema: { type: 'object' },
       });
+      expect(tools.find((x) => x.name === name)?.outputSchema, name).toBeUndefined();
     }
   });
 
@@ -459,12 +441,12 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
     for (let i = 0; i < 30; i += 1) await ok('create_publish_session');
     const limited = await call('create_publish_session');
     expect(limited.isError).toBe(true);
-    expect(toolText(limited)).toContain('Too many requests');
-    expect(toolText(limited)).toContain('retry_after_seconds');
+    expect(limited.text).toContain('Too many requests');
+    expect(limited.text).toContain('retry_after_seconds');
     // An inline publish is counted too, and so refused.
     const inline = await call('publish_inline', inlineHtml('<p>x</p>'));
     expect(inline.isError).toBe(true);
-    expect(toolText(inline)).toContain('Too many requests');
+    expect(inline.text).toContain('Too many requests');
     expect(await versions()).toEqual([]);
   });
 });

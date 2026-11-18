@@ -28,10 +28,10 @@ themselves.
 
 - Call `get_project` for the project the user named (find its id with `list_projects`), or with no
   arguments for your default project. Follow its instructions for everything you publish there.
-- Call `whoami` once per session. It tells you the account, this Pinwall's size limits and its
-  `authoring_notes`; follow those notes. On a Pinwall with personal spaces, or with a quota, it
-  also gives `usage` and `quota` for your space: look before a large publish. Where an admin has
-  to approve share links, `can_create_share_links` says whether you may make them.
+- Call `whoami` once per session. It tells you the account, this Pinwall's upload and inline size
+  limits and its authoring notes; follow those notes. On a Pinwall with personal spaces, or with a
+  quota, it also gives the usage and quota of your space: look before a large publish. Where an
+  admin has to approve share links, it tells you when you may not make them yet.
 - `list_projects` lists your own projects and, on a Pinwall with personal spaces, those shared
   with you, each with your role: owner, editor or viewer. As a viewer you read and comment, but
   you do not publish or share, so choose a project where you are owner or editor.
@@ -64,15 +64,15 @@ Where it goes, in both publish tools:
 
 1. Call `create_publish_session` with `directory` (a folder) or `file` (one file), each as a path
    the shell sees from its working directory.
-2. Run the returned command unchanged, from that working directory: the `archive` command for a
-   folder, the `single_file` command for one file. The upload URL works once and expires within
-   minutes; never show it to the user.
+2. Run the returned command unchanged, from that working directory: the one for a folder, or the
+   one for a single file. The upload URL works once and expires within minutes; never show it to
+   the user.
 3. Read the JSON it prints: `review_url`, `version_id`, `version_number`, `warnings`. A refusal
    prints an error object instead, with a `code`, a message and details.
 
 **Without a shell** (Claude Desktop, claude.ai): call `publish_inline` with the text files, each a
-`path` and its `content`, within `max_inline_bytes` in total. Agents with a shell use the upload
-URL instead: it handles any size up to `max_upload_bytes` and binary files.
+`path` and its `content`, within the inline limit `whoami` gives in total. Agents with a shell use
+the upload URL instead: it handles any size up to the upload limit and binary files.
 
 When a publish is refused:
 

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { PublishResult } from '@pinwall/shared';
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { FixedClock } from '../../src/lib/clock.ts';
 import type { ErrorCode } from '../../src/lib/errors.ts';
@@ -9,9 +10,9 @@ import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { connectMcp } from '../helpers/mcp.ts';
 
 /*
- * The Agent Skill names tools, their arguments and result fields, and error codes. These tests
- * keep it in step with what `/mcp` actually serves, so a renamed field breaks the build rather
- * than an agent.
+ * The Agent Skill names tools, their arguments, the fields of the JSON the upload command prints,
+ * and error codes. These tests keep it in step with what `/mcp` actually serves, so a renamed
+ * field breaks the build rather than an agent.
  */
 
 const skill = readFileSync(new URL('../../../../skills/pinwall/SKILL.md', import.meta.url), 'utf8');
@@ -103,10 +104,11 @@ test('the skill names every tool and nothing that does not exist', async () => {
   expect(tools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES].sort());
   for (const name of TOOL_NAMES) expect(skill).toContain(`\`${name}\``);
 
-  const schemas = tools.flatMap((tool) => [tool.inputSchema, tool.outputSchema]);
   const known = new Set<string>([
     ...TOOL_NAMES,
-    ...propertyNames(schemas),
+    ...propertyNames(tools.map((tool) => tool.inputSchema)),
+    // The upload command prints a publish result as JSON.
+    ...Object.keys(PublishResult.shape),
     ...ERROR_CODES,
     ...FORBIDDEN_REASONS,
   ]);

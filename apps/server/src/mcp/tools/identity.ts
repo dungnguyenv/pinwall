@@ -7,8 +7,8 @@ import { t } from '../../lib/i18n.ts';
 import { DESCRIPTIONS } from '../descriptions.ts';
 import { formatBytes } from '../format.ts';
 import { runTool } from '../results.ts';
-import { WhoamiOut } from '../schemas.ts';
 import type { ToolContext, ToolModule } from '../server.ts';
+import type { WhoamiOut } from '../types.ts';
 
 /**
  * How published pages behave here: always the entry, link and completeness rules, then what the
@@ -38,17 +38,9 @@ async function whoami({ deps, auth }: ToolContext): Promise<WhoamiOut> {
     via: auth.via,
     pinwall_url: config.publicOrigin,
     isolation: config.isolation.mode,
-    limits: {
-      max_upload_bytes: limits.maxUploadBytes,
-      max_inline_bytes: limits.maxInlineBytes,
-      max_file_bytes: limits.maxFileBytes,
-      max_version_bytes: limits.maxVersionBytes,
-      max_files: limits.maxFiles,
-    },
-    upload_url_ttl_seconds: Math.floor(config.ttl.uploadSessionMs / 1000),
+    limits: { max_upload_bytes: limits.maxUploadBytes, max_inline_bytes: limits.maxInlineBytes },
     authoring_notes: authoringNotes(config),
-    // The fields below are sent only when their setting is not at its 1.0 default.
-    ...(config.visibility === 'personal' ? { visibility: 'personal' as const } : {}),
+    // The fields below are shown only when their setting is not at its 1.0 default.
     ...(quotaApplies(config, user)
       ? { usage: await usageOf(deps.db.db, config, user.id), quota: limitsOf(config, user) }
       : {}),
@@ -88,24 +80,23 @@ export const registerIdentityTools: ToolModule = (server, ctx) => {
     {
       ...DESCRIPTIONS.whoami,
       inputSchema: z.object({}),
-      outputSchema: WhoamiOut,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     runTool(ctx, async () => {
-      const structured = await whoami(ctx);
-      const { user } = structured;
+      const me = await whoami(ctx);
+      const { user } = me;
       const summary = t('mcp.whoami.text', {
-        url: structured.pinwall_url,
+        url: me.pinwall_url,
         // A person without a name is known by their email, else by their id.
         name: user.name ?? user.email ?? user.id,
         role: user.role,
-        via: structured.via,
-        isolation: structured.isolation,
-        upload: formatBytes(structured.limits.max_upload_bytes),
-        inline: formatBytes(structured.limits.max_inline_bytes),
+        via: me.via,
+        isolation: me.isolation,
+        upload: formatBytes(me.limits.max_upload_bytes),
+        inline: formatBytes(me.limits.max_inline_bytes),
       });
-      const notes = structured.authoring_notes.map((note) => `- ${note}`);
-      return { text: [summary, ...notes, ...accountLines(structured)].join('\n'), structured };
+      const notes = me.authoring_notes.map((note) => `- ${note}`);
+      return [summary, ...notes, ...accountLines(me)].join('\n');
     }),
   );
 };

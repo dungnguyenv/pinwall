@@ -1,14 +1,12 @@
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { Me, PublicConfig } from '@pinwall/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { loadConfig } from '../../src/config/load.ts';
 import { usageOf } from '../../src/domain/usage.ts';
 import { formatBytes } from '../../src/lib/format.ts';
 import { t } from '../../src/lib/i18n.ts';
-import { WhoamiOut } from '../../src/mcp/schemas.ts';
 import type { TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
-import { connectMcp, toolText } from '../helpers/mcp.ts';
+import { callText, connectMcp } from '../helpers/mcp.ts';
 import { restClient } from '../helpers/rest.ts';
 import { type Person, spacesFixture } from '../spaces/fixture.ts';
 import { approve, contextWith, moderationContext, setQuota } from './helpers.ts';
@@ -179,12 +177,13 @@ describe.each(dialects)('/me, whoami and the public config on %s', (dialect) => 
   });
 
   describe('whoami', () => {
-    const whoami = async (ctx: TestContext, person: Person) => {
+    /** What `whoami` tells `person`'s agent. */
+    const whoami = async (ctx: TestContext, person: Person): Promise<string> => {
       const client = await connectMcp(ctx, { bearer: person.token });
       try {
-        return (await client.callTool({ name: 'whoami', arguments: {} })) as CallToolResult & {
-          structuredContent: WhoamiOut;
-        };
+        const r = await callText(client, 'whoami');
+        expect(r.isError, r.text).toBe(false);
+        return r.text;
       } finally {
         await client.close();
       }
@@ -197,30 +196,24 @@ describe.each(dialects)('/me, whoami and the public config on %s', (dialect) => 
 
       // A team with the defaults answers exactly as 1.0 did.
       const plain = await whoami(team, A);
-      expect(plain.structuredContent).toEqual({
-        user: { id: A.user.id, name: 'A', email: A.user.email, role: 'member' },
-        via: 'api_token',
-        pinwall_url: config.publicOrigin,
-        isolation: config.isolation.mode,
-        limits: {
-          max_upload_bytes: config.limits.maxUploadBytes,
-          max_inline_bytes: config.limits.maxInlineBytes,
-          max_file_bytes: config.limits.maxFileBytes,
-          max_version_bytes: config.limits.maxVersionBytes,
-          max_files: config.limits.maxFiles,
-        },
-        upload_url_ttl_seconds: Math.floor(config.ttl.uploadSessionMs / 1000),
-        authoring_notes: [
-          t('mcp.notes.entry'),
-          t('mcp.notes.relativeLinks'),
-          t('mcp.notes.selfContained'),
-          t('mcp.notes.opaqueOrigin'),
-        ],
-      });
-      const text = toolText(plain);
-      expect(text).not.toContain(t('mcp.whoami.noShareLinks'));
-      expect(text).not.toContain(
-        t('mcp.whoami.space', spaceCopy({ bytes: 0, artifacts: 0, files: 0 })),
+      expect(plain).toBe(
+        [
+          t('mcp.whoami.text', {
+            url: config.publicOrigin,
+            name: 'A',
+            role: 'member',
+            via: 'api_token',
+            isolation: config.isolation.mode,
+            upload: formatBytes(config.limits.maxUploadBytes),
+            inline: formatBytes(config.limits.maxInlineBytes),
+          }),
+          ...[
+            t('mcp.notes.entry'),
+            t('mcp.notes.relativeLinks'),
+            t('mcp.notes.selfContained'),
+            t('mcp.notes.opaqueOrigin'),
+          ].map((note) => `- ${note}`),
+        ].join('\n'),
       );
 
       // Personal mode, with links that need approval.
@@ -228,32 +221,19 @@ describe.each(dialects)('/me, whoami and the public config on %s', (dialect) => 
       const own = await usageOf(ap.deps.db.db, ap.deps.config, A.user.id);
       expect(own.artifacts).toBeGreaterThan(0);
       const blocked = await whoami(ap, A);
-      expect(blocked.structuredContent).toMatchObject({
-        visibility: 'personal',
-        usage: own,
-        quota: { bytes: null, artifacts: null, files: null },
-        can_create_share_links: false,
-      });
-      expect(WhoamiOut.parse(blocked.structuredContent)).toEqual(blocked.structuredContent);
-      const lines = toolText(blocked).split('\n');
+      const lines = blocked.split('\n');
       expect(lines).toContain(t('mcp.whoami.space', spaceCopy(own)));
       expect(lines).toContain(t('mcp.whoami.noShareLinks'));
 
       // An admin may share, and has no limit.
       const admin = await whoami(ap, X);
-      expect(admin.structuredContent.can_create_share_links).toBe(true);
-      expect(toolText(admin)).not.toContain(t('mcp.whoami.noShareLinks'));
+      expect(admin).not.toContain(t('mcp.whoami.noShareLinks'));
 
       // A limit is said in the text, in numbers.
       await setQuota(team, A.user.id, { bytes: 1_500_000, artifacts: 4 });
       const filesLimited = contextWith(ap, { quota: { ...ap.deps.config.quota, files: 900 } });
       const limited = await whoami(filesLimited, A);
-      expect(limited.structuredContent.quota).toEqual({
-        bytes: 1_500_000,
-        artifacts: 4,
-        files: 900,
-      });
-      expect(toolText(limited).split('\n')).toContain(
+      expect(limited.split('\n')).toContain(
         t('mcp.whoami.space', {
           bytes: formatBytes(own.bytes),
           bytesLimit: formatBytes(1_500_000),

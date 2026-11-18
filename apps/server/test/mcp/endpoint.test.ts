@@ -1,6 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { type CallToolResult, LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/sdk/types.js';
+import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, describe, expect, onTestFinished, test } from 'vitest';
 import type { UserRow } from '../../src/db/schema.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
@@ -12,7 +12,7 @@ import { createSignedInUser, createUserToken } from '../helpers/auth.ts';
 import { CONTENT_ENV } from '../helpers/content.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
-import { connectMcp, toolText } from '../helpers/mcp.ts';
+import { callText, connectMcp } from '../helpers/mcp.ts';
 import { issueTestTokens } from '../helpers/oauth.ts';
 import { listen } from '../helpers/socket.ts';
 
@@ -45,11 +45,6 @@ function init(headers: Record<string, string> = {}): RequestInit {
 
 const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
 
-type Whoami = { user: { id: string }; via: string; authoring_notes: string[] } & Record<
-  string,
-  unknown
->;
-
 describe.each(dialects)('/mcp on %s', (dialect) => {
   let ctx: TestContext;
   /** An IdP member, freshly checked, named Ada. */
@@ -72,10 +67,11 @@ describe.each(dialects)('/mcp on %s', (dialect) => {
     return client;
   }
 
-  async function whoami(client: Client): Promise<CallToolResult & { structuredContent: Whoami }> {
-    const r = (await client.callTool({ name: 'whoami', arguments: {} })) as CallToolResult;
-    expect(r.isError, toolText(r)).toBeFalsy();
-    return r as CallToolResult & { structuredContent: Whoami };
+  /** What `whoami` tells the agent. */
+  async function whoami(client: Client): Promise<string> {
+    const r = await callText(client, 'whoami');
+    expect(r.isError, r.text).toBe(false);
+    return r.text;
   }
 
   test('the challenge names the public origin', async () => {
@@ -127,10 +123,26 @@ describe.each(dialects)('/mcp on %s', (dialect) => {
     const found = tools.find((x) => x.name === 'whoami');
     expect(found).toMatchObject({
       inputSchema: { type: 'object' },
-      outputSchema: { type: 'object' },
       annotations: { readOnlyHint: true, openWorldHint: false },
     });
     for (const tool of tools) expect(TOOL_NAMES).toContain(tool.name);
+  });
+
+  test('tools/list declares no output schema', async () => {
+    await start();
+    const client = await connect(await createUserToken(ctx, ada.user.id));
+    const { tools } = await client.listTools();
+    expect(tools.length).toBeGreaterThan(0);
+    for (const tool of tools) expect(tool.outputSchema, tool.name).toBeUndefined();
+  });
+
+  test('a tool answers with one text block and no structuredContent', async () => {
+    await start();
+    const client = await connect(await createUserToken(ctx, ada.user.id));
+    const r = await client.callTool({ name: 'whoami', arguments: {} });
+    expect(r.structuredContent).toBeUndefined();
+    expect(r.content).toHaveLength(1);
+    expect((r.content as { type: string }[])[0]?.type).toBe('text');
   });
 
   test('a Node client connects over a real socket', async () => {
@@ -146,15 +158,13 @@ describe.each(dialects)('/mcp on %s', (dialect) => {
     const client = new Client({ name: 'socket-probe', version: '1.0.0' });
     await client.connect(transport);
     clients.push(client);
-    const r = await whoami(client);
-    expect(r.structuredContent).toMatchObject({ user: { id: ada.user.id }, via: 'api_token' });
+    expect(await whoami(client)).toContain('as Ada (member, via api_token)');
   });
 
   test('an OAuth access token connects', async () => {
     await start();
     const { access } = await issueTestTokens(ctx, ada.cookie);
-    const r = await whoami(await connect(access));
-    expect(r.structuredContent).toMatchObject({ user: { id: ada.user.id }, via: 'oauth' });
+    expect(await whoami(await connect(access))).toContain('as Ada (member, via oauth)');
   });
 
   test('a foreign Origin is refused', async () => {
@@ -254,29 +264,14 @@ describe.each(dialects)('/mcp on %s', (dialect) => {
 
   test('whoami reports identity, limits, isolation and authoring notes', async () => {
     await start();
-    const r = await whoami(await connect(await createUserToken(ctx, ada.user.id)));
+    const text = await whoami(await connect(await createUserToken(ctx, ada.user.id)));
     const notes = [
       t('mcp.notes.entry'),
       t('mcp.notes.relativeLinks'),
       t('mcp.notes.selfContained'),
       t('mcp.notes.opaqueOrigin'),
     ];
-    expect(r.structuredContent).toEqual({
-      user: { id: ada.user.id, name: 'Ada', email: ada.user.email, role: 'member' },
-      via: 'api_token',
-      pinwall_url: 'http://localhost:8080',
-      isolation: 'single-domain',
-      limits: {
-        max_upload_bytes: 95_000_000,
-        max_inline_bytes: 2_000_000,
-        max_file_bytes: 50_000_000,
-        max_version_bytes: 500_000_000,
-        max_files: 10_000,
-      },
-      upload_url_ttl_seconds: 600,
-      authoring_notes: notes,
-    });
-    expect(toolText(r)).toBe(
+    expect(text).toBe(
       `${t('mcp.whoami.text', {
         url: 'http://localhost:8080',
         name: 'Ada',
@@ -291,26 +286,21 @@ describe.each(dialects)('/mcp on %s', (dialect) => {
     // The owner is always an admin, whatever its row says, and has no email.
     const owner = await createSignedInUser(ctx, { kind: 'owner', name: 'Olu' });
     const mine = await whoami(await connect(await createUserToken(ctx, owner.user.id)));
-    expect(mine.structuredContent.user).toEqual({
-      id: owner.user.id,
-      name: 'Olu',
-      email: null,
-      role: 'admin',
-    });
+    expect(mine).toContain('as Olu (admin, via api_token)');
   });
 
   test('in content-domain mode the notes describe per-version origins', async () => {
     await start(CONTENT_ENV);
-    const r = await whoami(await connect(await createUserToken(ctx, ada.user.id)));
-    expect(r.structuredContent).toMatchObject({
-      pinwall_url: 'https://pinwall.test',
-      isolation: 'content-domain',
-      authoring_notes: [
+    const text = await whoami(await connect(await createUserToken(ctx, ada.user.id)));
+    expect(text).toContain('Signed in to https://pinwall.test as Ada');
+    expect(text).toContain('Isolation: content-domain.');
+    expect(text.split('\n').slice(1)).toEqual(
+      [
         t('mcp.notes.entry'),
         t('mcp.notes.relativeLinks'),
         t('mcp.notes.selfContained'),
         t('mcp.notes.perVersionOrigin'),
-      ],
-    });
+      ].map((n) => `- ${n}`),
+    );
   });
 });

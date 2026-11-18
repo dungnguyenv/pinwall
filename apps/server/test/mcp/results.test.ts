@@ -2,13 +2,14 @@ import type { Context } from 'hono';
 import { afterAll, beforeAll, expect, test, vi } from 'vitest';
 import type { AppEnv } from '../../src/app.ts';
 import { versionConflict } from '../../src/domain/versions.ts';
-import { AppError, forbidden, notFound } from '../../src/lib/errors.ts';
+import { AppError, conflict, forbidden, notFound } from '../../src/lib/errors.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { formatBytes } from '../../src/mcp/format.ts';
 import { runTool, toolError } from '../../src/mcp/results.ts';
 import type { ToolContext } from '../../src/mcp/server.ts';
 import { createSignedInUser } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
+import { toolText } from '../helpers/mcp.ts';
 
 const REQUEST_ID = 'req_test';
 
@@ -37,6 +38,17 @@ test('an AppError becomes an actionable tool error', () => {
   expect(toolError(toolCtx, forbidden('Not yours.'))).toEqual(textError('Not yours.'));
 });
 
+test('a reason hint comes before the code hint', () => {
+  // en.json has mcp.hint.conflict.edited_on_server and no mcp.hint.conflict.
+  const r = toolError(toolCtx, conflict('m', { reason: 'edited_on_server' }), 'APPENDIX');
+  expect(toolText(r).split('\n')).toEqual([
+    'm',
+    t('mcp.hint.conflict.edited_on_server'),
+    expect.stringMatching(/^Details: /),
+    'APPENDIX',
+  ]);
+});
+
 test('unexpected errors are logged and hidden', () => {
   const logged = vi.spyOn(ctx.deps.logger, 'error');
   const internal = t('mcp.error.internal', { requestId: REQUEST_ID });
@@ -54,20 +66,58 @@ test('unexpected errors are logged and hidden', () => {
   logged.mockRestore();
 });
 
-test('runTool answers text plus structured content, or the tool error', async () => {
-  const double = runTool(toolCtx, async (args: { n: number }) => ({
-    text: `Twice ${args.n} is ${2 * args.n}.`,
-    structured: { result: 2 * args.n },
-  }));
+test('runTool answers one text block, or the tool error', async () => {
+  const double = runTool(
+    toolCtx,
+    async (args: { n: number }) => `Twice ${args.n} is ${2 * args.n}.`,
+  );
   expect(await double({ n: 21 })).toEqual({
     content: [{ type: 'text', text: 'Twice 21 is 42.' }],
-    structuredContent: { result: 42 },
   });
 
-  const missing = runTool(toolCtx, async (_args: Record<string, never>) => {
+  const missing = runTool(toolCtx, async (_args: Record<string, never>): Promise<string> => {
     throw notFound('No artifact art_1.');
   });
   expect(await missing({})).toEqual(textError(`No artifact art_1.\n${t('mcp.hint.not_found')}`));
+});
+
+test('runTool ends an error with what its appendix says, when it says something', async () => {
+  const fails = async (_args: { n: number }): Promise<string> => {
+    throw conflict('Stale.', { reason: 'edited_on_server' });
+  };
+  const seen: unknown[] = [];
+  const withAppendix = runTool(toolCtx, fails, {
+    appendix: async (err, args) => {
+      seen.push([err instanceof AppError, args]);
+      return 'DIFF';
+    },
+  });
+  const lines = toolText(await withAppendix({ n: 1 })).split('\n');
+  expect(lines.at(-1)).toBe('DIFF');
+  expect(seen).toEqual([[true, { n: 1 }]]);
+
+  // An appendix of null adds nothing.
+  const silent = runTool(toolCtx, fails, { appendix: async () => null });
+  expect(toolText(await silent({ n: 1 })).split('\n')).toHaveLength(3);
+  expect(await runTool(toolCtx, fails)({ n: 1 })).toEqual(await silent({ n: 1 }));
+});
+
+test('runTool answers the error without the appendix when the appendix itself fails', async () => {
+  const logged = vi.spyOn(ctx.deps.logger, 'error');
+  const run = runTool(
+    toolCtx,
+    async (_args: Record<string, never>): Promise<string> => {
+      throw notFound('No artifact art_1.');
+    },
+    {
+      appendix: async () => {
+        throw new Error('blob store down');
+      },
+    },
+  );
+  expect(await run({})).toEqual(textError(`No artifact art_1.\n${t('mcp.hint.not_found')}`));
+  expect(logged).toHaveBeenCalledOnce();
+  logged.mockRestore();
 });
 
 test('formatBytes', () => {

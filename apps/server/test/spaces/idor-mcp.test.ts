@@ -1,17 +1,10 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { DEFAULT_PROJECT_ID, ensureDefaultProject } from '../../src/domain/projects.ts';
 import { t } from '../../src/lib/i18n.ts';
-import type {
-  ListArtifactsOut,
-  ListProjectsOut,
-  ProjectDetailOut,
-  SearchArtifactsOut,
-} from '../../src/mcp/schemas.ts';
 import type { TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
-import { connectMcp, toolText } from '../helpers/mcp.ts';
+import { callText, connectMcp } from '../helpers/mcp.ts';
 import { publishFiles } from '../helpers/publish.ts';
 import {
   type CaseIds,
@@ -48,6 +41,13 @@ const TEAM_REFUSED: Record<string, string> = { revoke_share_link: t('share.revok
 
 const WHO: Who[] = ['E', 'S'];
 
+/** The ids of the artifacts a list or search text shows, in the order it shows them. */
+const artifactIdsOf = (text: string): string[] =>
+  [...text.matchAll(/^- (art_[^:\s]+):/gm)].flatMap((m) => m[1] ?? []);
+
+/** The id a `get_project` text names in its heading. */
+const projectIdOf = (text: string): string => /^Project (\S+):/.exec(text)?.[1] ?? '';
+
 describe.each(dialects)('MCP tools in spaces on %s', (dialect) => {
   describe.each(MODES)('in %s mode', (mode) => {
     let ctx: TestContext;
@@ -68,15 +68,15 @@ describe.each(dialects)('MCP tools in spaces on %s', (dialect) => {
     async function agent(who: Who) {
       const client = await connectMcp(ctx, { bearer: fx.people[who].token });
       clients.push(client);
-      const call = async (name: string, args: Record<string, unknown> = {}) =>
-        (await client.callTool({ name, arguments: args })) as CallToolResult;
+      const call = (name: string, args: Record<string, unknown> = {}) =>
+        callText(client, name, args);
       return {
         call,
-        /** A call that must succeed, with its structured result. */
-        ok: async <T>(name: string, args: Record<string, unknown> = {}): Promise<T> => {
+        /** A call that must succeed, with the text it answers with. */
+        ok: async (name: string, args: Record<string, unknown> = {}): Promise<string> => {
           const r = await call(name, args);
-          expect(r.isError, toolText(r)).toBeFalsy();
-          return r.structuredContent as T;
+          expect(r.isError, r.text).toBe(false);
+          return r.text;
         },
       };
     }
@@ -89,55 +89,42 @@ describe.each(dialects)('MCP tools in spaces on %s', (dialect) => {
           const r = await me.call(name, argsOf(fx.ids));
           if (mode === 'team') {
             const refused = TEAM_REFUSED[name];
-            expect(r.isError === true, toolText(r)).toBe(refused !== undefined);
-            if (refused !== undefined) expect(toolText(r)).toContain(refused);
+            expect(r.isError, r.text).toBe(refused !== undefined);
+            if (refused !== undefined) expect(r.text).toContain(refused);
             return;
           }
           const missing = await me.call(name, argsOf(UNKNOWN_IDS));
-          expect(r.isError, toolText(r)).toBe(true);
-          expect(toolText(r)).toBe(toolText(missing));
-          expect(r.structuredContent).toEqual(missing.structuredContent);
+          expect(r.isError, r.text).toBe(true);
+          expect(r.text).toBe(missing.text);
         },
       );
     });
 
     test('list_artifacts and search_artifacts leave out other spaces', async () => {
       const { P, Q, p, q, e } = fx.ids;
-      const idsOf = (out: ListArtifactsOut | SearchArtifactsOut) =>
-        out.artifacts.map((a) => a.id).sort();
+      const idsOf = (text: string) => artifactIdsOf(text).sort();
       const stranger = await agent('S');
 
       if (mode === 'team') {
         // Everyone sees everything, in every project: what personal mode leaves out is there.
         const inP = [p, e].sort();
-        expect(
-          idsOf(await stranger.ok<ListArtifactsOut>('list_artifacts', { project_id: P })),
-        ).toEqual(inP);
-        expect(
-          idsOf(await stranger.ok<ListArtifactsOut>('list_artifacts', { project_id: Q })),
-        ).toEqual([q]);
-        const search = await stranger.ok<SearchArtifactsOut>('search_artifacts', {
-          query: 'Version',
-          project_id: Q,
-        });
+        expect(idsOf(await stranger.ok('list_artifacts', { project_id: P }))).toEqual(inP);
+        expect(idsOf(await stranger.ok('list_artifacts', { project_id: Q }))).toEqual([q]);
+        const search = await stranger.ok('search_artifacts', { query: 'Version', project_id: Q });
         expect(idsOf(search)).toEqual([q]);
         return;
       }
 
       // S is in no project: nothing of A's or E's, however it is asked for.
-      expect(await stranger.ok<ListArtifactsOut>('list_artifacts')).toMatchObject({
-        artifacts: [],
-      });
-      expect(
-        await stranger.ok<SearchArtifactsOut>('search_artifacts', { query: 'Version' }),
-      ).toMatchObject({ artifacts: [] });
+      expect(idsOf(await stranger.ok('list_artifacts'))).toEqual([]);
+      expect(idsOf(await stranger.ok('search_artifacts', { query: 'Version' }))).toEqual([]);
 
       // E is in P: p and e, never q.
       const editor = await agent('E');
-      expect(idsOf(await editor.ok<ListArtifactsOut>('list_artifacts'))).toEqual([p, e].sort());
-      expect(
-        idsOf(await editor.ok<SearchArtifactsOut>('search_artifacts', { query: 'Version' })),
-      ).toEqual([p, e].sort());
+      expect(idsOf(await editor.ok('list_artifacts'))).toEqual([p, e].sort());
+      expect(idsOf(await editor.ok('search_artifacts', { query: 'Version' }))).toEqual(
+        [p, e].sort(),
+      );
     });
 
     test('a viewer is told why it cannot publish or share', async () => {
@@ -150,72 +137,55 @@ describe.each(dialects)('MCP tools in spaces on %s', (dialect) => {
       const share = await viewer.call('create_share_link', { artifact_id: fx.ids.p });
 
       if (mode === 'team') {
-        for (const r of [publish, session, share]) expect(r.isError, toolText(r)).toBeFalsy();
+        for (const r of [publish, session, share]) expect(r.isError, r.text).toBe(false);
         return;
       }
       expect(publish.isError).toBe(true);
-      expect(toolText(publish)).toContain(t('spaces.role.publish'));
+      expect(publish.text).toContain(t('spaces.role.publish'));
       expect(session.isError).toBe(true);
-      expect(toolText(session)).toContain(t('spaces.role.publish'));
+      expect(session.text).toContain(t('spaces.role.publish'));
       expect(share.isError).toBe(true);
-      expect(toolText(share)).toContain(t('spaces.role.createShareLink'));
+      expect(share.text).toContain(t('spaces.role.createShareLink'));
     });
 
-    describe('role and owner of a project', () => {
-      const A = () => ({ id: fx.people.A.user.id, name: 'A' });
-
-      test('list_projects and get_project show role and owner in personal mode only', async () => {
+    describe('the projects a caller sees and makes', () => {
+      test('list_projects and get_project show the projects of the space the caller is in', async () => {
         const editor = await agent('E');
-        const { projects } = await editor.ok<ListProjectsOut>('list_projects');
-        const listed = projects.find((p) => p.id === fx.ids.P);
-        const { project } = await editor.ok<ProjectDetailOut>('get_project', {
-          project_id: fx.ids.P,
-        });
+        const listed = await editor.ok('list_projects');
+        expect(listed).toContain(`- ${fx.ids.P}:`);
+        // One default project: the shared one in team mode, E's own, made by the listing, in personal mode.
+        const defaults = listed.split('\n').filter((l) => l.includes(t('mcp.project.flagDefault')));
+        expect(defaults).toHaveLength(1);
+        expect(projectIdOf(await editor.ok('get_project', { project_id: fx.ids.P }))).toBe(
+          fx.ids.P,
+        );
 
-        if (mode === 'team') {
-          for (const shown of [listed, project]) {
-            expect(shown).toBeDefined();
-            expect(shown).not.toHaveProperty('role');
-            expect(shown).not.toHaveProperty('owner');
-          }
-          return;
-        }
-        expect(listed).toMatchObject({ id: fx.ids.P, role: 'editor', owner: A() });
-        expect(project).toMatchObject({ id: fx.ids.P, role: 'editor', owner: A() });
-        // E's own default project, made by the listing, is E's.
-        expect(projects.filter((p) => p.is_default)).toEqual([
-          expect.objectContaining({
-            role: 'owner',
-            owner: { id: fx.people.E.user.id, name: 'E' },
-          }),
-        ]);
-
+        // A viewer reads the project's instructions too.
         const viewer = await agent('V');
-        const asViewer = await viewer.ok<ProjectDetailOut>('get_project', { project_id: fx.ids.P });
-        expect(asViewer.project).toMatchObject({ role: 'viewer', owner: A() });
+        expect(projectIdOf(await viewer.ok('get_project', { project_id: fx.ids.P }))).toBe(
+          fx.ids.P,
+        );
       });
 
-      test('create_project shows the same two fields, in personal mode only', async () => {
+      test('create_project makes a project the caller owns', async () => {
         const stranger = await agent('S');
-        const { project } = await stranger.ok<ProjectDetailOut>('create_project', { name: 'Mine' });
-        if (mode === 'team') {
-          expect(project).not.toHaveProperty('role');
-          expect(project).not.toHaveProperty('owner');
-          return;
-        }
-        expect(project).toMatchObject({
-          role: 'owner',
-          owner: { id: fx.people.S.user.id, name: 'S' },
-        });
+        const text = await stranger.ok('create_project', { name: 'Mine' });
+        const id = /prj_[^:\s]+/.exec(text)?.[0] ?? '';
+        expect(text).toBe(t('mcp.project.created', { id, name: 'Mine' }));
+        const row = await ctx.deps.db.db
+          .selectFrom('projects')
+          .select('owner_id')
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow();
+        expect(row.owner_id).toBe(fx.people.S.user.id);
       });
     });
 
     test("get_project without an id is the caller's own default project", async () => {
       const stranger = await agent('S');
-      const { project } = await stranger.ok<ProjectDetailOut>('get_project');
-      expect(project.is_default).toBe(true);
+      const project = projectIdOf(await stranger.ok('get_project'));
       if (mode === 'team') {
-        expect(project.id).toBe(DEFAULT_PROJECT_ID);
+        expect(project).toBe(DEFAULT_PROJECT_ID);
         return;
       }
       const own = await ctx.deps.db.db
@@ -224,14 +194,13 @@ describe.each(dialects)('MCP tools in spaces on %s', (dialect) => {
         .where('owner_id', '=', fx.people.S.user.id)
         .where('is_default', '=', 1)
         .execute();
-      expect(own.map((row) => row.id)).toEqual([project.id]);
-      expect(project).toMatchObject({ role: 'owner', owner: { id: fx.people.S.user.id } });
+      expect(own.map((row) => row.id)).toEqual([project]);
 
       // A's default is another project.
       const owner = await agent('A');
-      const { project: theirs } = await owner.ok<ProjectDetailOut>('get_project');
-      expect(theirs.is_default).toBe(true);
-      expect(theirs.id).not.toBe(project.id);
+      const theirs = projectIdOf(await owner.ok('get_project'));
+      expect(theirs).not.toBe('');
+      expect(theirs).not.toBe(project);
     });
   });
 });
@@ -280,17 +249,13 @@ describe.each(dialects)("MCP tools on someone else's default project on %s", (di
     async function callAs(who: Who, name: string, args: Record<string, unknown>) {
       const client = await connectMcp(ctx, { bearer: fx.people[who].token });
       clients.push(client);
-      return (await client.callTool({ name, arguments: args })) as CallToolResult;
+      return callText(client, name, args);
     }
 
     test('A reads it as its owner in personal mode, as everyone does in team mode', async () => {
       const r = await callAs('A', 'get_project', { project_id: DEFAULT_PROJECT_ID });
-      expect(r.isError, toolText(r)).toBeFalsy();
-      const { project } = r.structuredContent as ProjectDetailOut;
-      expect(project).toMatchObject({ id: DEFAULT_PROJECT_ID, is_default: true });
-      if (mode === 'personal') {
-        expect(project).toMatchObject({ role: 'owner', owner: { id: fx.people.A.user.id } });
-      }
+      expect(r.isError, r.text).toBe(false);
+      expect(projectIdOf(r.text)).toBe(DEFAULT_PROJECT_ID);
     });
 
     describe.each(['S', 'X'] as const)('%s naming it', (who) => {
@@ -299,13 +264,12 @@ describe.each(dialects)("MCP tools on someone else's default project on %s", (di
         async (name, argsOf) => {
           const r = await callAs(who, name, argsOf(DEFAULT_PROJECT_ID));
           if (mode === 'team') {
-            expect(r.isError, toolText(r)).toBeFalsy();
+            expect(r.isError, r.text).toBe(false);
             return;
           }
           const missing = await callAs(who, name, argsOf(UNKNOWN_IDS.P));
-          expect(r.isError, toolText(r)).toBe(true);
-          expect(toolText(r)).toBe(toolText(missing));
-          expect(r.structuredContent).toEqual(missing.structuredContent);
+          expect(r.isError, r.text).toBe(true);
+          expect(r.text).toBe(missing.text);
         },
       );
     });

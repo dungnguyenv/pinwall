@@ -1043,6 +1043,7 @@
   "mcp.error.internal": "Pinwall hit an unexpected error (request {{requestId}}). Try again; if it keeps happening, tell whoever runs this Pinwall.",
   "mcp.error.details": "Details: {{details}}",
   "mcp.hint.version_conflict": "Call get_artifact to see the current version, then publish with expected_version_id set to its id.",
+  "mcp.hint.conflict.edited_on_server": "Read those files with read_file and bring their changes into your copy, then publish again; pass replace_server_edits: true only to discard them on purpose.",
   "mcp.hint.not_found": "Check the id with list_projects, list_artifacts or search_artifacts.",
   "mcp.hint.gone": "It was deleted and cannot be changed or published to.",
   "mcp.hint.payload_too_large": "For larger or binary content, call create_publish_session and run its upload command.",

@@ -1,40 +1,28 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import type { UserRow } from '../../src/db/schema.ts';
 import { createProject, DEFAULT_PROJECT_ID } from '../../src/domain/projects.ts';
 import { addTombstones } from '../../src/domain/tombstones.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
 import { t } from '../../src/lib/i18n.ts';
-import type {
-  GetArtifactOut,
-  ListArtifactsOut,
-  ListProjectsOut,
-  ProjectDetailOut,
-  SearchArtifactsOut,
-} from '../../src/mcp/schemas.ts';
+import { formatBytes } from '../../src/mcp/format.ts';
 import { createSignedInUser, createUserToken } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
-import { connectMcp, toolText } from '../helpers/mcp.ts';
+import { callText, connectMcp, nextCursor } from '../helpers/mcp.ts';
 import { publishFiles } from '../helpers/publish.ts';
 import { postThread } from '../helpers/review.ts';
 
 const T = Date.UTC(2026, 10, 10);
 const PAGE = { 'index.html': '<h1>Trang</h1>' };
 
-/** What each tool's `structuredContent` holds. */
-interface Outputs {
-  list_projects: ListProjectsOut;
-  get_project: ProjectDetailOut;
-  create_project: ProjectDetailOut;
-  list_artifacts: ListArtifactsOut;
-  search_artifacts: SearchArtifactsOut;
-  get_artifact: GetArtifactOut;
-}
-type Ok<N extends keyof Outputs> = CallToolResult & { structuredContent: Outputs[N] };
-const idsOf = (r: { structuredContent: { artifacts: { id: string }[] } }): string[] =>
-  r.structuredContent.artifacts.map((a) => a.id);
+/** The ids of the artifacts a list or search text shows, in the order it shows them. */
+const idsOf = (text: string): string[] =>
+  [...text.matchAll(/^- (art_[^:\s]+):/gm)].flatMap((m) => m[1] ?? []);
+
+/** The numbers of the versions `get_artifact` lists, in the order it lists them. */
+const versionNumbersOf = (text: string): number[] =>
+  [...text.matchAll(/^- ver_[^:\s]+: version (\d+)/gm)].map((m) => Number(m[1]));
 
 describe.each(dialects)('MCP library tools on %s', (dialect) => {
   let ctx: TestContext;
@@ -55,19 +43,14 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
     await ctx.close();
   });
 
-  /** A call as the client sees it, errors included. */
-  async function call(name: string, args: Record<string, unknown> = {}): Promise<CallToolResult> {
-    return (await client.callTool({ name, arguments: args })) as CallToolResult;
-  }
+  /** A call as the agent reads it, errors included. */
+  const call = (name: string, args: Record<string, unknown> = {}) => callText(client, name, args);
 
-  /** A call that must succeed. */
-  async function ok<N extends keyof Outputs>(
-    name: N,
-    args: Record<string, unknown> = {},
-  ): Promise<Ok<N>> {
+  /** A call that must succeed: the text it answers with. */
+  async function ok(name: string, args: Record<string, unknown> = {}): Promise<string> {
     const r = await call(name, args);
-    expect(r.isError, toolText(r)).toBeFalsy();
-    return r as Ok<N>;
+    expect(r.isError, r.text).toBe(false);
+    return r.text;
   }
 
   const site = (instructions?: string) =>
@@ -78,41 +61,31 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
 
   test('get_project returns the instructions and says to follow them', async () => {
     const p = await site('Dùng tiếng Việt. Màu chính #0a7.');
-    const r = await ok('get_project', { project_id: p.id });
-    expect(r.structuredContent.project).toEqual({
-      id: p.id,
-      name: 'Site',
-      is_default: false,
-      archived: false,
-      has_instructions: true,
-      instructions: 'Dùng tiếng Việt. Màu chính #0a7.',
-    });
-    expect(toolText(r)).toContain(t('mcp.project.followInstructions'));
-    expect(toolText(r)).toContain('Dùng tiếng Việt. Màu chính #0a7.');
-    // The id a publish names comes with the text, not only with the structured data.
-    expect(toolText(r)).toContain(p.id);
+    const text = await ok('get_project', { project_id: p.id });
+    // The id a publish names is in the heading.
+    expect(text).toBe(
+      [
+        t('mcp.project.heading', { id: p.id, name: 'Site' }),
+        `${t('mcp.project.followInstructions')}\n\nDùng tiếng Việt. Màu chính #0a7.`,
+      ].join('\n'),
+    );
   });
 
   test('get_project without an id is the default project', async () => {
-    const r = await ok('get_project');
-    expect(r.structuredContent.project).toEqual({
-      id: DEFAULT_PROJECT_ID,
-      name: t('project.defaultName'),
-      is_default: true,
-      archived: false,
-      has_instructions: false,
-      instructions: '',
-    });
-    expect(toolText(r)).toContain(t('mcp.project.noInstructions'));
-    expect(toolText(r)).not.toContain(t('mcp.project.followInstructions'));
-    expect(toolText(r)).toContain(DEFAULT_PROJECT_ID);
+    const text = await ok('get_project');
+    expect(text).toBe(
+      [
+        t('mcp.project.heading', { id: DEFAULT_PROJECT_ID, name: t('project.defaultName') }),
+        t('mcp.project.noInstructions'),
+      ].join('\n'),
+    );
   });
 
   test('instructions of blank space are no instructions', async () => {
     const p = await site(' \n ');
-    const r = await ok('get_project', { project_id: p.id });
-    expect(r.structuredContent.project).toMatchObject({ has_instructions: false });
-    expect(toolText(r)).toContain(t('mcp.project.noInstructions'));
+    const text = await ok('get_project', { project_id: p.id });
+    expect(text).toContain(t('mcp.project.noInstructions'));
+    expect(text).not.toContain(t('mcp.project.followInstructions'));
   });
 
   test('list_projects puts the default first with counts', async () => {
@@ -124,32 +97,20 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
       name: null,
       tags: [],
     });
-    const r = await ok('list_projects');
-    expect(r.structuredContent).toEqual({
-      projects: [
-        {
+    const text = await ok('list_projects');
+    const details = (count: number, ...flags: string[]) =>
+      [t('mcp.project.artifacts', { count }), ...flags].join('; ');
+    expect(text).toBe(
+      [
+        t('mcp.projects.summary', { count: 2 }),
+        t('mcp.project.item', {
           id: DEFAULT_PROJECT_ID,
           name: t('project.defaultName'),
-          is_default: true,
-          archived: false,
-          has_instructions: false,
-          artifact_count: 0,
-        },
-        {
-          id: p.id,
-          name: 'Site',
-          is_default: false,
-          archived: false,
-          has_instructions: false,
-          artifact_count: 1,
-        },
-      ],
-      next_cursor: null,
-    });
-    const text = toolText(r);
-    expect(text).toContain(DEFAULT_PROJECT_ID);
-    expect(text).toContain(p.id);
-    expect(text.split('\n').filter((line) => line.startsWith('- '))).toHaveLength(2);
+          details: details(0, t('mcp.project.flagDefault')),
+        }),
+        t('mcp.project.item', { id: p.id, name: 'Site', details: details(1) }),
+      ].join('\n'),
+    );
   });
 
   test('list_projects hides archived projects unless asked, and pages', async () => {
@@ -163,37 +124,39 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
       .execute();
 
     const active = await ok('list_projects', { limit: 1 });
-    expect(active.structuredContent.projects.map((p) => p.id)).toEqual([DEFAULT_PROJECT_ID]);
-    const cursor = active.structuredContent.next_cursor as string;
+    expect(active).toContain(`- ${DEFAULT_PROJECT_ID}:`);
+    expect(active).not.toContain(a.id);
+    const cursor = nextCursor(active);
     expect(cursor).toEqual(expect.any(String));
-    expect(toolText(active)).toContain(cursor);
+    expect(
+      active.endsWith(t('mcp.list.more', { tool: 'list_projects', cursor: cursor ?? '' })),
+    ).toBe(true);
 
-    const second = await ok('list_projects', { limit: 1, cursor });
-    expect(second.structuredContent.projects.map((p) => p.id)).toEqual([a.id]);
-    expect(second.structuredContent.next_cursor).toBeNull();
+    const second = await ok('list_projects', { limit: 1, cursor: cursor ?? '' });
+    expect(second).toContain(`- ${a.id}:`);
+    expect(second).not.toContain(DEFAULT_PROJECT_ID);
+    expect(nextCursor(second)).toBeNull();
 
     const archived = await ok('list_projects', { archived: true });
-    expect(archived.structuredContent.projects).toEqual([
-      expect.objectContaining({ id: b.id, archived: true, artifact_count: 0 }),
-    ]);
+    expect(archived).toContain(
+      t('mcp.project.item', {
+        id: b.id,
+        name: 'Docs',
+        details: `${t('mcp.project.artifacts', { count: 0 })}; ${t('mcp.project.flagArchived')}`,
+      }),
+    );
+    expect(archived).not.toContain(a.id);
   });
 
   test('create_project creates a project', async () => {
-    const r = await ok('create_project', { name: '  Báo cáo  ', instructions: 'Ngắn gọn.' });
-    const { project } = r.structuredContent;
-    expect(project).toEqual({
-      id: expect.stringMatching(/^prj_/),
-      name: 'Báo cáo',
-      is_default: false,
-      archived: false,
-      has_instructions: true,
-      instructions: 'Ngắn gọn.',
-    });
-    expect(toolText(r)).toContain(project.id);
+    const text = await ok('create_project', { name: '  Báo cáo  ', instructions: 'Ngắn gọn.' });
+    const id = /prj_[^:\s]+/.exec(text)?.[0] ?? '';
+    expect(id).not.toBe('');
+    expect(text).toBe(t('mcp.project.created', { id, name: 'Báo cáo' }));
     const row = await ctx.deps.db.db
       .selectFrom('projects')
       .selectAll()
-      .where('id', '=', project.id)
+      .where('id', '=', id)
       .executeTakeFirstOrThrow();
     expect(row).toMatchObject({
       name: 'Báo cáo',
@@ -202,10 +165,10 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
     });
 
     const bare = await ok('create_project', { name: 'Bare' });
-    expect(bare.structuredContent.project).toMatchObject({
-      instructions: '',
-      has_instructions: false,
-    });
+    const bareId = /prj_[^:\s]+/.exec(bare)?.[0] ?? '';
+    expect(await ok('get_project', { project_id: bareId })).toContain(
+      t('mcp.project.noInstructions'),
+    );
 
     const empty = await call('create_project', { name: '' });
     expect(empty.isError).toBe(true);
@@ -226,15 +189,13 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
   test('search_artifacts finds Vietnamese without diacritics', async () => {
     const { artifact } = await publishFiles(ctx, ada.user, { 'index.html': '<p>chụp ảnh</p>' });
     await publishFiles(ctx, ada.user, { 'index.html': '<p>bảng giá</p>' });
-    const r = await ok('search_artifacts', { query: 'chup anh' });
-    expect(r.structuredContent.artifacts.map((a) => a.id)).toEqual([artifact.id]);
-    expect(r.structuredContent.artifacts[0]?.review_url).toBe(
-      `http://localhost:8080/a/${artifact.id}`,
-    );
-    expect(toolText(r)).toContain(artifact.id);
+    const text = await ok('search_artifacts', { query: 'chup anh' });
+    expect(idsOf(text)).toEqual([artifact.id]);
+    expect(text).toContain(t('mcp.artifacts.found', { count: 1 }));
+    expect(text.endsWith(`http://localhost:8080/a/${artifact.id}`)).toBe(true);
 
     const none = await ok('search_artifacts', { query: 'khong co gi' });
-    expect(none.structuredContent.artifacts).toEqual([]);
+    expect(none).toBe(t('mcp.artifacts.found', { count: 0 }));
   });
 
   test('search_artifacts can stay inside one project', async () => {
@@ -252,11 +213,11 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
       },
     );
     const r = await ok('search_artifacts', { query: 'bao gia', project_id: p.id });
-    expect(r.structuredContent.artifacts.map((a) => a.id)).toEqual([inSite.artifact.id]);
+    expect(idsOf(r)).toEqual([inSite.artifact.id]);
     const both = await ok('search_artifacts', { query: 'bao gia' });
-    expect(both.structuredContent.artifacts).toHaveLength(2);
+    expect(idsOf(both)).toHaveLength(2);
     const limited = await ok('search_artifacts', { query: 'bao gia', limit: 1 });
-    expect(limited.structuredContent.artifacts).toHaveLength(1);
+    expect(idsOf(limited)).toHaveLength(1);
   });
 
   test('list_artifacts filters by project and tag, with open thread counts', async () => {
@@ -275,7 +236,7 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
     await postThread(ctx, ada.cookie, b.artifact.id);
     const all = await ok('list_artifacts');
     expect(idsOf(all)).toEqual([c.artifact.id, b.artifact.id, a.artifact.id]);
-    expect(all.structuredContent.next_cursor).toBeNull();
+    expect(nextCursor(all)).toBeNull();
 
     const inSite = await ok('list_artifacts', { project_id: p.id });
     expect(idsOf(inSite)).toEqual([c.artifact.id, b.artifact.id]);
@@ -284,33 +245,36 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
     const both = await ok('list_artifacts', { project_id: p.id, tag: 'blog' });
     expect(idsOf(both)).toEqual([b.artifact.id]);
 
-    expect(both.structuredContent.artifacts[0]).toEqual({
-      id: b.artifact.id,
-      name: b.artifact.name,
-      kind: 'html',
-      project_id: p.id,
-      tags: ['blog', 'draft'],
-      current_version: { id: b.version.id, number: 1 },
-      latest_number: 1,
-      open_thread_count: 1,
-      updated_at: T + 1000,
-      review_url: `http://localhost:8080/a/${b.artifact.id}`,
-    });
-    const quiet = all.structuredContent.artifacts.find((x) => x.id === c.artifact.id);
-    expect(quiet?.open_thread_count).toBe(0);
-
-    const text = toolText(both);
-    expect(text).toContain(b.artifact.id);
-    expect(text).toContain(`http://localhost:8080/a/${b.artifact.id}`);
+    const detail = [
+      'html',
+      t('mcp.artifact.version', { number: 1 }),
+      t('mcp.artifact.openThreads', { count: 1 }),
+      t('mcp.artifact.tags', { tags: 'blog, draft' }),
+    ].join('; ');
+    expect(both).toBe(
+      [
+        t('mcp.artifacts.summary', { count: 1 }),
+        t('mcp.artifact.item', {
+          id: b.artifact.id,
+          name: b.artifact.name,
+          details: detail,
+          url: `http://localhost:8080/a/${b.artifact.id}`,
+        }),
+      ].join('\n'),
+    );
+    const quiet = all.split('\n').find((line) => line.startsWith(`- ${c.artifact.id}:`));
+    expect(quiet).toContain(t('mcp.artifact.openThreads', { count: 0 }));
 
     const paged = await ok('list_artifacts', { limit: 2 });
     expect(idsOf(paged)).toEqual([c.artifact.id, b.artifact.id]);
-    expect(toolText(paged)).toContain(paged.structuredContent.next_cursor);
-    const rest = await ok('list_artifacts', {
-      limit: 2,
-      cursor: paged.structuredContent.next_cursor,
-    });
+    const cursor = nextCursor(paged);
+    expect(cursor).toEqual(expect.any(String));
+    expect(
+      paged.endsWith(t('mcp.list.more', { tool: 'list_artifacts', cursor: cursor ?? '' })),
+    ).toBe(true);
+    const rest = await ok('list_artifacts', { limit: 2, cursor: cursor ?? '' });
     expect(idsOf(rest)).toEqual([a.artifact.id]);
+    expect(nextCursor(rest)).toBeNull();
   });
 
   test('a name with line breaks stays on one line of the text', async () => {
@@ -321,11 +285,8 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
       tags: [],
     });
     expect(artifact.name).toContain('\n');
-    const r = await ok('list_artifacts');
-    expect(r.structuredContent.artifacts[0]?.name).toBe(artifact.name);
-    const lines = toolText(r)
-      .split('\n')
-      .filter((line) => line.includes(artifact.id));
+    const text = await ok('list_artifacts');
+    const lines = text.split('\n').filter((line) => line.includes(artifact.id));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain(': Bảng giá (');
   });
@@ -352,11 +313,11 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
   test('list_artifacts with an unknown project is a tool error', async () => {
     const r = await call('list_artifacts', { project_id: 'prj_nope' });
     expect(r.isError).toBe(true);
-    expect(toolText(r)).toContain(t('project.notFound'));
-    expect(toolText(r)).toContain(t('mcp.hint.not_found'));
+    expect(r.text).toContain(t('project.notFound'));
+    expect(r.text).toContain(t('mcp.hint.not_found'));
     const p = await call('get_project', { project_id: 'prj_nope' });
     expect(p.isError).toBe(true);
-    expect(toolText(p)).toContain(t('project.notFound'));
+    expect(p.text).toContain(t('project.notFound'));
   });
 
   test('get_artifact lists versions newest first with links and the next step', async () => {
@@ -378,51 +339,41 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
       },
     );
     const id = first.artifact.id;
-    const r = await ok('get_artifact', { artifact_id: id });
-    const { artifact, versions } = r.structuredContent;
-    expect(artifact).toEqual({
-      id,
-      name: 'Bảng giá',
-      kind: 'html',
-      project_id: DEFAULT_PROJECT_ID,
-      tags: ['pricing'],
-      current_version: { id: second.version.id, number: 2 },
-      latest_number: 2,
-      open_thread_count: 0,
-      updated_at: T + 1000,
-      review_url: `http://localhost:8080/a/${id}`,
-      raw_url: `http://localhost:8080/a/${id}/raw`,
-    });
-    expect(versions.map((v) => v.number)).toEqual([2, 1]);
-    expect(versions[0]).toEqual({
-      id: second.version.id,
-      number: 2,
-      title: 'Trang 2',
-      entry_path: 'index.html',
-      file_count: 1,
-      total_bytes: Buffer.byteLength('<h1>Trang 2</h1>'),
-      message: null,
-      source: 'api',
-      created_at: T + 1000,
-      is_current: true,
-      review_url: `http://localhost:8080/a/${id}/v/2`,
-      raw_url: `http://localhost:8080/a/${id}/v/2/raw`,
-    });
-    expect(versions[1]).toMatchObject({
-      id: first.version.id,
-      number: 1,
-      is_current: false,
-      review_url: `http://localhost:8080/a/${id}/v/1`,
-      raw_url: `http://localhost:8080/a/${id}/v/1/raw`,
-    });
-
-    const text = toolText(r);
-    expect(text).toContain(id);
-    expect(text).toContain(second.version.id);
-    expect(text).toContain(first.version.id);
-    expect(
-      text.endsWith(t('mcp.artifact.next', { artifact_id: id, version_id: second.version.id })),
-    ).toBe(true);
+    const text = await ok('get_artifact', { artifact_id: id });
+    const version = (v: typeof first.version, number: number, current: boolean, bytes: number) =>
+      t('mcp.version.item', {
+        id: v.id,
+        number,
+        current: current ? t('mcp.version.current') : '',
+        files: 1,
+        size: formatBytes(bytes),
+        source: 'api',
+        created: new Date(T + (number - 1) * 1000).toISOString(),
+        review: `http://localhost:8080/a/${id}/v/${number}`,
+        raw: `http://localhost:8080/a/${id}/v/${number}/raw`,
+      });
+    expect(text).toBe(
+      [
+        t('mcp.artifact.heading', {
+          id,
+          name: 'Bảng giá',
+          details: [
+            'html',
+            t('mcp.artifact.version', { number: 2 }),
+            t('mcp.artifact.openThreads', { count: 0 }),
+            t('mcp.artifact.tags', { tags: 'pricing' }),
+          ].join('; '),
+        }),
+        t('mcp.artifact.links', {
+          review: `http://localhost:8080/a/${id}`,
+          raw: `http://localhost:8080/a/${id}/raw`,
+        }),
+        t('mcp.artifact.versions'),
+        version(second.version, 2, true, Buffer.byteLength('<h1>Trang 2</h1>')),
+        version(first.version, 1, false, Buffer.byteLength(PAGE['index.html'])),
+        t('mcp.artifact.next', { artifact_id: id, version_id: second.version.id }),
+      ].join('\n'),
+    );
   });
 
   test('get_artifact shows only versions_limit versions', async () => {
@@ -436,9 +387,10 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
         expectedVersionId: outcome.version.id,
       });
     }
-    const r = await ok('get_artifact', { artifact_id: id, versions_limit: 2 });
-    expect(r.structuredContent.versions.map((v) => v.number)).toEqual([3, 2]);
-    expect(toolText(r)).toContain(
+    const text = await ok('get_artifact', { artifact_id: id, versions_limit: 2 });
+    expect(versionNumbersOf(text)).toEqual([3, 2]);
+    expect(text).toContain(t('mcp.artifact.olderVersions'));
+    expect(text).toContain(
       t('mcp.artifact.next', { artifact_id: id, version_id: outcome.version.id }),
     );
     const bad = await call('get_artifact', { artifact_id: id, versions_limit: 51 });
@@ -448,8 +400,8 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
   test('unknown and deleted ids are tool errors that say what to do', async () => {
     const unknown = await call('get_artifact', { artifact_id: 'art_nope' });
     expect(unknown.isError).toBe(true);
-    expect(toolText(unknown)).toContain(t('artifact.notFound'));
-    expect(toolText(unknown)).toContain(t('mcp.hint.not_found'));
+    expect(unknown.text).toContain(t('artifact.notFound'));
+    expect(unknown.text).toContain(t('mcp.hint.not_found'));
 
     await addTombstones(
       ctx.deps.db.db,
@@ -458,8 +410,8 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
     );
     const gone = await call('get_artifact', { artifact_id: 'art_gone' });
     expect(gone.isError).toBe(true);
-    expect(toolText(gone)).toContain(t('artifact.gone'));
-    expect(toolText(gone)).toContain(t('mcp.hint.gone'));
+    expect(gone.text).toContain(t('artifact.gone'));
+    expect(gone.text).toContain(t('mcp.hint.gone'));
   });
 
   test('bad input and a bad cursor are tool errors, not protocol errors', async () => {
@@ -478,7 +430,7 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
     }
     const r = await call('list_artifacts', { cursor: 'not-a-cursor' });
     expect(r.isError).toBe(true);
-    expect(toolText(r)).toContain(t('error.cursor'));
+    expect(r.text).toContain(t('error.cursor'));
   });
 
   test('the tools are listed as reads, except create_project', async () => {
@@ -493,7 +445,7 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
     ]) {
       const tool = byName.get(name);
       expect(tool?.annotations, name).toMatchObject({ readOnlyHint: true, openWorldHint: false });
-      expect(tool?.outputSchema, name).toMatchObject({ type: 'object' });
+      expect(tool?.outputSchema, name).toBeUndefined();
       expect(tool?.description?.length ?? 0, name).toBeGreaterThan(40);
     }
     expect(byName.get('get_project')?.description).toMatch(/before you publish/i);
@@ -516,15 +468,10 @@ describe.each(dialects)('MCP library tool links on %s', (dialect) => {
     const client = await connectMcp(ctx, { bearer: await createUserToken(ctx, ada.user.id) });
     try {
       const { artifact } = await publishFiles(ctx, ada.user, PAGE);
-      const r = (await client.callTool({
-        name: 'get_artifact',
-        arguments: { artifact_id: artifact.id },
-      })) as Ok<'get_artifact'>;
-      expect(r.structuredContent.artifact.review_url).toBe(`https://pinwall.test/a/${artifact.id}`);
-      expect(r.structuredContent.versions[0]?.raw_url).toBe(
-        `https://pinwall.test/a/${artifact.id}/v/1/raw`,
-      );
-      expect(toolText(r)).not.toContain('localhost');
+      const { text } = await callText(client, 'get_artifact', { artifact_id: artifact.id });
+      expect(text).toContain(`Review page: https://pinwall.test/a/${artifact.id}\n`);
+      expect(text).toContain(`raw: https://pinwall.test/a/${artifact.id}/v/1/raw`);
+      expect(text).not.toContain('localhost');
     } finally {
       await client.close();
       await ctx.close();

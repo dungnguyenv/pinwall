@@ -1,5 +1,5 @@
 import { t } from '../lib/i18n.ts';
-import type { ThreadOut } from './schemas.ts';
+import type { ThreadOut } from './types.ts';
 
 // Tool texts and the rest of the server write sizes the same way.
 export { formatBytes } from '../lib/format.ts';

@@ -24,17 +24,8 @@ import { t } from '../../lib/i18n.ts';
 import { DESCRIPTIONS, FIELDS } from '../descriptions.ts';
 import { formatThread, oneLine, withMore } from '../format.ts';
 import { runTool } from '../results.ts';
-import {
-  CreateShareLinkOut,
-  ListCommentsOut,
-  ListShareLinksOut,
-  ReplyToCommentOut,
-  ResolveCommentOut,
-  RevokeShareLinkOut,
-  type ShareOut,
-  type ThreadOut,
-} from '../schemas.ts';
 import type { ToolModule } from '../server.ts';
+import type { ShareOut, ThreadOut } from '../types.ts';
 
 const DAY_MS = 86_400_000;
 /** The most share links `list_share_links` shows. */
@@ -131,8 +122,7 @@ function toThreadOut(th: CommentThread): ThreadOut {
   const { anchor } = th;
   return {
     id: th.id,
-    status: th.status,
-    version: { id: th.version.id, number: th.version.number },
+    version: { number: th.version.number },
     anchor: {
       page: anchor.page,
       kind: anchor.kind,
@@ -142,14 +132,8 @@ function toThreadOut(th: CommentThread): ThreadOut {
     },
     author: authorName(th.author),
     body: th.body,
-    created_at: th.created_at,
     resolved_in_version: th.resolved_in_version,
-    replies: th.replies.map((reply) => ({
-      id: reply.id,
-      author: authorName(reply.author),
-      body: reply.body,
-      created_at: reply.created_at,
-    })),
+    replies: th.replies.map((reply) => ({ author: authorName(reply.author), body: reply.body })),
   };
 }
 
@@ -207,7 +191,6 @@ export const reviewTools: ToolModule = (server, ctx) => {
     {
       ...DESCRIPTIONS.list_comments,
       inputSchema: ListCommentsIn,
-      outputSchema: ListCommentsOut,
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof ListCommentsIn>) => {
@@ -247,14 +230,7 @@ export const reviewTools: ToolModule = (server, ctx) => {
         ...(threads.length === 0 ? [] : [t('mcp.comments.untrusted')]),
         ...threads.map(formatThread),
       ];
-      return {
-        text: withMore(lines, 'list_comments', nextCursor),
-        structured: {
-          artifact: { id: artifact.id, name: artifact.name, current_version: current },
-          threads,
-          next_cursor: nextCursor,
-        },
-      };
+      return withMore(lines, 'list_comments', nextCursor);
     }),
   );
 
@@ -263,23 +239,12 @@ export const reviewTools: ToolModule = (server, ctx) => {
     {
       ...DESCRIPTIONS.reply_to_comment,
       inputSchema: ReplyToCommentIn,
-      outputSchema: ReplyToCommentOut,
       annotations: WRITES,
     },
     runTool(ctx, async (a: z.output<typeof ReplyToCommentIn>) => {
       await enforceRateLimit(ctx.c, RATE_RULES.comment, user.id);
       const { comment } = await addReply(deps, { kind: 'member', user }, a.comment_id, a.body);
-      return {
-        text: t('mcp.comment.replied', { thread_id: comment.thread_id, id: comment.id }),
-        structured: {
-          comment: {
-            id: comment.id,
-            thread_id: comment.thread_id,
-            body: comment.body,
-            created_at: comment.created_at,
-          },
-        },
-      };
+      return t('mcp.comment.replied', { thread_id: comment.thread_id, id: comment.id });
     }),
   );
 
@@ -288,7 +253,6 @@ export const reviewTools: ToolModule = (server, ctx) => {
     {
       ...DESCRIPTIONS.resolve_comment,
       inputSchema: ResolveCommentIn,
-      outputSchema: ResolveCommentOut,
       annotations: WRITES,
     },
     runTool(ctx, async (a: z.output<typeof ResolveCommentIn>) => {
@@ -297,17 +261,13 @@ export const reviewTools: ToolModule = (server, ctx) => {
         await resolveThread(deps, user, a.comment_id, a.version_id ?? null),
       );
       const fixedIn = thread.resolved_in_version;
-      return {
-        text:
-          fixedIn === null
-            ? t('mcp.comment.resolvedNoVersion', { id: thread.id })
-            : t('mcp.comment.resolved', {
-                id: thread.id,
-                number: fixedIn.number,
-                version_id: fixedIn.id,
-              }),
-        structured: { thread },
-      };
+      return fixedIn === null
+        ? t('mcp.comment.resolvedNoVersion', { id: thread.id })
+        : t('mcp.comment.resolved', {
+            id: thread.id,
+            number: fixedIn.number,
+            version_id: fixedIn.id,
+          });
     }),
   );
 
@@ -316,7 +276,6 @@ export const reviewTools: ToolModule = (server, ctx) => {
     {
       ...DESCRIPTIONS.create_share_link,
       inputSchema: CreateShareLinkIn,
-      outputSchema: CreateShareLinkOut,
       annotations: WRITES,
     },
     runTool(ctx, async (a: z.output<typeof CreateShareLinkIn>) => {
@@ -333,10 +292,7 @@ export const reviewTools: ToolModule = (server, ctx) => {
       if (shared === undefined) throw gone(t('version.gone'));
       const link = toShareOut(shared);
       const url = shareUrl(deps.config, token);
-      return {
-        text: t('mcp.share.created', { id: link.id, url, details: shareDetails(link) }),
-        structured: { url, link },
-      };
+      return t('mcp.share.created', { id: link.id, url, details: shareDetails(link) });
     }),
   );
 
@@ -345,7 +301,6 @@ export const reviewTools: ToolModule = (server, ctx) => {
     {
       ...DESCRIPTIONS.list_share_links,
       inputSchema: ListShareLinksIn,
-      outputSchema: ListShareLinksOut,
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof ListShareLinksIn>) => {
@@ -363,7 +318,7 @@ export const reviewTools: ToolModule = (server, ctx) => {
         ),
         ...(nextCursor === null ? [] : [t('mcp.shares.truncated', { count: SHARE_LIST_LIMIT })]),
       ];
-      return { text: lines.join('\n'), structured: { links } };
+      return lines.join('\n');
     }),
   );
 
@@ -372,7 +327,6 @@ export const reviewTools: ToolModule = (server, ctx) => {
     {
       ...DESCRIPTIONS.revoke_share_link,
       inputSchema: RevokeShareLinkIn,
-      outputSchema: RevokeShareLinkOut,
       // Revoking a revoked link changes nothing.
       annotations: {
         readOnlyHint: false,
@@ -383,10 +337,7 @@ export const reviewTools: ToolModule = (server, ctx) => {
     },
     runTool(ctx, async (a: z.output<typeof RevokeShareLinkIn>) => {
       await revokeShareLink(deps, user, a.share_link_id);
-      return {
-        text: t('mcp.share.revoked', { id: a.share_link_id }),
-        structured: { revoked: true as const, share_link_id: a.share_link_id },
-      };
+      return t('mcp.share.revoked', { id: a.share_link_id });
     }),
   );
 };

@@ -14,7 +14,6 @@ import { createPublishSession, toPublishResult } from '../../publish/sessions.ts
 import { DESCRIPTIONS, FIELDS, fillDescription } from '../descriptions.ts';
 import { formatBytes, oneLine } from '../format.ts';
 import { runTool } from '../results.ts';
-import { CreatePublishSessionOut, PublishInlineOut } from '../schemas.ts';
 import type { ToolModule } from '../server.ts';
 
 /** The fields of a new artifact, with the checks the REST publish applies to them. */
@@ -108,7 +107,7 @@ export const publishTools: ToolModule = (server, ctx) => {
   const { config } = deps;
   const { user } = auth;
   const ttlMs = config.ttl.uploadSessionMs;
-  // A whole number of minutes, never more than the URL lives; `expires_in_seconds` is exact.
+  // A whole number of minutes, never more than the URL lives.
   const minutes = Math.max(1, Math.floor(ttlMs / 60_000));
 
   server.registerTool(
@@ -119,7 +118,6 @@ export const publishTools: ToolModule = (server, ctx) => {
         minutes,
       }),
       inputSchema: CreatePublishSessionIn,
-      outputSchema: CreatePublishSessionOut,
       annotations: WRITES,
     },
     runTool(ctx, async (a: z.output<typeof CreatePublishSessionIn>) => {
@@ -132,21 +130,12 @@ export const publishTools: ToolModule = (server, ctx) => {
         directory: a.directory,
         file: a.file,
       });
-      const structured = {
-        ...session,
-        expires_in_seconds: Math.floor(ttlMs / 1000),
-        target: {
-          kind: target.kind,
-          artifact_id: target.kind === 'new_version' ? target.artifactId : null,
-        },
-      };
-      const text = t('mcp.publish.session', {
+      return t('mcp.publish.session', {
         minutes,
         url: session.upload_url,
         archive: session.commands.archive,
         single: session.commands.single_file,
       });
-      return { text, structured };
     }),
   );
 
@@ -158,7 +147,6 @@ export const publishTools: ToolModule = (server, ctx) => {
         max: formatBytes(config.limits.maxInlineBytes),
       }),
       inputSchema: PublishInlineIn,
-      outputSchema: PublishInlineOut,
       annotations: WRITES,
     },
     runTool(ctx, async (a: z.output<typeof PublishInlineIn>) => {
@@ -179,7 +167,7 @@ export const publishTools: ToolModule = (server, ctx) => {
         }),
         ...result.warnings.map((w) => t('mcp.publish.warning', { message: oneLine(w.message) })),
       ];
-      return { text: lines.join('\n'), structured: result };
+      return lines.join('\n');
     }),
   );
 };

@@ -3,35 +3,24 @@ import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { TemporarilyUnavailableError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { CommentThreadList, LiveEvent, PublishResult } from '@pinwall/shared';
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
+import { DEFAULT_PROJECT_ID } from '../../src/domain/projects.ts';
 import { ARTIFACT_TOPIC } from '../../src/domain/search.ts';
 import { FixedClock } from '../../src/lib/clock.ts';
+import { t } from '../../src/lib/i18n.ts';
 import { hashSecret } from '../../src/lib/ids.ts';
-import type {
-  CreatePublishSessionOut,
-  CreateShareLinkOut,
-  GetArtifactOut,
-  ListArtifactsOut,
-  ListCommentsOut,
-  ProjectDetailOut,
-  PublishInlineOut,
-  ReplyToCommentOut,
-  ResolveCommentOut,
-  WhoamiOut,
-} from '../../src/mcp/schemas.ts';
 import { makeTar } from '../helpers/archives.ts';
 import { apiInit, createSignedInUser, setupOwner } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 import {
   approveInBrowser,
+  callText,
   connectMcp,
   inProcessFetch,
   mcpTransport,
   TestOAuthProvider,
-  toolText,
 } from '../helpers/mcp.ts';
 import { approve, consentRequestId, tokenRequest } from '../helpers/oauth.ts';
 import { signInOidcUser } from '../helpers/oidc-browser.ts';
@@ -52,31 +41,24 @@ const REDIRECT_URL = 'http://127.0.0.1:33418/callback';
 /** One test walks the whole flow (dozens of requests, one password hash): room on a loaded machine. */
 const FLOW_TIMEOUT_MS = 60_000;
 
-/** What each tool's `structuredContent` holds. */
-interface Outputs {
-  whoami: WhoamiOut;
-  get_project: ProjectDetailOut;
-  list_artifacts: ListArtifactsOut;
-  get_artifact: GetArtifactOut;
-  create_publish_session: CreatePublishSessionOut;
-  create_share_link: CreateShareLinkOut;
-  publish_inline: PublishInlineOut;
-  list_comments: ListCommentsOut;
-  reply_to_comment: ReplyToCommentOut;
-  resolve_comment: ResolveCommentOut;
-}
-type Ok<N extends keyof Outputs> = CallToolResult & { structuredContent: Outputs[N] };
-
-/** A tool call that must succeed. */
-async function ok<N extends keyof Outputs>(
+/** A tool call that must succeed: the text it answers with. */
+async function ok(
   client: Client,
-  name: N,
+  name: string,
   args: Record<string, unknown> = {},
-): Promise<Ok<N>> {
-  const r = (await client.callTool({ name, arguments: args })) as CallToolResult;
-  expect(r.isError, `${name}: ${toolText(r)}`).toBeFalsy();
-  return r as Ok<N>;
+): Promise<string> {
+  const r = await callText(client, name, args);
+  expect(r.isError, `${name}: ${r.text}`).toBe(false);
+  return r.text;
 }
+
+/** The upload URL a `create_publish_session` text gives. */
+const uploadUrlOf = (text: string): string =>
+  /(http:\/\/localhost:8080\/upload\/[A-Za-z0-9_-]{43})/.exec(text)?.[1] ?? '';
+
+/** The ids of the artifacts a list text shows, in the order it shows them. */
+const artifactIdsOf = (text: string): string[] =>
+  [...text.matchAll(/^- (art_[^:\s]+):/gm)].flatMap((m) => m[1] ?? []);
 
 /**
  * The agent's `fetch`: in-process, noting each call to `/mcp` and to the OAuth endpoints as
@@ -202,24 +184,17 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
 
       client = await connectMcp(app, { authProvider: provider, fetch: traffic.fetch });
       const me = await ok(client, 'whoami');
-      expect(me.structuredContent).toMatchObject({
-        user: { id: owner.me.id, role: 'admin' },
-        via: 'oauth',
-        pinwall_url: ORIGIN,
-      });
+      expect(me).toContain(`Signed in to ${ORIGIN} as Ada (admin, via oauth)`);
 
       // 4. As the instructions say: read the project, then ask for an upload URL.
       const project = await ok(client, 'get_project');
-      expect(project.structuredContent.project).toMatchObject({ is_default: true });
+      expect(project).toContain(DEFAULT_PROJECT_ID);
+      expect(project).toContain(t('mcp.project.noInstructions'));
       const session = await ok(client, 'create_publish_session', { directory: './site' });
-      expect(session.structuredContent.target).toEqual({ kind: 'new_artifact', artifact_id: null });
-      expect(session.structuredContent.commands.archive).toContain('-C ./site .');
+      expect(session).toContain('-C ./site .');
 
       // 5. The folder goes up from the agent's shell.
-      const v1 = await upload(
-        session.structuredContent.upload_url,
-        await siteTar('<h1>Hello</h1>'),
-      );
+      const v1 = await upload(uploadUrlOf(session), await siteTar('<h1>Hello</h1>'));
       const artifactId = v1.artifact_id;
       expect(v1).toMatchObject({ version_number: 1, file_count: 2, entry_path: 'index.html' });
       expect(v1.review_url).toBe(`${ORIGIN}/a/${artifactId}`);
@@ -235,7 +210,7 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
       traffic.calls.length = 0;
       clock.advance(ACCESS_TOKEN_MS + 1);
       const listed = await ok(client, 'list_artifacts');
-      expect(listed.structuredContent.artifacts.map((a) => a.id)).toEqual([artifactId]);
+      expect(artifactIdsOf(listed)).toEqual([artifactId]);
       expect(traffic.calls).toEqual([
         'POST /mcp 401',
         'POST /oauth/token refresh_token 200',
@@ -256,11 +231,12 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
       const inline = await ok(client, 'publish_inline', {
         files: [{ path: 'index.html', content: '<!doctype html><h1>Notes</h1>' }],
       });
-      const notes = inline.structuredContent;
-      expect(notes.artifact_id).not.toBe(artifactId);
-      expect(notes.review_url).toBe(`${ORIGIN}/a/${notes.artifact_id}`);
-      expect(toolText(inline).split('\n')[0]).toBe(`Review link: ${notes.review_url}`);
-      expect(await versionRow(notes.version_id)).toMatchObject({
+      const notes = /\(version_id (\S+), artifact_id (\S+)\)/.exec(inline);
+      const [, notesVersionId = '', notesArtifactId = ''] = notes ?? [];
+      expect(notesArtifactId).toMatch(/^art_/);
+      expect(notesArtifactId).not.toBe(artifactId);
+      expect(inline.split('\n')[0]).toBe(`Review link: ${ORIGIN}/a/${notesArtifactId}`);
+      expect(await versionRow(notesVersionId)).toMatchObject({
         number: 1,
         source: 'inline',
         created_by: owner.me.id,
@@ -283,31 +259,23 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
 
       // 2. The agent reads the thread, publishes the fix on top of v1, replies and resolves.
       const comments = await ok(client, 'list_comments', { artifact_id: artifactId });
-      expect(comments.structuredContent.threads).toHaveLength(1);
-      expect(comments.structuredContent.threads[0]).toMatchObject({
-        id: pinned.id,
-        status: 'open',
-        version: { id: v1.version_id, number: 1 },
-        anchor: { page: '', kind: 'text', quote: { exact: 'Hello' }, selector: 'h1' },
-        author: 'Bình',
-        body: 'Say hello in Vietnamese',
-      });
-      expect(toolText(comments)).toContain(`[${pinned.id}] v1`);
-      expect(toolText(comments)).toContain('"Hello"');
+      expect(comments).toContain(
+        [
+          `[${pinned.id}] v1 · ${t('mcp.comment.entryPage')}: text "Hello" (after "", before "") in h1`,
+          '  Bình: Say hello in Vietnamese',
+        ].join('\n'),
+      );
 
       const got = await ok(client, 'get_artifact', { artifact_id: artifactId });
-      const current = got.structuredContent.artifact.current_version;
-      expect(current).toEqual({ id: v1.version_id, number: 1 });
+      expect(got).toContain(
+        t('mcp.artifact.next', { artifact_id: artifactId, version_id: v1.version_id }),
+      );
       const fix = await ok(client, 'create_publish_session', {
         artifact_id: artifactId,
-        expected_version_id: current?.id,
+        expected_version_id: v1.version_id,
         directory: './site',
       });
-      expect(fix.structuredContent.target).toEqual({
-        kind: 'new_version',
-        artifact_id: artifactId,
-      });
-      const v2 = await upload(fix.structuredContent.upload_url, await siteTar('<h1>Xin chào</h1>'));
+      const v2 = await upload(uploadUrlOf(fix), await siteTar('<h1>Xin chào</h1>'));
       expect(v2).toMatchObject({ artifact_id: artifactId, version_number: 2 });
       expect(await versionRow(v2.version_id)).toMatchObject({
         source: 'mcp',
@@ -319,16 +287,14 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
         comment_id: pinned.id,
         body: 'Done in v2: the heading now reads "Xin chào".',
       });
-      expect(reply.structuredContent.comment.thread_id).toBe(pinned.id);
+      expect(reply).toContain(`thread ${pinned.id} `);
       const resolved = await ok(client, 'resolve_comment', {
         comment_id: pinned.id,
         version_id: v2.version_id,
       });
-      expect(resolved.structuredContent.thread).toMatchObject({
-        id: pinned.id,
-        status: 'resolved',
-        resolved_in_version: { id: v2.version_id, number: 2 },
-      });
+      expect(resolved).toBe(
+        t('mcp.comment.resolved', { id: pinned.id, number: 2, version_id: v2.version_id }),
+      );
 
       // 3. The reviewer sees it resolved by v2, still pinned where they put it.
       const r = await app.request(
@@ -416,7 +382,7 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
       if (authorizationUrl === null) throw new Error('the SDK never sent the browser anywhere');
       await first.finishAuth(await approveInBrowser(app, authorizationUrl, bea.cookie));
       client = await connectMcp(app, { authProvider: provider, fetch: traffic.fetch });
-      expect((await ok(client, 'whoami')).structuredContent.user.id).toBe(bea.user.id);
+      expect(await ok(client, 'whoami')).toContain(`as Bea (member, via oauth)`);
 
       // The IdP is down for longer than Pinwall acts on its last answer. The refresh is told to
       // try later, so the SDK keeps everything it holds and opens no browser.
@@ -446,7 +412,7 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
       idp.setReachable(true);
       clock.advance(IDP_RETRY_BACKOFF_MS + 1);
       traffic.calls.length = 0;
-      expect((await ok(client, 'whoami')).structuredContent.user.id).toBe(bea.user.id);
+      expect(await ok(client, 'whoami')).toContain(`as Bea (member, via oauth)`);
       expect(traffic.calls).toEqual([
         'POST /mcp 401',
         'POST /oauth/token refresh_token 200',
@@ -524,7 +490,7 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
       // Publishing: an upload URL used, then replayed; a share link made and opened; inline.
       client = await connectMcp(app, { authProvider: provider, fetch });
       const session = await ok(client, 'create_publish_session', { directory: './site' });
-      const uploadUrl = session.structuredContent.upload_url;
+      const uploadUrl = uploadUrlOf(session);
       keep('upload token', new URL(uploadUrl).pathname.split('/').pop());
       const body = await siteTar('<h1>Hello</h1>');
       const uploaded = await app.request(uploadUrl, { method: 'POST', body });
@@ -536,8 +502,9 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
         artifact_id,
         password: 'correct horse battery',
       });
-      keep('share token', new URL(share.structuredContent.url).pathname.split('/').pop());
-      await app.request(share.structuredContent.url);
+      const shareUrl = /(http:\/\/localhost:8080\/s\/[A-Za-z0-9_-]{43})/.exec(share)?.[1] ?? '';
+      keep('share token', new URL(shareUrl).pathname.split('/').pop());
+      await app.request(shareUrl);
       await ok(client, 'publish_inline', { files: [{ path: 'index.html', content: '<p>x</p>' }] });
 
       // A refresh on expiry, then the spent refresh token replayed after the grace window.

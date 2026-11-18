@@ -68,6 +68,25 @@ export function toolText(r: CallToolResult): string {
 }
 
 /**
+ * Calls a tool as an agent does and returns what it reads: the text blocks joined by newlines,
+ * and whether the call failed (`isError`). Tool results carry no `structuredContent`, so the text
+ * is all there is to assert on.
+ */
+export async function callText(
+  client: Client,
+  name: string,
+  args: Record<string, unknown> = {},
+): Promise<{ text: string; isError: boolean }> {
+  const r = (await client.callTool({ name, arguments: args })) as CallToolResult;
+  return { text: toolText(r), isError: r.isError === true };
+}
+
+/** The cursor a list tool names on its last line (`mcp.list.more`), or null on the last page. */
+export function nextCursor(text: string): string | null {
+  return /^.* with cursor (\S+)\.$/m.exec(text)?.[1] ?? null;
+}
+
+/**
  * An MCP client's OAuth side as a desktop agent keeps it, all in memory: a public client that
  * registers itself with one redirect URL, its tokens and its PKCE verifier. Where an agent would
  * open a browser, `redirectToAuthorization` only notes the URL in `authorizationUrl`. When the

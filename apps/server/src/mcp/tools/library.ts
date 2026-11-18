@@ -1,7 +1,6 @@
 import type { ArtifactSummary } from '@pinwall/shared';
 import { z } from 'zod';
 import { toArtifactSummary } from '../../api/artifacts.ts';
-import { type SpaceFields, spaceFieldsOf } from '../../api/projects.ts';
 import { enforceRateLimit, RATE_RULES } from '../../auth/rate-limits.ts';
 import type { ProjectRow, VersionRow } from '../../db/schema.ts';
 import type { AppDeps } from '../../deps.ts';
@@ -20,17 +19,8 @@ import { t } from '../../lib/i18n.ts';
 import { DESCRIPTIONS, FIELDS } from '../descriptions.ts';
 import { formatBytes, oneLine, withMore } from '../format.ts';
 import { runTool } from '../results.ts';
-import {
-  type ArtifactOut,
-  GetArtifactOut,
-  ListArtifactsOut,
-  ListProjectsOut,
-  ProjectDetailOut,
-  type ProjectOut,
-  SearchArtifactsOut,
-  type VersionOut,
-} from '../schemas.ts';
 import type { ToolModule } from '../server.ts';
+import type { ArtifactOut, ProjectOut, VersionOut } from '../types.ts';
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
 
@@ -85,8 +75,7 @@ const GetArtifactIn = z.object({
     .describe('How many of the newest versions to list.'),
 });
 
-/** `space`: the owner and role a personal-mode viewer sees (`spaceFieldsOf`); none in team mode. */
-function toProjectOut(row: ProjectRow, space?: SpaceFields): ProjectOut {
+function toProjectOut(row: ProjectRow): ProjectOut {
   return {
     id: row.id,
     name: row.name,
@@ -94,7 +83,6 @@ function toProjectOut(row: ProjectRow, space?: SpaceFields): ProjectOut {
     archived: row.archived_at !== null,
     // Instructions of nothing but blank space tell an agent nothing.
     has_instructions: row.instructions.trim() !== '',
-    ...space,
   };
 }
 
@@ -104,12 +92,9 @@ function toArtifactOut(summary: ArtifactSummary): ArtifactOut {
     id: summary.id,
     name: summary.name,
     kind: summary.kind,
-    project_id: summary.project_id,
     tags: summary.tags,
     current_version: current === null ? null : { id: current.id, number: current.number },
-    latest_number: summary.latest_number,
     open_thread_count: summary.open_thread_count,
-    updated_at: summary.updated_at,
     review_url: summary.links.review,
   };
 }
@@ -124,11 +109,8 @@ function toVersionOut(
   return {
     id: row.id,
     number: row.number,
-    title: row.title,
-    entry_path: row.entry_path,
     file_count: row.file_count,
     total_bytes: row.total_bytes,
-    message: row.message,
     source: row.source,
     created_at: row.created_at,
     is_current: row.id === currentVersionId,
@@ -162,9 +144,9 @@ async function readProject(
 }
 
 /** The line of `list_projects` for one project. */
-function projectLine(p: ProjectOut & { artifact_count: number }): string {
+function projectLine(p: ProjectOut, artifactCount: number): string {
   const details = [
-    t('mcp.project.artifacts', { count: p.artifact_count }),
+    t('mcp.project.artifacts', { count: artifactCount }),
     ...(p.is_default ? [t('mcp.project.flagDefault')] : []),
     ...(p.archived ? [t('mcp.project.flagArchived')] : []),
     ...(p.has_instructions ? [t('mcp.project.flagInstructions')] : []),
@@ -208,12 +190,6 @@ function versionLine(v: VersionOut): string {
   });
 }
 
-/** What `get_project` and `create_project` return: the project with its instructions. */
-async function detailOf(deps: AppDeps, scope: Scope, row: ProjectRow): Promise<ProjectDetailOut> {
-  const space = await spaceFieldsOf(deps, scope, [row]);
-  return { project: { ...toProjectOut(row, space?.get(row.id)), instructions: row.instructions } };
-}
-
 /**
  * The library tools: read the projects (and the instructions agents publish by), create a
  * project, list and search artifacts, and read one artifact with its versions. They read through
@@ -229,7 +205,6 @@ export const libraryTools: ToolModule = (server, ctx) => {
     {
       ...DESCRIPTIONS.list_projects,
       inputSchema: ListProjectsIn,
-      outputSchema: ListProjectsOut,
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof ListProjectsIn>) => {
@@ -241,19 +216,11 @@ export const libraryTools: ToolModule = (server, ctx) => {
         limit: a.limit,
         cursor: a.cursor ?? null,
       });
-      const space = await spaceFieldsOf(deps, viewer, items);
-      const projects = items.map((row) => ({
-        ...toProjectOut(row, space?.get(row.id)),
-        artifact_count: row.artifact_count,
-      }));
       const lines = [
-        t('mcp.projects.summary', { count: projects.length }),
-        ...projects.map(projectLine),
+        t('mcp.projects.summary', { count: items.length }),
+        ...items.map((row) => projectLine(toProjectOut(row), row.artifact_count)),
       ];
-      return {
-        text: withMore(lines, 'list_projects', nextCursor),
-        structured: { projects, next_cursor: nextCursor },
-      };
+      return withMore(lines, 'list_projects', nextCursor);
     }),
   );
 
@@ -262,18 +229,16 @@ export const libraryTools: ToolModule = (server, ctx) => {
     {
       ...DESCRIPTIONS.get_project,
       inputSchema: GetProjectIn,
-      outputSchema: ProjectDetailOut,
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof GetProjectIn>) => {
       const viewer = scope();
       const row = await readProject(deps, viewer, a.project_id);
-      const structured = await detailOf(deps, viewer, row);
       const heading = t('mcp.project.heading', { id: row.id, name: oneLine(row.name) });
-      const guidance = structured.project.has_instructions
+      const guidance = toProjectOut(row).has_instructions
         ? `${t('mcp.project.followInstructions')}\n\n${row.instructions}`
         : t('mcp.project.noInstructions');
-      return { text: `${heading}\n${guidance}`, structured };
+      return `${heading}\n${guidance}`;
     }),
   );
 
@@ -282,7 +247,6 @@ export const libraryTools: ToolModule = (server, ctx) => {
     {
       ...DESCRIPTIONS.create_project,
       inputSchema: CreateProjectIn,
-      outputSchema: ProjectDetailOut,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     runTool(ctx, async (a: z.output<typeof CreateProjectIn>) => {
@@ -291,10 +255,7 @@ export const libraryTools: ToolModule = (server, ctx) => {
         name: a.name,
         ...(a.instructions === undefined ? {} : { instructions: a.instructions }),
       });
-      return {
-        text: t('mcp.project.created', { id: row.id, name: oneLine(row.name) }),
-        structured: await detailOf(deps, scope(), row),
-      };
+      return t('mcp.project.created', { id: row.id, name: oneLine(row.name) });
     }),
   );
 
@@ -303,7 +264,6 @@ export const libraryTools: ToolModule = (server, ctx) => {
     {
       ...DESCRIPTIONS.list_artifacts,
       inputSchema: ListArtifactsIn,
-      outputSchema: ListArtifactsOut,
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof ListArtifactsIn>) => {
@@ -319,10 +279,7 @@ export const libraryTools: ToolModule = (server, ctx) => {
         t('mcp.artifacts.summary', { count: artifacts.length }),
         ...artifacts.map(artifactLine),
       ];
-      return {
-        text: withMore(lines, 'list_artifacts', nextCursor),
-        structured: { artifacts, next_cursor: nextCursor },
-      };
+      return withMore(lines, 'list_artifacts', nextCursor);
     }),
   );
 
@@ -331,7 +288,6 @@ export const libraryTools: ToolModule = (server, ctx) => {
     {
       ...DESCRIPTIONS.search_artifacts,
       inputSchema: SearchArtifactsIn,
-      outputSchema: SearchArtifactsOut,
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof SearchArtifactsIn>) => {
@@ -347,7 +303,7 @@ export const libraryTools: ToolModule = (server, ctx) => {
         t('mcp.artifacts.found', { count: artifacts.length }),
         ...artifacts.map(artifactLine),
       ];
-      return { text: lines.join('\n'), structured: { artifacts } };
+      return lines.join('\n');
     }),
   );
 
@@ -356,7 +312,6 @@ export const libraryTools: ToolModule = (server, ctx) => {
     {
       ...DESCRIPTIONS.get_artifact,
       inputSchema: GetArtifactIn,
-      outputSchema: GetArtifactOut,
       annotations: READ_ONLY,
     },
     runTool(ctx, async (a: z.output<typeof GetArtifactIn>) => {
@@ -387,7 +342,7 @@ export const libraryTools: ToolModule = (server, ctx) => {
           ? []
           : [t('mcp.artifact.next', { artifact_id: artifact.id, version_id: current.id })]),
       ];
-      return { text: lines.join('\n'), structured: { artifact, versions } };
+      return lines.join('\n');
     }),
   );
 };
