@@ -214,9 +214,9 @@ That is correct: the restored files contain the edits.
 - A session URL already issued needs no second check at upload time. A version made after the
   session was issued changes the current version, so the upload fails with `version_conflict`.
 
-**The new input.** Both publish tools take `replace_server_edits` (boolean, default false). Its
-description says to set it after merging the edits a refusal shows, or when the user wants the
-server edits discarded (R24).
+**The new input.** Both publish tools, and `edit_artifact` (R25), take `replace_server_edits`
+(boolean, default false). Its description says to set it after merging the edits a refusal
+shows, or when the user wants the server edits discarded (R24).
 
 **Where it shows.**
 - `get_artifact` marks each such version line `edited on server: index.html, …` (at most 5 paths).

@@ -145,6 +145,7 @@ addresses), and answer HTTP 429 `rate_limited` with the seconds to wait:
 | Projects created | 30 per hour |
 | Adding a project member by email | 30 per hour |
 | Comment writes: new threads, replies, edits, resolves and reopens, over REST and MCP | 60 per 10 minutes |
+| Agent file reads over MCP: `read_file`, `create_download_session` and `list_comments` | 600 per hour |
 
 Pinwall keeps these counts in memory, so a restart clears them.
 
@@ -163,11 +164,19 @@ except where they say otherwise:
   408 `request_timeout`, keeps nothing and gives its place back, however steadily its client is
   still sending. The deadline holds in both modes, so an upload of the largest size that averages
   under 64 KiB/s (about half a megabit a second) fails.
+- **File reads in progress.** `read_file`, the source lines `list_comments` shows, and the diff
+  that a refused publish or edit carries each hold whole files in memory. Each person may have 2 of
+  them running at once, and the instance 4; admins are held to their own 2 only. One more answers
+  429 `rate_limited` with `Retry-After: 3` before any file is read, and a refusal then goes out
+  without its diff. An edit over MCP reads its files inside a publish place.
 - **What these limits leave open.** Several accounts can keep the instance's 4 places busy, cycle
   after cycle: each upload holds its place until the deadline, and then they start again. Blocking
   an account does not stop the uploads it is already running. Everyone else, admins aside, gets 429
   `server_busy` meanwhile, which `pinwall_uploads_rejected_total{reason="server_busy"}` shows. The
   response is to block the accounts: their places come back within the deadline.
+  The 4 read places can be kept busy the same way, by publishes that are refused again and again,
+  since each refusal compares the changed files for its diff. Everyone else's reads then answer
+  429 `server_reads_busy`, and refusals lose their diffs. Blocking the accounts ends it.
 - **Zip archives** are the exception: Pinwall reads a zip whole into memory before it unpacks it,
   up to `PINWALL_MAX_UPLOAD_BYTES`. Hence the 50 MB in [Settings](#settings). A tar or tar.gz
   streams.
