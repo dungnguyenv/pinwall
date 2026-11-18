@@ -39,7 +39,7 @@ export function splitLines(text: string): string[] {
  * the tab (terminal escapes among them) are dropped, and U+2028 and U+2029, which `flatten`
  * treats as breaks, become a space.
  */
-const cleaned = (line: string): string => dropControls(line).replace(SEPARATORS, ' ');
+export const cleaned = (line: string): string => dropControls(line).replace(SEPARATORS, ' ');
 
 /**
  * A line as it is shown. It is page source, so it is data: it goes through `cleaned`. A line over

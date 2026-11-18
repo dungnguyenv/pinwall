@@ -251,11 +251,14 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
       const seen: unknown[] = [];
       app.deps.events.subscribe(ARTIFACT_TOPIC(artifactId), (e) => seen.push(e));
 
-      // 2. The agent reads the thread, publishes the fix on top of v1, replies and resolves.
+      // 2. The agent reads the thread and where it sits in the source, publishes the fix on top of
+      // v1, replies and resolves.
       const comments = await ok(client, 'list_comments', { artifact_id: artifactId });
       expect(comments).toContain(
         [
           `[${pinned.id}] v1 · ${t('mcp.comment.entryPage')}: text "Hello" (after "", before "") in h1`,
+          '  source: index.html:1 in v1 (current)',
+          '    1| <!doctype html><link rel="stylesheet" href="css/a.css"><h1>Hello</h1>',
           '  Bình: Say hello in Vietnamese',
         ].join('\n'),
       );

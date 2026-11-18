@@ -1,7 +1,8 @@
 import type { Anchor } from '@pinwall/shared/protocol';
 import { expect, test } from 'vitest';
 import { textAnchor } from '../src/anchors.ts';
-import { findQuote, placeAnchor } from '../src/reattach.ts';
+import { findQuote } from '../src/quote.ts';
+import { placeAnchor } from '../src/reattach.ts';
 import { buildTextIndex, TEXT_INDEX_LIMITS } from '../src/text-index.ts';
 import { anchorOf, rangeOf, sampleAnchor } from './helpers/dom.ts';
 

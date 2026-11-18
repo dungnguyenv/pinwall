@@ -66,7 +66,7 @@ const HTML_CHUNK = 16 * 1024;
  * htmlparser2 keeps open elements in an array that it unshifts, shifts and searches, so a document
  * of nothing but `<div>` costs quadratic time. Parsing stops once nesting is this deep.
  */
-const HTML_MAX_DEPTH = 512;
+export const HTML_MAX_DEPTH = 512;
 /** Raw characters kept while a `<title>` or heading is open, before it is cleaned and cut. */
 const TITLE_SCAN_CHARS = 2_000;
 /** Image references remembered per entry page; thumbnails come from the first usable one. */

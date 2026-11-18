@@ -142,18 +142,27 @@ export async function readText(deps: AppDeps, file: VersionFileRow): Promise<str
 }
 
 /**
- * The file a page of a version is served from, as `content/serve.ts` resolves a request: `''` is
- * the entry, `x/` is `x/index.html` and then `x/index.md`, and `x` is the file `x` itself, then
- * `x/index.html`, then `x/index.md`. `paths` are the version's file paths; null when none is there.
+ * The paths a page of a version may be served from, in the order they are tried: `''` is the
+ * entry, `x/` is `x/index.html` and then `x/index.md`, and `x` is the file `x` itself, then
+ * `x/index.html`, then `x/index.md`.
+ */
+export function pageCandidates(page: string, entryPath: string): string[] {
+  if (page === '') return [entryPath];
+  const isFolder = page.endsWith('/');
+  const folder = isFolder ? page : `${page}/`;
+  return [...(isFolder ? [] : [page]), ...INDEX_NAMES.map((name) => folder + name)];
+}
+
+/**
+ * The file a page of a version is served from: the first of `pageCandidates` that is there.
+ * `paths` are the version's file paths (all of them, or at least the candidates that exist); null
+ * when none is there. `findFile` in `content/serve.ts` resolves a request to a file by the same
+ * rule, and the two must keep to it together: a comment's page names the file it was made on.
  */
 export function pageFilePath(
   page: string,
   entryPath: string,
   paths: ReadonlySet<string>,
 ): string | null {
-  if (page === '') return paths.has(entryPath) ? entryPath : null;
-  const isFolder = page.endsWith('/');
-  const folder = isFolder ? page : `${page}/`;
-  const candidates = [...(isFolder ? [] : [page]), ...INDEX_NAMES.map((name) => folder + name)];
-  return candidates.find((path) => paths.has(path)) ?? null;
+  return pageCandidates(page, entryPath).find((path) => paths.has(path)) ?? null;
 }

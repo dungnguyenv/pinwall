@@ -189,6 +189,24 @@ describe('renderMarkdown', () => {
     expect(page).toContain('<meta name="color-scheme" content="light dark">');
   });
 
+  test('with sourceLines, each block names its source lines and nothing else changes', () => {
+    const src =
+      '# T\n\n## A\n\n- one\n- two\n\n```js\nx\n```\n\n    indented\n\n---\n\n## B\n\ntext\n';
+    const plain = renderMarkdownPage(src, 'index.md');
+    const lined = renderMarkdownPage(src, 'index.md', { sourceLines: true });
+    expect(plain).not.toContain('data-pw-lines');
+    expect(renderMarkdownPage(src, 'index.md', { sourceLines: false })).toBe(plain);
+    expect(lined).toContain('<h1 id="t" data-pw-lines="1-1">T</h1>');
+    expect(lined).toContain('<ul data-pw-lines="5-6">\n<li data-pw-lines="5-5">one</li>');
+    // A fenced block names its lines on the <pre> and on the <code>.
+    expect(lined).toContain('<pre data-pw-lines="8-10"><code data-pw-lines="8-10" class=');
+    expect(lined).toContain('<pre data-pw-lines="12-12"><code>indented');
+    expect(lined).toContain('<hr data-pw-lines="14-14">');
+    expect(lined).toContain('<p data-pw-lines="18-18">text</p>');
+    // Without the attributes, the page is the same.
+    expect(lined.replace(/ data-pw-lines="\d+-\d+"/g, '')).toBe(plain);
+  });
+
   test('a fragment is the body alone', () => {
     const fragment = renderMarkdownFragment('# T\n\n## A\n\n## B\n\ntext\n');
     expect(fragment).toContain('<h2 id="a">A</h2>');

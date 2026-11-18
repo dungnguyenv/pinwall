@@ -1,4 +1,4 @@
-import MarkdownIt from 'markdown-it';
+import MarkdownIt, { type Token } from 'markdown-it';
 import anchor from 'markdown-it-anchor';
 import { t } from '../lib/i18n.ts';
 import { RESERVED_DIR } from '../publish/paths.ts';
@@ -69,6 +69,43 @@ function highlight(code: string, language: string): string {
 const markdown = new MarkdownIt({ html: true, linkify: true, typographer: false, highlight });
 markdown.use(anchor, { slugify, tabIndex: false });
 
+/** The attribute that names a block's source lines, `{first}-{last}` from 1, under `sourceLines`. */
+const SOURCE_LINES = 'data-pw-lines';
+
+// A fenced block puts its token's attributes on its `<code>`; with source lines its `<pre>` names
+// them too, so the block's outer element finds its lines. Without them the block is as it was.
+const renderFence = markdown.renderer.rules.fence;
+if (renderFence !== undefined) {
+  markdown.renderer.rules.fence = (tokens, index, options, env, self) => {
+    const html = renderFence(tokens, index, options, env, self);
+    const lines = tokens[index]?.attrGet(SOURCE_LINES) ?? null;
+    return lines === null || !html.startsWith('<pre>')
+      ? html
+      : `<pre ${SOURCE_LINES}="${lines}">${html.slice('<pre>'.length)}`;
+  };
+}
+
+/** A line that holds nothing but blank space. */
+const BLANK_LINE = /^[ \t]*$/;
+
+/**
+ * Gives every block token of `src` that opens an element, or is one (a fence, an indented code
+ * block, a rule), the source lines markdown-it mapped it to, as `SOURCE_LINES`, without the blank
+ * lines that end a list or its last item. The attribute is added to elements the page has anyway,
+ * so the element structure a selector path counts stays the same.
+ */
+function markSourceLines(src: string, tokens: Token[]): void {
+  // markdown-it counts lines as it splits them: at CRLF, CR or LF.
+  const lines = src.split(/\r\n?|\n/);
+  for (const token of tokens) {
+    if (!token.block || token.map === null || token.nesting === -1) continue;
+    const [first, end] = token.map;
+    let last = end;
+    while (last > first + 1 && BLANK_LINE.test(lines[last - 1] ?? '')) last--;
+    token.attrSet(SOURCE_LINES, `${first + 1}-${last}`);
+  }
+}
+
 /**
  * The headings of a parsed document in order. markdown-it-anchor has given each its id by the
  * time `parse` returns; the text is what the heading shows, without markup.
@@ -93,9 +130,13 @@ function headingsOf(tokens: ReturnType<typeof markdown.parse>): Heading[] {
 /**
  * Renders Markdown to HTML. `title` is the text of the first heading, whatever its level, or null
  * when the document has none. A source over `MARKDOWN_RENDER_MAX_BYTES` is not parsed: its html
- * is a notice and the source as preformatted text, with no headings and no title.
+ * is a notice and the source as preformatted text, with no headings and no title. With
+ * `sourceLines`, each block names its source lines (`markSourceLines`).
  */
-export function renderMarkdown(src: string): {
+export function renderMarkdown(
+  src: string,
+  sourceLines = false,
+): {
   html: string;
   headings: Heading[];
   title: string | null;
@@ -111,6 +152,7 @@ export function renderMarkdown(src: string): {
   }
   const env = {};
   const tokens = markdown.parse(src, env);
+  if (sourceLines) markSourceLines(src, tokens);
   const html = markdown.renderer.render(tokens, markdown.options, env);
   const headings = headingsOf(tokens);
   const title = headings.find((heading) => heading.text !== '')?.text ?? null;
@@ -183,10 +225,16 @@ function renderToc(headings: readonly Heading[]): string {
 /**
  * A whole HTML document for a Markdown file. `pagePath` is the path the page is requested at,
  * relative to the grant's root: it sets how many directories the stylesheet link climbs, and its
- * last segment is the title of a document with no heading.
+ * last segment is the title of a document with no heading. With `sourceLines`, each block of the
+ * article names its source lines in a `data-pw-lines` attribute (`{first}-{last}`, from 1), for
+ * locating comments (`locate.ts`); the page is otherwise the one served.
  */
-export function renderMarkdownPage(src: string, pagePath: string): string {
-  const { html, headings, title } = renderMarkdown(src);
+export function renderMarkdownPage(
+  src: string,
+  pagePath: string,
+  o: { sourceLines?: boolean } = {},
+): string {
+  const { html, headings, title } = renderMarkdown(src, o.sourceLines === true);
   return pageDocument(
     pagePath,
     title,

@@ -1,11 +1,9 @@
+import type { Located, SourceLocation } from '../content/locate.ts';
 import { t } from '../lib/i18n.ts';
 import type { ThreadOut } from './types.ts';
 
 // Tool texts and the rest of the server write sizes the same way.
 export { formatBytes } from '../lib/format.ts';
-
-/** `text` on one line: every run of whitespace, line breaks included, becomes one space. */
-export const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim();
 
 /** The line breaks that end a line of text; other control characters are dropped, not split on. */
 const LINE_BREAK = /\r\n|[\n\r\p{Zl}\p{Zp}]/u;
@@ -62,19 +60,44 @@ function describeStatus({ status, resolved_in_version: fixedIn }: ThreadOut): st
 }
 
 /**
- * A thread for the model: a first line with its id, the version it was written on, its status
- * when `showStatus` (for a list that is not only of open threads) and where it points, then its
- * first comment and each reply, one author per line. What reviewers wrote (comment texts, quoted
- * page text, selectors) is data: it is flattened or indented so it cannot pass for another line
- * of this text.
+ * Where a thread sits in the source of the current version `number`: its file and lines, marked
+ * unverified when the page's scripts may have moved its element, then the first lines there, each
+ * numbered; or that it was not found there. The path and the lines are the publisher's: the path
+ * is flattened, and the lines come cleaned and cut from `locateThreads`, so none can start a line
+ * of this text that passes for another.
  */
-export function formatThread(th: ThreadOut, showStatus = false): string {
+function describeSource(located: SourceLocation | 'not_found', number: number): string[] {
+  if (located === 'not_found') return [t('mcp.comment.sourceNotFound', { number })];
+  const { path, start, end, snippet, unverified } = located;
+  const where = {
+    path: flatten(path),
+    lines: start === end ? `${start}` : `${start}-${end}`,
+    number,
+  };
+  return [
+    unverified ? t('mcp.comment.sourceUnverified', where) : t('mcp.comment.source', where),
+    ...snippet.map((text, i) => t('mcp.comment.sourceLine', { line: start + i, text })),
+  ];
+}
+
+/**
+ * A thread for the model: a first line with its id, the version it was written on, its status
+ * when `showStatus` (for a list that is not only of open threads) and where it points; then, with
+ * `located` and the `current` version it was located in, where it sits in that version's source
+ * (nothing for a thread not located); then its first comment and each reply, one author per line.
+ * What reviewers wrote (comment texts, quoted page text, selectors) is data: it is flattened or
+ * indented so it cannot pass for another line of this text.
+ */
+export function formatThread(
+  th: ThreadOut,
+  o: { showStatus?: boolean; located?: Located; current?: { number: number } } = {},
+): string {
   const page = th.anchor.page === '' ? t('mcp.comment.entryPage') : flatten(th.anchor.page);
   const where = t('mcp.comment.where', { page, anchor: describeAnchor(th.anchor) });
   const comments = [th, ...th.replies].map((c) =>
-    t('mcp.comment.line', { author: oneLine(c.author), body: quoteBody(c.body) }),
+    t('mcp.comment.line', { author: flatten(c.author), body: quoteBody(c.body) }),
   );
-  const header = showStatus
+  const header = o.showStatus
     ? t('mcp.comment.threadStatus', {
         id: th.id,
         number: th.version.number,
@@ -82,7 +105,11 @@ export function formatThread(th: ThreadOut, showStatus = false): string {
         where,
       })
     : t('mcp.comment.thread', { id: th.id, number: th.version.number, where });
-  return [header, ...comments].join('\n');
+  const source =
+    o.located === undefined || o.located === null || o.current === undefined
+      ? []
+      : describeSource(o.located, o.current.number);
+  return [header, ...source, ...comments].join('\n');
 }
 
 /** Appends the line that says how to get the next page, when there is one. */

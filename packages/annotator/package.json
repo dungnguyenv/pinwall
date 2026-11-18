@@ -9,6 +9,10 @@
   },
   "exports": {
     "./bundle": "./bundle.mjs",
+    "./match": {
+      "types": "./src/match-types.d.ts",
+      "default": "./src/match.ts"
+    },
     "./dist/annotator.js": "./dist/annotator.js"
   },
   "scripts": {

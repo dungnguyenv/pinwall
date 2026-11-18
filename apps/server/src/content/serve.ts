@@ -311,7 +311,9 @@ function reservedAsset(
 
 /**
  * The file `path` names: `''` is the entry, a path ending in `/` the directory's index. A path
- * that is no file but a directory with an index is `'directory'`, for a redirect.
+ * that is no file but a directory with an index is `'directory'`, for a redirect. `pageFilePath`
+ * in `domain/version-files.ts` finds the file of a comment's page by the same rule, and the two
+ * must keep to it together.
  */
 async function findFile(
   deps: AppDeps,

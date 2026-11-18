@@ -6,7 +6,8 @@ import {
 } from '@pinwall/shared';
 import { z } from 'zod';
 import { enforceRateLimit, RATE_RULES } from '../../auth/rate-limits.ts';
-import type { ArtifactRow } from '../../db/schema.ts';
+import { type Located, locateThreads } from '../../content/locate.ts';
+import type { ArtifactRow, VersionRow } from '../../db/schema.ts';
 import type { AppDeps } from '../../deps.ts';
 import { getArtifact } from '../../domain/artifacts.ts';
 import { addReply, listThreads, resolveThread } from '../../domain/comments.ts';
@@ -22,7 +23,7 @@ import { getVersionsById } from '../../domain/versions.ts';
 import { gone } from '../../lib/errors.ts';
 import { t } from '../../lib/i18n.ts';
 import { DESCRIPTIONS, FIELDS } from '../descriptions.ts';
-import { formatThread, oneLine, withMore } from '../format.ts';
+import { flatten, formatThread, withMore } from '../format.ts';
 import { runTool } from '../results.ts';
 import type { ToolModule } from '../server.ts';
 import type { ShareOut, ThreadOut } from '../types.ts';
@@ -111,8 +112,8 @@ const RevokeShareLinkIn = z.object({
 
 /** The name a comment's author is shown under: a member's, a guest's with a note, or a stand-in. */
 function authorName(author: CommentAuthor): string {
-  if (author.type === 'guest') return t('mcp.comment.guest', { name: oneLine(author.name) });
-  const name = author.name === null ? '' : oneLine(author.name);
+  if (author.type === 'guest') return t('mcp.comment.guest', { name: flatten(author.name) });
+  const name = author.name === null ? '' : flatten(author.name).trim();
   if (name !== '') return name;
   // No user id left means the account is gone; a member the IdP sent no name for is known by id.
   return author.user_id ?? t('mcp.comment.formerMember');
@@ -150,14 +151,10 @@ function toShareOut(link: ShareLink): ShareOut {
 }
 
 /** The version the artifact's current version id names, or null while it has none. */
-async function currentVersionOf(
-  deps: AppDeps,
-  artifact: ArtifactRow,
-): Promise<{ id: string; number: number } | null> {
+async function currentVersionOf(deps: AppDeps, artifact: ArtifactRow): Promise<VersionRow | null> {
   const id = artifact.current_version_id;
   if (id === null) return null;
-  const version = (await getVersionsById(deps.db.db, [id])).get(id);
-  return version === undefined ? null : { id, number: version.number };
+  return (await getVersionsById(deps.db.db, [id])).get(id) ?? null;
 }
 
 /** What a share link does, in a phrase: its version, password, comments and expiry. */
@@ -207,7 +204,10 @@ export const reviewTools: ToolModule = (server, ctx) => {
       });
       const threads = items.map(toThreadOut);
       const current = await currentVersionOf(deps, artifact);
-      const name = oneLine(artifact.name);
+      // Where each thread sits in the version the agent would edit.
+      const located =
+        current === null ? new Map<string, Located>() : await locateThreads(deps, current, items);
+      const name = flatten(artifact.name);
       const status = t(`mcp.comments.status.${a.status}`);
       const summary =
         current === null
@@ -230,7 +230,13 @@ export const reviewTools: ToolModule = (server, ctx) => {
         // Said once, ahead of the first comment, in the tool's own voice.
         ...(threads.length === 0 ? [] : [t('mcp.comments.untrusted')]),
         // Open threads are all a default call lists; any other call says which each one is.
-        ...threads.map((th) => formatThread(th, a.status !== 'open')),
+        ...threads.map((th) =>
+          formatThread(th, {
+            showStatus: a.status !== 'open',
+            located: located.get(th.id),
+            ...(current === null ? {} : { current }),
+          }),
+        ),
       ];
       return withMore(lines, 'list_comments', nextCursor);
     }),
