@@ -48,9 +48,9 @@ to do.
 A refusal says what to do next. Mind these:
 
 - `quota_exceeded`, and a viewer's `role` refusal: do not retry; tell the user.
-- `version_conflict`: someone published since you looked. The refusal carries the diff: merge it
-  into your copy or edits, then try again with the current version id in the refusal as
-  `expected_version_id`.
+- `version_conflict`: someone published since you looked. The refusal carries the diff (one from
+  the upload command does not: call `get_artifact` then): merge it into your copy or edits, then
+  try again with the current version id in the refusal as `expected_version_id`.
 - `edited_on_server`: the current version was edited on the server, and your files would undo
   that. Bring the changes to the files it names (its diff, or `read_file`) into your copy, then
   publish again with `replace_server_edits` set to true. Without that merge, set it only if the

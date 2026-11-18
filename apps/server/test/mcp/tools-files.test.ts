@@ -212,6 +212,19 @@ describe.each(dialects)('MCP read_file on %s', (dialect) => {
     expect(text).toContain(t('mcp.read.matches', { count: 1 }));
   });
 
+  test('find on a minified page shows the text around a match past column 2,000', async () => {
+    // One line of 10,000 characters, the match at column 6,001.
+    const page = `<html>${'<p>x</p>'.repeat(749)}<p>Bảng giá 2026</p>${'<i>y</i>'.repeat(497)}</div>`;
+    expect(page).toHaveLength(10_000);
+    const at = page.indexOf('Bảng giá');
+    await publishNext({ 'index.html': page }, v1);
+    const text = await ok({ find: 'bảng giá 2026' });
+    expect(text).toContain(`     1| ${t('mcp.read.cutBefore', { count: at - 1000 })}x</p><p>x</p>`);
+    expect(text).toContain('<p>x</p><p>Bảng giá 2026</p><i>y</i>');
+    expect(text).toContain(t('mcp.read.cut', { count: 10_000 - (at + 1000) }));
+    expect(text).toContain(t('mcp.read.matches', { count: 1 }));
+  });
+
   test('find with more than 30 matches shows 30 and says there are more', async () => {
     await publishNext({ 'index.html': Array.from({ length: 50 }, () => 'hit').join('\n') }, v1);
     const text = await ok({ find: 'hit' });

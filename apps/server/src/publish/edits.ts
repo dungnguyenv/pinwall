@@ -285,6 +285,8 @@ function replaceIn(
   index: number,
   span: [number, number] | null,
 ): { count: number; length: number; span: [number, number]; build: () => string } {
+  // `parseEdits` refuses it; found at every position, it would never stop being found.
+  if (op.old_string === '') throw new Error('An empty old_string cannot be replaced');
   const forms = formsOf(text, op);
   let chosen: { form: ReplaceForm; found: Found } | null = null;
   for (const form of forms) {

@@ -1107,6 +1107,8 @@
   "mcp.read.more": "More: call read_file with offset {{next}}.",
   "mcp.read.cut_one": "… [+{{count}} character]",
   "mcp.read.cut_other": "… [+{{count}} characters]",
+  "mcp.read.cutBefore_one": "[+{{count}} character] …",
+  "mcp.read.cutBefore_other": "[+{{count}} characters] …",
   "mcp.read.empty": "The file is empty.",
   "mcp.read.pastEnd_one": "The file has {{count}} line, so offset {{offset}} is past its end.",
   "mcp.read.pastEnd_other": "The file has {{count}} lines, so offset {{offset}} is past its end.",

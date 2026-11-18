@@ -51,6 +51,10 @@ describe('applyEdits', () => {
     expect(texts.get('i.html')).toBe('﻿<p>a</p>\r\n<p>c</p>\r\n');
   });
 
+  test('an empty old_string is refused, even from a caller that skips parseEdits', () => {
+    expect(() => edit('abc', [replace('', 'x')])).toThrow();
+  });
+
   test('an indentation mistake names the whitespace match line', () => {
     const read = () => 'x\n    <td>Agent</td>\n';
     expect(() =>

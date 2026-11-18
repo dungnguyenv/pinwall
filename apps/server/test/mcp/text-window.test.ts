@@ -176,6 +176,46 @@ describe('findLines', () => {
     expect(findLines(['a', 'b'], 'zzz')).toEqual({ body: '', matches: 0, truncated: false });
   });
 
+  test('a match far into a long line is shown with the text around it, the cuts marked', () => {
+    // A minified page: one line of 10,000 characters, the match at column 6,000.
+    const line = `${'a'.repeat(5_997)}<b>Bảng giá</b>${'z'.repeat(3_988)}`;
+    expect(line).toHaveLength(10_000);
+    const r = findLines([line], 'bảng giá');
+    expect(r).toMatchObject({ matches: 1, truncated: false });
+    // 1,000 characters before the match, 2,000 in all, as a line in a range shows.
+    expect(r.body).toBe(
+      `     1| ${t('mcp.read.cutBefore', { count: 5_000 })}${line.slice(5_000, 7_000)}${t(
+        'mcp.read.cut',
+        { count: 3_000 },
+      )}`,
+    );
+    expect(t('mcp.read.cutBefore', { count: 5_000 })).toBe('[+5000 characters] …');
+    expect(t('mcp.read.cutBefore', { count: 1 })).toBe('[+1 character] …');
+  });
+
+  test('near the end of a long line, the 2,000 characters shown end with it', () => {
+    const line = `${'a'.repeat(9_990)}needle`;
+    const r = findLines([line], 'NEEDLE');
+    expect(r.body).toBe(
+      `     1| ${t('mcp.read.cutBefore', { count: line.length - 2_000 })}${line.slice(-2_000)}`,
+    );
+  });
+
+  test('the match is placed in the line as stored, even when NFC or lower case change its length', () => {
+    // 3,000 decomposed letters before the match: 6,000 characters stored, 3,000 once in NFC.
+    const line = `${'ả'.normalize('NFD').repeat(3_000)}<b>Bảng giá</b>${'z'.repeat(4_000)}`;
+    const r = findLines([line], 'bảng giá');
+    expect(r.matches).toBe(1);
+    expect(r.body).toContain('<b>Bảng giá</b>');
+    expect(r.body).toMatch(/^ {5}1\| \[\+\d+ characters\] …/);
+    expect(r.body).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+
+  test('a match within the first 2,000 characters of a long line is shown from its start', () => {
+    const r = findLines([`${'x'.repeat(100)}needle${'y'.repeat(5_000)}`], 'needle');
+    expect(r.body).toMatch(/^ {5}1\| x{100}needley+… \[\+\d+ characters\]$/);
+  });
+
   test('a long line is cut as in a range, and control characters are dropped', () => {
     const r = findLines([`needle\u001b${'x'.repeat(5000)}`], 'needle');
     expect(r.body).toMatch(/^ {5}1\| needlex+… \[\+\d+ characters\]$/);

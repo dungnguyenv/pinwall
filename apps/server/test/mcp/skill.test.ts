@@ -131,6 +131,8 @@ test('the skill says how to edit, and what to do when the server refuses a stale
   const prose = skill.replace(/\s+/g, ' ');
   expect(prose).toContain('publish again with `replace_server_edits` set to true');
   expect(prose).toContain('only if the user asks');
+  // A conflict the upload command prints is the REST error, without the diff.
+  expect(prose).toMatch(/one from the upload command does not: call `get_artifact`/);
   // get_project gives what publishing needs, so no call to whoami comes first.
   expect(skill).not.toMatch(/once per session/);
 });

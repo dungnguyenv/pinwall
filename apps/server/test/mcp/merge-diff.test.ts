@@ -358,6 +358,34 @@ describe.each(dialects)('merge diffs on refusals on %s', (dialect) => {
     expect(await diff(whole.length - 1)).toBe(upTo(3));
   });
 
+  test('a large first file is cut down by hunks to leave room for the names of the files after it', async () => {
+    const small = (word: string) =>
+      Object.fromEntries(['b', 'c', 'd'].map((n) => [`${n}.html`, `<p>${n} ${word}</p>\n`]));
+    const page = { 'index.html': '<h1>x</h1>' };
+    await start({ 'a.html': longText(500, 'old', FAR_APART), ...small('old'), ...page });
+    await next({ 'a.html': longText(500, 'new', FAR_APART), ...small('new'), ...page });
+    const diff = (only: string[] | null, max: number) =>
+      mergeDiff(ctx.deps, scope(), id, 1, 2, only, max);
+    const a = shownOf((await diff(['a.html'], 100_000)).split('\n').slice(1));
+    expect(a.hunks).toHaveLength(4);
+    const moreHunks = (count: number) => t('mcp.merge.moreHunks', { path: 'a.html', count });
+    const moreFiles = t('mcp.merge.moreFiles', { count: 3 });
+    // Room for a.html's first three hunks with only the count of the three files after it.
+    const threeHunks = [...a.headers, ...a.hunks.slice(0, 3).flat(), moreHunks(1)].join('\n');
+    const cap = HEADING.length + 1 + threeHunks.length + 1 + moreFiles.length;
+
+    const text = await diff(null, cap);
+    expect(text.length).toBeLessThanOrEqual(cap);
+    const lines = text.split('\n');
+    expect(lines).not.toContain(moreFiles);
+    // a.html gives up its third hunk, and every file after it is named, if not shown whole.
+    expect(lines.slice(0, 3)).toEqual([HEADING, ...a.headers]);
+    expect(lines).toContain(moreHunks(2));
+    for (const path of ['b.html', 'c.html', 'd.html']) {
+      expect(lines.includes(`--- ${path}\tv1`) || lines.includes(notShown(path)), path).toBe(true);
+    }
+  });
+
   test('every file and every hunk is accounted for once, whatever the cap', async () => {
     const spread = new Set([10, 60, 110, 160]);
     const pair = new Set([5, 90]);
@@ -509,7 +537,7 @@ describe.each(dialects)('merge diffs on refusals on %s', (dialect) => {
     }
   });
 
-  test('300 changed files give a text of at most 4,000 characters, and a count of the rest', async () => {
+  test('300 changed files give a text of at most 4,000 characters: as many names as fit, and a count of the rest', async () => {
     const paths = Array.from(
       { length: 300 },
       (_, i) => `pages/page-${String(i).padStart(3, '0')}.html`,
@@ -534,10 +562,13 @@ describe.each(dialects)('merge diffs on refusals on %s', (dialect) => {
       const lines = text.split('\n');
       const left = /^and (\d+) more changed files?$/.exec(lines.at(-1) ?? '');
       expect(left, lines.at(-1)).not.toBeNull();
-      // 301 files changed; every one is in a patch, a name line, or the count at the end.
+      // 301 files changed; every one is in a patch, a name line, or the count at the end. The
+      // names come first: no patch takes the room another name would have needed.
       const patches = lines.filter((line) => line.startsWith('--- ')).length;
       const named = lines.filter((line) => line.endsWith('(diff not shown: use read_file)')).length;
-      expect(patches).toBeGreaterThan(10);
+      expect(patches + named).toBeGreaterThan(60);
+      const next = notShown(`pages/page-${String(patches + named - 1).padStart(3, '0')}.html`);
+      expect(text.length + 1 + next.length).toBeGreaterThan(MERGE_DIFF_MAX_CHARS);
       expect(Number(left?.[1])).toBeGreaterThan(200);
       expect(patches + named + Number(left?.[1])).toBe(301);
       expect(lines.at(-1)).toBe(t('mcp.merge.moreFiles', { count: Number(left?.[1]) }));

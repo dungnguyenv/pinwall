@@ -89,11 +89,13 @@ function partialPatch(
  *   `diffTextFile` will not compare (too large), one it fails to compare (logged with
  *   `requestId`), and one for which the first two do not fit.
  *
- * The files after a short one are still shown if they fit. When not even the next name fits, the
- * text ends with one line, `mcp.merge.moreFiles`, with how many files are left; room for it is
- * kept all along. Those files are not compared, so a large rebuild does not read hundreds of
- * files for nothing. A version or artifact that is missing, or that `scope` does not see,
- * answers as `diffVersionFiles` does.
+ * The files after a short one are still shown if they fit. A `version_conflict` names no files in
+ * its details, so the names are the agent's only list of them: before a file's patch takes any
+ * room, room is kept for the name lines of the files after it, as many as fit, and for the line
+ * `mcp.merge.moreFiles` with how many are left when not all of them do (`roomAfter`). When not
+ * even the next name fits, the text ends with that line. Those files are not compared, so a large
+ * rebuild does not read hundreds of files for nothing. A version or artifact that is missing, or
+ * that `scope` does not see, answers as `diffVersionFiles` does.
  */
 export async function mergeDiff(
   deps: AppDeps,
@@ -114,22 +116,40 @@ export async function mergeDiff(
   if (paths.length === 0) return [heading, t('mcp.merge.none')].join('\n');
   const lines = [heading];
   let length = heading.length;
+  // A path is the publisher's: one line, whatever it holds.
+  const shownPaths = paths.map(flatten);
+  const names = shownPaths.map((path) => t('mcp.merge.notShown', { path }));
+
+  /**
+   * The room the files after the `i`-th take when `room` characters are left after it: a line for
+   * each of their names, as many as fit in order, then `moreFiles` for the rest when not all of
+   * them do. Null when not even that line fits.
+   */
+  const roomAfter = (i: number, room: number): number | null => {
+    const following = paths.length - i - 1;
+    let named = 0;
+    let best: number | null = null;
+    for (let k = 0; k <= following && named <= room; k += 1) {
+      if (k > 0) named += 1 + (names[i + k]?.length ?? 0);
+      const size = named + (k < following ? 1 + moreFiles(following - k).length : 0);
+      if (size <= room) best = size;
+    }
+    return best;
+  };
 
   for (const [i, path] of paths.entries()) {
-    const following = paths.length - i - 1;
-    /** Whether a line of `size` characters fits, with room left to say how many files follow. */
-    const fits = (size: number): boolean =>
-      length + 1 + size + (following === 0 ? 0 : 1 + moreFiles(following).length) <= maxChars;
-
-    // A path is the publisher's: one line, whatever it holds.
-    const shownPath = flatten(path);
-    const name = t('mcp.merge.notShown', { path: shownPath });
-    if (!fits(name.length)) {
+    const shownPath = shownPaths[i] ?? '';
+    const name = names[i] ?? '';
+    // Kept for the files after this one, with this one at least named.
+    const kept = roomAfter(i, maxChars - length - 1 - name.length);
+    if (kept === null) {
       // The name is what a file falls back to: without room for it, this file and the rest are
       // counted, not compared. Room for the count was kept when the line before was added.
       lines.push(moreFiles(paths.length - i));
       break;
     }
+    /** Whether a line of `size` characters fits, with the room kept for the files after it. */
+    const fits = (size: number): boolean => length + 1 + size + kept <= maxChars;
     const patch = await compare(deps, scope, artifactId, from, to, path, requestId);
     let line = name;
     if (patch !== null) {
