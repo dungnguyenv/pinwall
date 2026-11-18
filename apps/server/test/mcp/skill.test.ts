@@ -7,7 +7,7 @@ import type { ErrorCode } from '../../src/lib/errors.ts';
 import { TOOL_NAMES } from '../../src/mcp/server.ts';
 import { createSignedInUser, createUserToken } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
-import { connectMcp } from '../helpers/mcp.ts';
+import { connectMcp, propertyNames } from '../helpers/mcp.ts';
 
 /*
  * The Agent Skill names tools, their arguments, the fields of the JSON the upload command prints,
@@ -60,20 +60,6 @@ function parseFrontmatter(text: string): Record<string, string> {
     fields[line.slice(0, colon)] = line.slice(colon + 2);
   }
   return fields;
-}
-
-/** The names of every property in `schema`, at any depth (nested objects, array items, unions). */
-function propertyNames(schema: unknown, into = new Set<string>()): Set<string> {
-  if (Array.isArray(schema)) {
-    for (const item of schema) propertyNames(item, into);
-  } else if (typeof schema === 'object' && schema !== null) {
-    const { properties } = schema as { properties?: unknown };
-    if (typeof properties === 'object' && properties !== null) {
-      for (const name of Object.keys(properties)) into.add(name);
-    }
-    for (const value of Object.values(schema)) propertyNames(value, into);
-  }
-  return into;
 }
 
 let ctx: TestContext;
@@ -141,7 +127,10 @@ test('the skill says how to edit, and what to do when the server refuses a stale
   ])
     expect(skill, s).toContain(s);
   expect(skill).toMatch(/diff/);
-  expect(skill).toMatch(/unless the user asks/);
+  // Ruling R24: a merged copy goes through with the flag; without a merge, only the user decides.
+  const prose = skill.replace(/\s+/g, ' ');
+  expect(prose).toContain('publish again with `replace_server_edits` set to true');
+  expect(prose).toContain('only if the user asks');
   // get_project gives what publishing needs, so no call to whoami comes first.
   expect(skill).not.toMatch(/once per session/);
 });

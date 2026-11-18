@@ -57,6 +57,18 @@ test('a role refusal and a share refusal before approval say that they are final
   }
 });
 
+test('the stale-base hints point at the changes to merge and say how to publish again', () => {
+  // Ruling R24: a merged copy is published again with the flag.
+  const edited = t('mcp.hint.conflict.edited_on_server');
+  expect(edited).toContain('then publish again with replace_server_edits: true');
+  expect(edited).toMatch(/only when the user asks/);
+  // The refusal names the current version and carries the diff; get_artifact is the fallback.
+  const stale = t('mcp.hint.version_conflict');
+  expect(stale).toMatch(/merge/i);
+  expect(stale).toContain('current_version_id');
+  expect(stale).toContain('get_artifact');
+});
+
 test('unexpected errors are logged and hidden', () => {
   const logged = vi.spyOn(ctx.deps.logger, 'error');
   const internal = t('mcp.error.internal', { requestId: REQUEST_ID });

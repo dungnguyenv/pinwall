@@ -7,7 +7,7 @@ import { badRequest } from '../../lib/errors.ts';
 import { t } from '../../lib/i18n.ts';
 import { createDownloadSession } from '../../publish/download.ts';
 import { DESCRIPTIONS, FIELDS } from '../descriptions.ts';
-import { flatten, urlMinutes } from '../format.ts';
+import { flatten, minutesText, urlMinutes } from '../format.ts';
 import { runTool } from '../results.ts';
 import type { ToolModule } from '../server.ts';
 import { findLines, splitLines, windowLines } from '../text-window.ts';
@@ -70,7 +70,7 @@ const CreateDownloadIn = z.object({
  */
 export const fileTools: ToolModule = (server, ctx) => {
   const { deps, auth } = ctx;
-  const minutes = urlMinutes(deps.config);
+  const minutes = minutesText(urlMinutes(deps.config));
 
   server.registerTool(
     'read_file',

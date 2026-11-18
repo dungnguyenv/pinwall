@@ -18,8 +18,8 @@ claude mcp add --transport http pinwall <their Pinwall URL>/mcp
 ```
 
 They sign in through their browser: `/mcp` in Claude Code, then pinwall and authenticate (or
-`claude mcp login pinwall`). Never ask for a password, API token or code in the chat. A client
-without OAuth uses an API token the user creates in Settings and puts in its config themselves.
+`claude mcp login pinwall`). Never ask for a password, API token or code in the chat. Clients
+without OAuth use an API token the user makes in Settings and configures themselves.
 
 ## 2. Before publishing
 
@@ -29,13 +29,13 @@ without OAuth uses an API token the user creates in Settings and puts in its con
 - With personal spaces, `list_projects` shows your projects and those shared with you, with your
   role. A viewer reads and comments but cannot publish or share: pick a project where you are owner
   or editor. Call `create_project` only when the user asks for one.
-- `whoami` gives the account, the size limits and, where set, your usage and quota.
+- `whoami` gives the account, its limits and, where set, your usage and quota.
 
 ## 3. Publish
 
 - **New artifact:** optional `project_id`, `name` and `tags`.
 - **New version:** `artifact_id` and `expected_version_id`, the current version id from
-  `list_artifacts`, `get_artifact` or your last publish. Never mix the two.
+  `list_artifacts`, `get_artifact` or your last publish. Never mix them.
 - Add a short `message` on what changed.
 
 **With a shell:** call `create_publish_session` with `directory` or `file`, as the shell sees them,
@@ -49,10 +49,12 @@ A refusal says what to do next. Mind these:
 
 - `quota_exceeded`, and a viewer's `role` refusal: do not retry; tell the user.
 - `version_conflict`: someone published since you looked. The refusal carries the diff: merge it
-  into your copy or edits, then try again with the version id it names as `expected_version_id`.
-- `edited_on_server`: a later version was edited on the server, and your files would undo that.
-  Bring the changes to the files it names (its diff, or `read_file`) into your copy and publish
-  again. Never pass `replace_server_edits` unless the user asks to discard those edits.
+  into your copy or edits, then try again with the current version id in the refusal as
+  `expected_version_id`.
+- `edited_on_server`: the current version was edited on the server, and your files would undo
+  that. Bring the changes to the files it names (its diff, or `read_file`) into your copy, then
+  publish again with `replace_server_edits` set to true. Without that merge, set it only if the
+  user asks to discard those edits.
 
 ## 4. Editing
 
@@ -60,7 +62,7 @@ A refusal says what to do next. Mind these:
   the files with `create_download_session` into an empty folder; never unpack over your work.
 - **Without a shell:** find the text with `read_file` (a range, or `find`), then call
   `edit_artifact` with `expected_version_id` and every change as `replace`, `write` or `delete`
-  operations. If one fails, nothing changes.
+  operations.
 
 ## 5. Report
 

@@ -4,7 +4,7 @@ import { mayExpose } from '../../domain/exposure.ts';
 import { limitsOf, quotaApplies, usageOf } from '../../domain/usage.ts';
 import { t } from '../../lib/i18n.ts';
 import { DESCRIPTIONS } from '../descriptions.ts';
-import { formatBytes, urlMinutes } from '../format.ts';
+import { formatBytes, minutesText, urlMinutes } from '../format.ts';
 import { authoringNotes } from '../notes.ts';
 import { runTool } from '../results.ts';
 import type { ToolContext, ToolModule } from '../server.ts';
@@ -97,7 +97,7 @@ export const registerIdentityTools: ToolModule = (server, ctx) => {
         file: formatBytes(me.limits.max_file_bytes),
         version: formatBytes(me.limits.max_version_bytes),
         files: me.limits.max_files,
-        minutes: me.upload_url_minutes,
+        minutes: minutesText(me.upload_url_minutes),
       });
       const notes = me.authoring_notes.map((note) => `- ${note}`);
       return [summary, ...notes, ...accountLines(me)].join('\n');

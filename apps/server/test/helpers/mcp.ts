@@ -213,3 +213,17 @@ export async function approveInBrowser(
   }
   return code;
 }
+
+/** The names of every property in `schema`, at any depth (nested objects, array items, unions). */
+export function propertyNames(schema: unknown, into = new Set<string>()): Set<string> {
+  if (Array.isArray(schema)) {
+    for (const item of schema) propertyNames(item, into);
+  } else if (typeof schema === 'object' && schema !== null) {
+    const { properties } = schema as { properties?: unknown };
+    if (typeof properties === 'object' && properties !== null) {
+      for (const name of Object.keys(properties)) into.add(name);
+    }
+    for (const value of Object.values(schema)) propertyNames(value, into);
+  }
+  return into;
+}

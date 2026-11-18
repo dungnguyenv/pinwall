@@ -82,7 +82,7 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
     expect(url).toMatch(/^http:\/\/localhost:8080\/upload\/[A-Za-z0-9_-]{43}$/);
     expect(text).toBe(
       t('mcp.publish.session', {
-        minutes: 10,
+        minutes: '10 minutes',
         url,
         archive: `tar -czf - -C ./site . | curl --fail-with-body --data-binary @- "${url}"`,
         single: `curl --fail-with-body -H 'Content-Type: text/html' --data-binary @./index.html "${url}"`,
@@ -99,7 +99,7 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
     const url = uploadUrlOf(text);
     expect(text).toBe(
       t('mcp.publish.session', {
-        minutes: 10,
+        minutes: '10 minutes',
         url,
         archive: `tar -czf - -C 'my site' . | curl --fail-with-body --data-binary @- "${url}"`,
         single: `curl --fail-with-body -H 'Content-Type: text/markdown' --data-binary @notes/plan.md "${url}"`,
@@ -638,6 +638,12 @@ describe.each(dialects)('MCP publish tools on %s', (dialect) => {
     expect(d.inline).toContain('at most 500 KB in total');
     expect(d.session).toContain('(valid 30 minutes)');
     expect(await ok('create_publish_session')).toContain('expires in 30 minutes');
+
+    // A URL that lives less than two minutes lives one.
+    await restart({ PINWALL_UPLOAD_SESSION_TTL: '90s' });
+    d = await described();
+    expect(d.session).toContain('(valid 1 minute)');
+    expect(await ok('create_publish_session')).toContain('(single use, expires in 1 minute)');
   });
 
   test('the tools say what they change', async () => {

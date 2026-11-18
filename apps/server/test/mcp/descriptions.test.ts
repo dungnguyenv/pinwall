@@ -5,7 +5,7 @@ import { DESCRIPTIONS, FIELDS } from '../../src/mcp/descriptions.ts';
 import { SERVER_INSTRUCTIONS, TOOL_NAMES } from '../../src/mcp/server.ts';
 import { createSignedInUser, createUserToken } from '../helpers/auth.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
-import { connectMcp } from '../helpers/mcp.ts';
+import { connectMcp, propertyNames } from '../helpers/mcp.ts';
 
 /*
  * The tool descriptions are what an agent reads before it calls anything. These tests pin the
@@ -81,14 +81,17 @@ test('edit_artifact points to the source on disk first', () => {
   expect(d).toContain('create_publish_session');
 });
 
-test('the publish tools name replace_server_edits, to set only when the user asks', () => {
+test('replace_server_edits follows a merge of the server edits, or the user asking', () => {
+  // Ruling R24: the check judges the versions, not the files, so a merged copy needs the flag.
   for (const d of [
     DESCRIPTIONS.create_publish_session.description,
     DESCRIPTIONS.publish_inline.description,
-    FIELDS.replaceServerEdits,
   ]) {
     expect(d).toContain('replace_server_edits');
-    expect(d).toMatch(/only when the user asks/);
+  }
+  for (const d of [DESCRIPTIONS.create_publish_session.description, FIELDS.replaceServerEdits]) {
+    expect(d).toMatch(/merg/);
+    expect(d).toMatch(/the user asks/);
   }
 });
 
@@ -118,20 +121,6 @@ function propertyDescriptions(schema: unknown, into: string[] = []): string[] {
       if (key === 'description' && typeof value === 'string') into.push(value);
       else propertyDescriptions(value, into);
     }
-  }
-  return into;
-}
-
-/** The names of every property in `schema`, at any depth. */
-function propertyNames(schema: unknown, into = new Set<string>()): Set<string> {
-  if (Array.isArray(schema)) {
-    for (const item of schema) propertyNames(item, into);
-  } else if (typeof schema === 'object' && schema !== null) {
-    const { properties } = schema as { properties?: unknown };
-    if (typeof properties === 'object' && properties !== null) {
-      for (const name of Object.keys(properties)) into.add(name);
-    }
-    for (const value of Object.values(schema)) propertyNames(value, into);
   }
   return into;
 }

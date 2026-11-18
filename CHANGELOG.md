@@ -40,8 +40,9 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
 - **A stale copy cannot undo server edits.** A version made with `edit_artifact` records the files
   it changed. A full publish over it through `create_publish_session` or `publish_inline` is
   refused as `conflict` with `details.reason` `edited_on_server`, naming those files, unless the
-  call sets `replace_server_edits` to true. `get_artifact` and `list_artifacts` mark such versions
-  "edited on server".
+  call sets `replace_server_edits` to true. An agent sets it once it has merged those files'
+  changes into its copy, or when the user asks to discard them. `get_artifact` and
+  `list_artifacts` mark such versions "edited on server".
 - **`list_comments` shows where each thread sits in the source:** the file and lines in the
   current version, with up to 3 of those lines, for text and element comments on HTML and Markdown
   pages. An element on a page that runs scripts is marked unverified.

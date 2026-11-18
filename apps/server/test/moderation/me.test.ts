@@ -209,7 +209,7 @@ describe.each(dialects)('/me, whoami and the public config on %s', (dialect) => 
             file: formatBytes(config.limits.maxFileBytes),
             version: formatBytes(config.limits.maxVersionBytes),
             files: config.limits.maxFiles,
-            minutes: Math.floor(config.ttl.uploadSessionMs / 60_000),
+            minutes: t('mcp.minutes', { count: Math.floor(config.ttl.uploadSessionMs / 60_000) }),
           }),
           ...[
             t('mcp.notes.entry'),

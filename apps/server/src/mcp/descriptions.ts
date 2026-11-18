@@ -78,19 +78,18 @@ export const DESCRIPTIONS = {
   create_publish_session: {
     title: 'Start a publish',
     description:
-      'Gives a one-time upload URL (valid {{minutes}} minutes) and the shell command publishing ' +
-      'a folder or file; use it if you have a shell. New version: artifact_id and ' +
-      'expected_version_id; new artifact: project_id or your default project. Viewers cannot ' +
-      'publish; quota_exceeded is final: tell the user. Set replace_server_edits only when the ' +
-      'user asks.',
+      'With a shell: a one-time upload URL (valid {{minutes}}) and a command publishing a folder ' +
+      'or file. New version: artifact_id and expected_version_id; new artifact: project_id or ' +
+      'your default project. Viewers cannot publish. quota_exceeded is final: tell the user. Set ' +
+      'replace_server_edits after merging the edits a refusal shows, or if the user asks.',
   },
   publish_inline: {
     title: 'Publish text files inline',
     description:
-      'Publishes text files passed in this call, for clients that cannot run commands. HTML, ' +
-      'Markdown, CSS, JavaScript, SVG or JSON, at most {{max}} in total; the entry page is ' +
-      'index.html or index.md. Targets, viewers, quota_exceeded and replace_server_edits (only ' +
-      'when the user asks) work as in create_publish_session, which you use when you can.',
+      'Publishes text files passed in this call, for clients without a shell. HTML, Markdown, ' +
+      'CSS, JavaScript, SVG or JSON, at most {{max}} in total; the entry page is index.html or ' +
+      'index.md. Targets, viewers, quota_exceeded and replace_server_edits (after a merge, or if ' +
+      'the user asks) work as in create_publish_session, which you use when you can.',
   },
   list_comments: {
     title: 'Read comments',
@@ -153,11 +152,11 @@ export function fillDescription(template: string, values: Record<string, string 
 export const FIELDS = {
   projectId: 'The id of a project (prj_...), from list_projects.',
   artifactId: 'The id of an artifact (art_...), from list_artifacts.',
-  cursor: 'The cursor the previous page ends with ("More results"), to continue the list.',
+  cursor: 'The cursor from the "More results" line of the previous page, to continue the list.',
   commentId: 'The id of a comment (cmt_...), from list_comments.',
   versionId: 'The id of a version (ver_...), from get_artifact or the publish result.',
   replaceServerEdits:
-    'true discards the edits made on the server with edit_artifact; set replace_server_edits ' +
-    'only when the user asks. Without it, a publish over a version made that way is refused, ' +
-    'so stale local files cannot undo those edits.',
+    'true publishes over the edits made on the server with edit_artifact. Set it once you have ' +
+    'merged the changes a refusal shows into your files, or when the user asks to discard those ' +
+    'edits. Without it, such a publish is refused, so that stale local files cannot undo them.',
 } as const;

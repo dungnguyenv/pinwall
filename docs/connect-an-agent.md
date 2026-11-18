@@ -146,7 +146,8 @@ An agent with the page's files on disk edits them there and publishes them, and 
 can get them with `create_download_session`. Otherwise, as in Claude Desktop, it reads and changes
 the artifact on the server with `read_file` and `edit_artifact`. When an artifact was edited on the
 server since its last full publish, a publish of an older copy is refused so that the edit is not
-lost; the agent publishes over it only when you ask.
+lost. The agent then brings those changes into its copy and publishes again; it publishes over them
+without merging only when you ask.
 
 `read_file`, `create_download_session` and `list_comments` share a limit of 600 calls an hour per
 person.

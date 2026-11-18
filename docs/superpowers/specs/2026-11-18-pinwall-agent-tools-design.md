@@ -198,13 +198,19 @@ That is correct: the restored files contain the edits.
 - If any paths were found and `replace_server_edits` is not `true`, the publish is refused with
   409 `edited_on_server`.
   - The error names the paths (at most 20, then `and N more`) and the versions that changed them.
-  - It comes with the hint: `Read those files with read_file and bring their changes into your
-    copy, then publish again; pass replace_server_edits: true only to discard them on purpose.`
+  - It comes with the hint: `Bring the changes to those files (below when they fit, else read
+    them with read_file) into your copy, then publish again with replace_server_edits: true.
+    Without that merge, pass it only when the user asks to discard them.`
+- **Ruling R24 (2026-11-18).** The check judges the version chain, never the files sent, so a copy
+  that has merged the server edits is refused as well. An agent therefore passes
+  `replace_server_edits: true` once it has brought the named files' changes into its copy, and
+  without that merge only when the user asks to discard the edits.
 - A session URL already issued needs no second check at upload time. A version made after the
   session was issued changes the current version, so the upload fails with `version_conflict`.
 
 **The new input.** Both publish tools take `replace_server_edits` (boolean, default false). Its
-description says to set it only when the user wants the server edits discarded.
+description says to set it after merging the edits a refusal shows, or when the user wants the
+server edits discarded (R24).
 
 **Where it shows.**
 - `get_artifact` marks each such version line `edited on server: index.html, …` (at most 5 paths).
@@ -377,7 +383,8 @@ answering without resolving.
     - without a shell, use `read_file` and `edit_artifact`;
     - on a refusal, merge the diff it carries.
   - Say what to do on `edited_on_server`: bring the named files' changes into the local copy,
-    and never pass `replace_server_edits` unless the user asks.
+    then publish again with `replace_server_edits`; without that merge, pass it only when the
+    user asks (R24).
   - Target: at most 5 KB, from 9.3 KB today.
 
 ### 6.8 The tool list after v1.2

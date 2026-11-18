@@ -286,7 +286,7 @@ describe.each(dialects)('/mcp on %s', (dialect) => {
         file: '50 MB',
         version: '500 MB',
         files: 10_000,
-        minutes: 10,
+        minutes: '10 minutes',
       })}\n${notes.map((n) => `- ${n}`).join('\n')}`,
     );
 
@@ -320,6 +320,12 @@ describe.each(dialects)('/mcp on %s', (dialect) => {
       'Upload limit 95 MB per publish; inline limit 2 MB; 4 MB per file; 40 MB per version; ' +
         'at most 77 files per version. An upload URL is valid for 30 minutes.',
     );
+  });
+
+  test('whoami says "1 minute" for an upload URL that lives less than two', async () => {
+    await start({ PINWALL_UPLOAD_SESSION_TTL: '90s' });
+    const text = await whoami(await connect(await createUserToken(ctx, ada.user.id)));
+    expect(text).toContain('An upload URL is valid for 1 minute.');
   });
 
   test('in content-domain mode the notes describe per-version origins', async () => {

@@ -14,6 +14,9 @@ export function urlMinutes(config: { ttl: Pick<Config['ttl'], 'uploadSessionMs'>
   return Math.max(1, Math.floor(config.ttl.uploadSessionMs / 60_000));
 }
 
+/** `minutes` in words: "1 minute", "10 minutes". */
+export const minutesText = (minutes: number): string => t('mcp.minutes', { count: minutes });
+
 /** The line breaks that end a line of text; other control characters are dropped, not split on. */
 const LINE_BREAK = /\r\n|[\n\r\p{Zl}\p{Zp}]/u;
 

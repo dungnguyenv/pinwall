@@ -440,6 +440,24 @@ describe.each(dialects)('MCP create_download_session on %s', (dialect) => {
     ]);
   });
 
+  test('a URL that lives less than two minutes is said to live one', async () => {
+    const short = await createTestContext({
+      dialect,
+      clock: new FixedClock(T),
+      env: { PINWALL_UPLOAD_SESSION_TTL: '90s' },
+    });
+    try {
+      const bea = await createSignedInUser(short, { kind: 'oidc', name: 'Bea' });
+      const agent = await connectMcp(short, { bearer: await createUserToken(short, bea.user.id) });
+      const { artifact } = await publishFiles(short, bea.user, { 'index.html': PAGE });
+      const r = await callText(agent, 'create_download_session', { artifact_id: artifact.id });
+      expect(r.text).toContain('Download command (single use, expires in 1 minute):');
+      await agent.close();
+    } finally {
+      await short.close();
+    }
+  });
+
   test('it counts toward the mcpRead rule, shared with read_file', async () => {
     await exhaustRate(ctx, RATE_RULES.mcpRead, ada.user.id, 599);
     expect((await download()).isError).toBe(false);
