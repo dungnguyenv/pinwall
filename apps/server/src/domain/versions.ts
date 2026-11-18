@@ -49,6 +49,11 @@ export interface VersionInput {
   meta: VersionMetadata;
   message: string | null;
   source: VersionSource;
+  /**
+   * The paths `edit_artifact` replaced in, wrote or deleted to make this version; written to its
+   * `meta` as `server_edits` when there are any.
+   */
+  serverEdits?: readonly string[];
 }
 
 export interface CommitResult {
@@ -191,7 +196,7 @@ export async function commitVersion(
       message: input.message,
       source: input.source,
       restored_from_version_id: null,
-      meta: JSON.stringify({ warnings: input.meta.warnings }),
+      meta: versionMeta(input),
       created_by: actor.id,
       created_at: now,
     };
@@ -212,6 +217,15 @@ export async function commitVersion(
   deps.metrics.publishes.inc({ source: input.source });
   announce(deps, result);
   return result;
+}
+
+/** A new version's `meta` JSON: its warnings, and the paths edited on the server, if any. */
+function versionMeta(input: VersionInput): string {
+  const edits = input.serverEdits ?? [];
+  return JSON.stringify({
+    warnings: input.meta.warnings,
+    ...(edits.length > 0 ? { server_edits: [...edits] } : {}),
+  });
 }
 
 /**

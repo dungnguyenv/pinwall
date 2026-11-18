@@ -62,6 +62,25 @@ export async function fileOf(
   return file;
 }
 
+/**
+ * The files of `version` at `paths`, by path, in one query: each path must match a stored path
+ * exactly (already normalized, as stored paths are). A path with no file is left out.
+ */
+export async function filesAt(
+  deps: AppDeps,
+  version: VersionRow,
+  paths: readonly string[],
+): Promise<Map<string, VersionFileRow>> {
+  if (paths.length === 0) return new Map();
+  const rows = await deps.db.db
+    .selectFrom('version_files')
+    .selectAll()
+    .where('version_id', '=', version.id)
+    .where('path', 'in', paths)
+    .execute();
+  return new Map(rows.map((row) => [row.path, row]));
+}
+
 /** The 400 for a file that is not text, with what the caller needs to tell it from the rest. */
 function notText(file: VersionFileRow): AppError {
   return badRequest(

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { Config } from '../../src/config/types.ts';
 import { contentTypeOf } from '../../src/content/mime.ts';
 import { collectBlobs } from '../../src/domain/blobs.ts';
@@ -10,7 +10,7 @@ import { FixedClock } from '../../src/lib/clock.ts';
 import { IngestBudget } from '../../src/publish/limits.ts';
 import { BlobStager } from '../../src/publish/stage.ts';
 import type { BlobStore } from '../../src/storage/blob-store.ts';
-import { blobState, ref, sha } from '../helpers/blobs.ts';
+import { blobState, ref, sha, storeBlob } from '../helpers/blobs.ts';
 import { createTestContext, type TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 
@@ -207,6 +207,41 @@ describe.each(dialects)('BlobStager on %s', (dialect) => {
     }
   });
 
+  test('carry pins a stored blob without reading or storing it', async () => {
+    const key = await storeBlob(ctx.deps, 'carried');
+    const put = vi.spyOn(ctx.deps.blobs, 'put');
+    const get = vi.spyOn(ctx.deps.blobs, 'get');
+    const spool = vi.spyOn(ctx.deps.blobs, 'spool');
+    const s = stager();
+    const file = { path: 'a.txt', sha256: key, size: 7, contentType: 'text/plain; charset=utf-8' };
+
+    expect(await s.carry(file)).toEqual(file);
+    expect(s.files).toEqual([file]);
+    // No version references it, yet collection keeps it while the stager pins it.
+    expect(await collectBlobs(ctx.deps, [key])).toEqual({ deleted: [], deferred: [] });
+    expect(await blobState(ctx.deps, key)).toEqual(KEPT);
+    expect(put).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
+    expect(spool).not.toHaveBeenCalled();
+
+    // An abort collects it like a staged blob: nothing references it.
+    await s.abort();
+    expect(await blobState(ctx.deps, key)).toEqual(GONE);
+    vi.restoreAllMocks();
+  });
+
+  test('carry counts against the budget, and a refused file is not pinned', async () => {
+    const a = await storeBlob(ctx.deps, 'A');
+    const b = await storeBlob(ctx.deps, 'B');
+    const s = stager({ maxFiles: 1 });
+    await s.carry({ path: 'a', sha256: a, size: 1, contentType: 'text/plain' });
+    await expect(
+      s.carry({ path: 'b', sha256: b, size: 1, contentType: 'text/plain' }),
+    ).rejects.toMatchObject({ status: 413, details: { limit: 'max_files' } });
+    expect(await collectBlobs(ctx.deps, [a, b])).toEqual({ deleted: [b], deferred: [] });
+    s.release();
+  });
+
   test('a stager refuses work once aborted or released', async () => {
     const aborted = stager();
     await aborted.abort();
@@ -219,6 +254,8 @@ describe.each(dialects)('BlobStager on %s', (dialect) => {
     await expect(released.stage('a.txt', Buffer.from('A'), null)).rejects.toThrow(
       /aborted or released/,
     );
+    const file = { path: 'a.txt', sha256: sha('A'), size: 1, contentType: 'text/plain' };
+    await expect(released.carry(file)).rejects.toThrow(/aborted or released/);
     expect(await blobRows()).toEqual([]);
   });
 });

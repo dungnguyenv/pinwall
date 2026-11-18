@@ -3,6 +3,7 @@ import type { UserRow } from '../../src/db/schema.ts';
 import { SYSTEM_SCOPE } from '../../src/domain/spaces.ts';
 import {
   fileOf,
+  filesAt,
   pageFilePath,
   READ_TEXT_MAX_BYTES,
   readText,
@@ -145,6 +146,18 @@ describe.each(dialects)('version files on %s', (dialect) => {
     for (const form of ['NFC', 'NFD'] as const) {
       expect((await fileOf(ctx.deps, version, stored.normalize(form))).path).toBe(stored);
     }
+  });
+
+  test('filesAt finds the files at exact paths, in one map, and leaves out the missing', async () => {
+    const { version } = await publishFiles(ctx, ada, {
+      'index.html': '<p>x</p>',
+      'docs/a.md': '# A',
+      'b.css': 'b{}',
+    });
+    const files = await filesAt(ctx.deps, version, ['docs/a.md', 'index.html', 'nope.css']);
+    expect([...files.keys()].sort()).toEqual(['docs/a.md', 'index.html']);
+    expect(files.get('docs/a.md')).toMatchObject({ version_id: version.id, size: 3 });
+    expect(await filesAt(ctx.deps, version, [])).toEqual(new Map());
   });
 
   test('readText keeps a leading BOM and the line breaks as stored', async () => {

@@ -28,6 +28,8 @@ export interface PublishOptions {
   actor: UserRow;
   source: VersionSource;
   message: string | null;
+  /** The paths an edit on the server changed (`VersionInput.serverEdits`); none for a publish. */
+  serverEdits?: readonly string[];
 }
 
 export interface PublishOutcome {
@@ -283,6 +285,79 @@ async function publishInline(
   return publishFileSet(deps, target, set, opts, deadline);
 }
 
+/**
+ * Publishes the version `edit_artifact` makes on top of `expectedVersionId`, which must be the
+ * current one: each path in `changed` is stored with its new bytes, or left out when they are
+ * null (deleted); every other file of that version is carried over by its hash
+ * (`BlobStager.carry`), neither read nor stored again, though it counts in full toward the
+ * version's size, its number of files and the space's quota. The paths in `changed` must already
+ * be normalized as a publish normalizes them (`parseEdits` does). Otherwise it is a new-version
+ * publish like any other: `checkTarget` first,
+ * in a place `inIngestSlot` gives (`metered`, with the changed bytes as the request's), then the
+ * entry is chosen again, metadata extracted and the version committed with
+ * `opts.serverEdits` in its `meta`. On failure nothing is committed and the blobs it staged
+ * that nothing else uses are removed.
+ */
+export function ingestEdit(
+  deps: AppDeps,
+  p: { artifactId: string; expectedVersionId: string; changed: Map<string, Buffer | null> },
+  opts: PublishOptions & { serverEdits: readonly string[] },
+): Promise<PublishOutcome> {
+  let bytes = 0;
+  for (const data of p.changed.values()) bytes += data?.length ?? 0;
+  return metered(
+    deps,
+    opts,
+    () => bytes,
+    null,
+    (deadline) => publishEdit(deps, p, opts, bytes, deadline),
+  );
+}
+
+async function publishEdit(
+  deps: AppDeps,
+  p: { artifactId: string; expectedVersionId: string; changed: Map<string, Buffer | null> },
+  opts: PublishOptions,
+  bytes: number,
+  deadline: AbortSignal,
+): Promise<PublishOutcome> {
+  const target: PublishTarget = {
+    kind: 'new_version',
+    artifactId: p.artifactId,
+    expectedVersionId: p.expectedVersionId,
+  };
+  const scope = scopeForUser(deps, opts.actor);
+  const budget = new IngestBudget(deps.config.limits);
+  // Every changed file that is not deleted is in the version, so it is at least this large.
+  budget.holdTo(await checkTarget(deps, scope, target, bytes));
+  return ingest(deps, target, opts, budget, null, deadline, async (stager) => {
+    const rows = await deps.db.db
+      .selectFrom('version_files')
+      .select(['path', 'sha256', 'size', 'content_type'])
+      .where('version_id', '=', p.expectedVersionId)
+      .orderBy('path')
+      .execute();
+    // Pinned first, as soon as they are read.
+    for (const row of rows) {
+      if (p.changed.has(row.path)) continue;
+      await stager.carry({
+        path: row.path,
+        sha256: row.sha256,
+        size: row.size,
+        contentType: row.content_type,
+      });
+    }
+    // A version deleted after its rows were read but before the pins may have lost its blobs to
+    // a collection. A deleted version is never current again: if it is current here, it has
+    // existed all along, so every carried blob is still stored, and pinned from now on.
+    await checkTarget(deps, scope, target);
+    for (const [path, data] of p.changed) {
+      if (data !== null) await stager.stage(path, data, data.length);
+    }
+    return { unwrap: false };
+  });
+}
+
 /** The links a publish returns: the artifact's review page and the raw files of version `n`. */
 export function publishLinks(
   config: Pick<Config, 'publicOrigin'>,
@@ -373,6 +448,7 @@ async function ingest(
       meta,
       message: opts.message,
       source: opts.source,
+      serverEdits: opts.serverEdits ?? [],
     });
     stager.release();
     return { artifact, version, warnings: meta.warnings };

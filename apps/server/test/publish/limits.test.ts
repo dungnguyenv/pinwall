@@ -98,3 +98,40 @@ test('limit messages name the setting and quote the path', () => {
       'The inline files add up to more than 100 bytes (PINWALL_MAX_INLINE_BYTES). Use an upload URL instead.',
   });
 });
+
+test('a carried file counts toward the files and the version, but not the request', () => {
+  const b = new IngestBudget(L);
+  // Larger than one file may be: it was published under a higher limit, and is not sent again.
+  b.carry('old.bin', 400);
+  expect(b.requestBytesRead).toBe(0);
+  b.startFile('a', null);
+  b.onFileBytes(100);
+  expect(() => b.onFileBytes(1)).toThrow(tooLarge({ limit: 'max_version_bytes', max: 500 }));
+
+  const count = new IngestBudget(L);
+  count.carry('a', 0);
+  count.carry('b', 0);
+  expect(() => count.carry('c', 0)).toThrow(tooLarge({ limit: 'max_files', max: 2 }));
+
+  const version = new IngestBudget(L);
+  version.carry('a', 250);
+  expect(() => version.carry('b', 251)).toThrow(tooLarge({ limit: 'max_version_bytes', max: 500 }));
+});
+
+test('a carried file counts against what is left of the space', () => {
+  const room = (bytes: number | null, files: number | null) => ({
+    bytes,
+    files,
+    uploadTooLarge: (size: number) => new Error(`quota bytes ${size}`) as never,
+    tooManyFiles: () => new Error('quota files') as never,
+  });
+  const bytes = new IngestBudget(L);
+  bytes.holdTo(room(100, null));
+  bytes.carry('a', 60);
+  expect(() => bytes.carry('b', 41)).toThrow('quota bytes 101');
+
+  const files = new IngestBudget(L);
+  files.holdTo(room(null, 1));
+  files.carry('a', 1);
+  expect(() => files.carry('b', 1)).toThrow('quota files');
+});

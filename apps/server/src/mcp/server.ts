@@ -3,6 +3,7 @@ import type { Context } from 'hono';
 import packageJson from '../../package.json' with { type: 'json' };
 import type { AppEnv, AuthContext } from '../app.ts';
 import type { AppDeps } from '../deps.ts';
+import { editTools } from './tools/edit.ts';
 import { fileTools } from './tools/files.ts';
 import { registerIdentityTools } from './tools/identity.ts';
 import { libraryTools } from './tools/library.ts';
@@ -25,6 +26,7 @@ export const TOOL_NAMES = [
   'list_artifacts',
   'get_artifact',
   'read_file',
+  'edit_artifact',
   'create_publish_session',
   'publish_inline',
   'list_comments',
@@ -52,6 +54,7 @@ const TOOL_MODULES: readonly ToolModule[] = [
   registerIdentityTools,
   libraryTools,
   fileTools,
+  editTools,
   publishTools,
   reviewTools,
 ];

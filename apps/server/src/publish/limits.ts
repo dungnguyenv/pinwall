@@ -98,12 +98,7 @@ export class IngestBudget {
 
   /** Opens the next file; `declaredSize` is the size its header claims, when it has one. */
   startFile(path: string, declaredSize: number | null): void {
-    this.files += 1;
-    if (this.files > this.limits.maxFiles) throw limitExceeded('max_files', this.limits.maxFiles);
-    const room = this.room;
-    if (room !== undefined && room.files !== null && this.files > room.files) {
-      throw room.tooManyFiles();
-    }
+    this.countFile();
     const max = this.limits.maxFileBytes;
     if (declaredSize !== null && declaredSize > max) {
       throw limitExceeded('max_file_bytes', max, path);
@@ -117,6 +112,31 @@ export class IngestBudget {
     this.file.bytes += n;
     const maxFile = this.limits.maxFileBytes;
     if (this.file.bytes > maxFile) throw limitExceeded('max_file_bytes', maxFile, this.file.path);
+    this.countVersionBytes(n);
+  }
+
+  /**
+   * Counts a whole file the new version keeps from the one it replaces, of `size` bytes: toward
+   * the number of files, the version's bytes and what is left of the space, as `restoreVersion`
+   * counts a copied version. Not toward the request's bytes, as it is not sent again, nor
+   * toward the per-file limit, which it met when it was published.
+   */
+  carry(path: string, size: number): void {
+    this.countFile();
+    this.file = { path, bytes: size };
+    this.countVersionBytes(size);
+  }
+
+  private countFile(): void {
+    this.files += 1;
+    if (this.files > this.limits.maxFiles) throw limitExceeded('max_files', this.limits.maxFiles);
+    const room = this.room;
+    if (room !== undefined && room.files !== null && this.files > room.files) {
+      throw room.tooManyFiles();
+    }
+  }
+
+  private countVersionBytes(n: number): void {
     this.versionBytes += n;
     const maxVersion = this.limits.maxVersionBytes;
     if (this.versionBytes > maxVersion) throw limitExceeded('max_version_bytes', maxVersion);

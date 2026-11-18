@@ -19,6 +19,7 @@ export interface StagedFile {
  * Stores the files of one upload as blobs and keeps them pinned until the upload ends: `release`
  * once the version row is committed (from then on the version's references keep the blobs), or
  * `abort` when the upload fails, which removes every blob it added that nothing else needs.
+ * Files an edit keeps from the version it replaces go through `carry`: pinned, never stored again.
  */
 export class BlobStager {
   /** The files staged so far, in order. */
@@ -75,6 +76,25 @@ export class BlobStager {
       size: spooled.size,
       contentType: contentTypeOf(path, Buffer.concat(head)),
     });
+  }
+
+  /**
+   * Adds a file the new version keeps from the version it replaces, whose blob is stored
+   * already: nothing is read or stored. The budget counts it (`IngestBudget.carry`), and its
+   * blob is pinned under the blob's lock, as `stage` pins, so from then until `release` or
+   * `abort` no collection removes it, even once no version references it. A collection that
+   * finished before the pin may have removed it already: the caller checks, once its files are
+   * carried, that the version it copied them from still exists.
+   */
+  async carry(file: StagedFile): Promise<StagedFile> {
+    this.assertActive();
+    this.deadline?.throwIfAborted();
+    this.budget.carry(file.path, file.size);
+    await this.registry.withLock(file.sha256, async () => {
+      this.assertActive();
+      this.registry.pin(this.owner, file.sha256);
+    });
+    return this.add(file);
   }
 
   /**

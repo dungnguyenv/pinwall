@@ -72,7 +72,12 @@ const PublishInlineIn = TargetIn.extend({
   ),
 });
 
-const WRITES = { readOnlyHint: false, destructiveHint: false, openWorldHint: false } as const;
+/** A publishing tool's annotations: it writes, adds without destroying, and stays in Pinwall. */
+export const WRITES = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  openWorldHint: false,
+} as const;
 
 /**
  * The publish target the arguments name: a new version on top of `expected_version_id`, or a new

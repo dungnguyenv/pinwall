@@ -23,6 +23,14 @@ import {
 const TOOLS: [string, (ids: CaseIds) => Record<string, unknown>][] = [
   ['get_artifact', (i) => ({ artifact_id: i.q })],
   ['read_file', (i) => ({ artifact_id: i.q })],
+  [
+    'edit_artifact',
+    (i) => ({
+      artifact_id: i.q,
+      expected_version_id: i.qV2,
+      edits: [{ op: 'replace', path: 'index.html', old_string: 'Version 2', new_string: 'v3' }],
+    }),
+  ],
   ['list_comments', (i) => ({ artifact_id: i.q })],
   ['list_share_links', (i) => ({ artifact_id: i.q })],
   ['get_project', (i) => ({ project_id: i.Q })],
@@ -146,7 +154,8 @@ describe.each(dialects)('MCP tools in spaces on %s', (dialect) => {
     describe('the projects a caller sees and makes', () => {
       test('list_projects and get_project show the projects of the space the caller is in', async () => {
         const editor = await agent('E');
-        const listed = await editor.ok('list_projects');
+        // Every test of this shared context adds two projects: in team mode E sees them all.
+        const listed = await editor.ok('list_projects', { limit: 100 });
         expect(listed).toContain(`- ${fx.ids.P}:`);
         // One default project: the shared one in team mode, E's own, made by the listing, in personal mode.
         const defaults = listed.split('\n').filter((l) => l.includes(t('mcp.project.flagDefault')));
