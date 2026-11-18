@@ -38,7 +38,15 @@ async function whoami({ deps, auth }: ToolContext): Promise<WhoamiOut> {
     via: auth.via,
     pinwall_url: config.publicOrigin,
     isolation: config.isolation.mode,
-    limits: { max_upload_bytes: limits.maxUploadBytes, max_inline_bytes: limits.maxInlineBytes },
+    limits: {
+      max_upload_bytes: limits.maxUploadBytes,
+      max_inline_bytes: limits.maxInlineBytes,
+      max_file_bytes: limits.maxFileBytes,
+      max_version_bytes: limits.maxVersionBytes,
+      max_files: limits.maxFiles,
+    },
+    // A whole number of minutes, never more than the URL lives, as `create_publish_session` says it.
+    upload_url_minutes: Math.max(1, Math.floor(config.ttl.uploadSessionMs / 60_000)),
     authoring_notes: authoringNotes(config),
     // The fields below are shown only when their setting is not at its 1.0 default.
     ...(quotaApplies(config, user)
@@ -94,6 +102,10 @@ export const registerIdentityTools: ToolModule = (server, ctx) => {
         isolation: me.isolation,
         upload: formatBytes(me.limits.max_upload_bytes),
         inline: formatBytes(me.limits.max_inline_bytes),
+        file: formatBytes(me.limits.max_file_bytes),
+        version: formatBytes(me.limits.max_version_bytes),
+        files: me.limits.max_files,
+        minutes: me.upload_url_minutes,
       });
       const notes = me.authoring_notes.map((note) => `- ${note}`);
       return [summary, ...notes, ...accountLines(me)].join('\n');

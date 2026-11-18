@@ -1,3 +1,4 @@
+import type { Project } from '@pinwall/shared';
 import type { QuotaLimits, Usage } from '../domain/usage.ts';
 
 /**
@@ -12,7 +13,15 @@ export interface WhoamiOut {
   via: 'oauth' | 'api_token';
   pinwall_url: string;
   isolation: 'single-domain' | 'content-domain';
-  limits: { max_upload_bytes: number; max_inline_bytes: number };
+  limits: {
+    max_upload_bytes: number;
+    max_inline_bytes: number;
+    max_file_bytes: number;
+    max_version_bytes: number;
+    max_files: number;
+  };
+  /** How long an upload URL stays valid, in whole minutes (at least one). */
+  upload_url_minutes: number;
   authoring_notes: string[];
   /** What the caller's space holds. Sent, with `quota`, in `personal` mode or when a quota applies. */
   usage?: Usage;
@@ -22,8 +31,11 @@ export interface WhoamiOut {
   can_create_share_links?: boolean;
 }
 
-/** A project as `list_projects` shows it. The instructions travel only where they are asked for. */
-export interface ProjectOut {
+/**
+ * A project as the project tools show it. `owner` and `role` (as the REST API sends them) are
+ * there only in `personal` mode.
+ */
+export interface ProjectOut extends Pick<Project, 'owner' | 'role'> {
   id: string;
   name: string;
   is_default: boolean;
@@ -66,6 +78,7 @@ export interface VersionOut {
  */
 export interface ThreadOut {
   id: string;
+  status: 'open' | 'resolved';
   /** The version the thread was written on. */
   version: { number: number };
   anchor: {

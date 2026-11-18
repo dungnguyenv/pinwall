@@ -1,6 +1,7 @@
 import type { ArtifactSummary } from '@pinwall/shared';
 import { z } from 'zod';
 import { toArtifactSummary } from '../../api/artifacts.ts';
+import { type SpaceFields, spaceFieldsOf } from '../../api/projects.ts';
 import { enforceRateLimit, RATE_RULES } from '../../auth/rate-limits.ts';
 import type { ProjectRow, VersionRow } from '../../db/schema.ts';
 import type { AppDeps } from '../../deps.ts';
@@ -75,7 +76,8 @@ const GetArtifactIn = z.object({
     .describe('How many of the newest versions to list.'),
 });
 
-function toProjectOut(row: ProjectRow): ProjectOut {
+/** `space`: the owner and role a personal-mode viewer sees (`spaceFieldsOf`); none in team mode. */
+function toProjectOut(row: ProjectRow, space?: SpaceFields): ProjectOut {
   return {
     id: row.id,
     name: row.name,
@@ -83,6 +85,7 @@ function toProjectOut(row: ProjectRow): ProjectOut {
     archived: row.archived_at !== null,
     // Instructions of nothing but blank space tell an agent nothing.
     has_instructions: row.instructions.trim() !== '',
+    ...space,
   };
 }
 
@@ -143,6 +146,17 @@ async function readProject(
   return getProject(deps.db.db, scope, id);
 }
 
+/** What a project says about the caller's place in it: their role and its owner; nothing in team mode. */
+function spaceDetails({ role, owner }: ProjectOut): string[] {
+  return [
+    ...(role === undefined ? [] : [t('mcp.project.role', { role })]),
+    ...(owner === undefined || owner === null
+      ? []
+      : // A person without a name is known by their id.
+        [t('mcp.project.owner', { owner: oneLine(owner.name ?? '') || owner.id })]),
+  ];
+}
+
 /** The line of `list_projects` for one project. */
 function projectLine(p: ProjectOut, artifactCount: number): string {
   const details = [
@@ -150,6 +164,7 @@ function projectLine(p: ProjectOut, artifactCount: number): string {
     ...(p.is_default ? [t('mcp.project.flagDefault')] : []),
     ...(p.archived ? [t('mcp.project.flagArchived')] : []),
     ...(p.has_instructions ? [t('mcp.project.flagInstructions')] : []),
+    ...spaceDetails(p),
   ];
   return t('mcp.project.item', { id: p.id, name: oneLine(p.name), details: details.join('; ') });
 }
@@ -216,9 +231,12 @@ export const libraryTools: ToolModule = (server, ctx) => {
         limit: a.limit,
         cursor: a.cursor ?? null,
       });
+      const space = await spaceFieldsOf(deps, viewer, items);
       const lines = [
         t('mcp.projects.summary', { count: items.length }),
-        ...items.map((row) => projectLine(toProjectOut(row), row.artifact_count)),
+        ...items.map((row) =>
+          projectLine(toProjectOut(row, space?.get(row.id)), row.artifact_count),
+        ),
       ];
       return withMore(lines, 'list_projects', nextCursor);
     }),
@@ -234,8 +252,14 @@ export const libraryTools: ToolModule = (server, ctx) => {
     runTool(ctx, async (a: z.output<typeof GetProjectIn>) => {
       const viewer = scope();
       const row = await readProject(deps, viewer, a.project_id);
-      const heading = t('mcp.project.heading', { id: row.id, name: oneLine(row.name) });
-      const guidance = toProjectOut(row).has_instructions
+      const project = toProjectOut(row, (await spaceFieldsOf(deps, viewer, [row]))?.get(row.id));
+      const place = spaceDetails(project);
+      const name = oneLine(row.name);
+      const heading =
+        place.length === 0
+          ? t('mcp.project.heading', { id: row.id, name })
+          : t('mcp.project.headingSpace', { id: row.id, name, details: place.join('; ') });
+      const guidance = project.has_instructions
         ? `${t('mcp.project.followInstructions')}\n\n${row.instructions}`
         : t('mcp.project.noInstructions');
       return `${heading}\n${guidance}`;

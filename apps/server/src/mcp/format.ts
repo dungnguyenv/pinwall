@@ -53,22 +53,36 @@ function describeAnchor({ kind, quote, selector, position }: ThreadOut['anchor']
   });
 }
 
+/** Whether a thread is open, and which version fixed it once it is resolved. */
+function describeStatus({ status, resolved_in_version: fixedIn }: ThreadOut): string {
+  if (status === 'open') return t('mcp.comment.statusOpen');
+  return fixedIn === null
+    ? t('mcp.comment.statusResolved')
+    : t('mcp.comment.statusResolvedIn', { number: fixedIn.number });
+}
+
 /**
- * A thread for the model: a first line with its id, the version it was written on and where it
- * points, then its first comment and each reply, one author per line. What reviewers wrote
- * (comment texts, quoted page text, selectors) is data: it is flattened or indented so it cannot
- * pass for another line of this text.
+ * A thread for the model: a first line with its id, the version it was written on, its status
+ * when `showStatus` (for a list that is not only of open threads) and where it points, then its
+ * first comment and each reply, one author per line. What reviewers wrote (comment texts, quoted
+ * page text, selectors) is data: it is flattened or indented so it cannot pass for another line
+ * of this text.
  */
-export function formatThread(th: ThreadOut): string {
+export function formatThread(th: ThreadOut, showStatus = false): string {
   const page = th.anchor.page === '' ? t('mcp.comment.entryPage') : flatten(th.anchor.page);
   const where = t('mcp.comment.where', { page, anchor: describeAnchor(th.anchor) });
   const comments = [th, ...th.replies].map((c) =>
     t('mcp.comment.line', { author: oneLine(c.author), body: quoteBody(c.body) }),
   );
-  return [
-    t('mcp.comment.thread', { id: th.id, number: th.version.number, where }),
-    ...comments,
-  ].join('\n');
+  const header = showStatus
+    ? t('mcp.comment.threadStatus', {
+        id: th.id,
+        number: th.version.number,
+        status: describeStatus(th),
+        where,
+      })
+    : t('mcp.comment.thread', { id: th.id, number: th.version.number, where });
+  return [header, ...comments].join('\n');
 }
 
 /** Appends the line that says how to get the next page, when there is one. */

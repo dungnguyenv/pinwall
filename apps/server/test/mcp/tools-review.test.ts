@@ -198,6 +198,33 @@ describe.each(dialects)('MCP comment and share-link tools on %s', (dialect) => {
       expect(await ids({ version: 2 })).toEqual([]);
     });
 
+    test('the headers say open or resolved when the call lists more than open threads', async () => {
+      const where = 'docs/: text "Bảng giá" (after "Xem ", before " mới") in #pricing > h2';
+      const opened = `[${A}] v1 · ${t('mcp.comment.statusOpen')} · ${where}`;
+      const resolved = `[${B}] v2 · ${t('mcp.comment.statusResolvedIn', { number: 2 })} · ${where}`;
+
+      const all = await ok('list_comments', { artifact_id: id, status: 'all' });
+      expect(all).toContain(opened);
+      expect(all).toContain(resolved);
+      const onlyResolved = await ok('list_comments', { artifact_id: id, status: 'resolved' });
+      expect(onlyResolved).toContain(resolved);
+      expect(onlyResolved).not.toContain(opened);
+
+      // A thread whose fixing version is gone is still resolved.
+      await ctx.deps.db.db
+        .updateTable('comments')
+        .set({ resolved_in_version_id: null })
+        .where('id', '=', B)
+        .execute();
+      const orphan = await ok('list_comments', { artifact_id: id, status: 'resolved' });
+      expect(orphan).toContain(`[${B}] v2 · ${t('mcp.comment.statusResolved')} · ${where}`);
+
+      // The default call lists open threads only, and its headers stay as they were.
+      const open = await ok('list_comments', { artifact_id: id });
+      expect(open).toContain(`[${A}] v1 · ${where}`);
+      expect(open).not.toContain(` · ${t('mcp.comment.statusOpen')} · `);
+    });
+
     test('point and element anchors are described', async () => {
       const point = await postThread(ctx, bob.cookie, id, { anchor: pointAnchor() });
       const element = await postThread(ctx, bob.cookie, id, { anchor: elementAnchor() });

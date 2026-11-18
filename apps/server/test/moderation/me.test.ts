@@ -206,6 +206,10 @@ describe.each(dialects)('/me, whoami and the public config on %s', (dialect) => 
             isolation: config.isolation.mode,
             upload: formatBytes(config.limits.maxUploadBytes),
             inline: formatBytes(config.limits.maxInlineBytes),
+            file: formatBytes(config.limits.maxFileBytes),
+            version: formatBytes(config.limits.maxVersionBytes),
+            files: config.limits.maxFiles,
+            minutes: Math.floor(config.ttl.uploadSessionMs / 60_000),
           }),
           ...[
             t('mcp.notes.entry'),

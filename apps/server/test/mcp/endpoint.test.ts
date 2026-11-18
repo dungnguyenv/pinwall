@@ -280,6 +280,10 @@ describe.each(dialects)('/mcp on %s', (dialect) => {
         isolation: 'single-domain',
         upload: '95 MB',
         inline: '2 MB',
+        file: '50 MB',
+        version: '500 MB',
+        files: 10_000,
+        minutes: 10,
       })}\n${notes.map((n) => `- ${n}`).join('\n')}`,
     );
 
@@ -287,6 +291,23 @@ describe.each(dialects)('/mcp on %s', (dialect) => {
     const owner = await createSignedInUser(ctx, { kind: 'owner', name: 'Olu' });
     const mine = await whoami(await connect(await createUserToken(ctx, owner.user.id)));
     expect(mine).toContain('as Olu (admin, via api_token)');
+  });
+
+  test('whoami reports every limit and value its description promises', async () => {
+    await start({
+      PINWALL_UPLOAD_SESSION_TTL: '30m',
+      PINWALL_MAX_FILE_BYTES: '4000000',
+      PINWALL_MAX_VERSION_BYTES: '40000000',
+      PINWALL_MAX_FILES: '77',
+    });
+    const text = await whoami(await connect(await createUserToken(ctx, ada.user.id)));
+    const first = text.split('\n')[0] ?? '';
+    // One line carries them all, and the notes follow it.
+    expect(text.split('\n')).toHaveLength(1 + 4);
+    expect(first).toContain(
+      'Upload limit 95 MB per publish; inline limit 2 MB; 4 MB per file; 40 MB per version; ' +
+        'at most 77 files per version. An upload URL is valid for 30 minutes.',
+    );
   });
 
   test('in content-domain mode the notes describe per-version origins', async () => {

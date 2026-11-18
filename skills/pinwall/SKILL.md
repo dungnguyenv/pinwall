@@ -28,10 +28,11 @@ themselves.
 
 - Call `get_project` for the project the user named (find its id with `list_projects`), or with no
   arguments for your default project. Follow its instructions for everything you publish there.
-- Call `whoami` once per session. It tells you the account, this Pinwall's upload and inline size
-  limits and its authoring notes; follow those notes. On a Pinwall with personal spaces, or with a
-  quota, it also gives the usage and quota of your space: look before a large publish. Where an
-  admin has to approve share links, it tells you when you may not make them yet.
+- Call `whoami` once per session. It tells you the account, this Pinwall's size limits (upload,
+  inline, file, version, file count) and its authoring notes; follow those notes. On a Pinwall with
+  personal spaces, or with a quota, it also gives the usage and quota of your space: look before a
+  large publish. Where an admin has to approve share links, it tells you when you may not make them
+  yet.
 - `list_projects` lists your own projects and, on a Pinwall with personal spaces, those shared
   with you, each with your role: owner, editor or viewer. As a viewer you read and comment, but
   you do not publish or share, so choose a project where you are owner or editor.

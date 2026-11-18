@@ -167,6 +167,38 @@ describe.each(dialects)('MCP tools in spaces on %s', (dialect) => {
         );
       });
 
+      test('list_projects and get_project show role and owner in personal mode only', async () => {
+        const lineOf = (text: string, id: string) =>
+          text.split('\n').find((line) => line.startsWith(`- ${id}:`)) ?? '';
+        const editor = await agent('E');
+        const listed = await editor.ok('list_projects');
+        const heading = (await editor.ok('get_project', { project_id: fx.ids.P })).split('\n')[0];
+        if (mode === 'team') {
+          expect(listed).not.toContain('role:');
+          expect(listed).not.toContain('owner:');
+          expect(heading).toBe(t('mcp.project.heading', { id: fx.ids.P, name: 'P' }));
+          return;
+        }
+        const space = (role: string, owner: string) =>
+          `${t('mcp.project.role', { role })}; ${t('mcp.project.owner', { owner })}`;
+        expect(lineOf(listed, fx.ids.P)).toContain(`; ${space('editor', 'A')})`);
+        expect(heading).toBe(
+          t('mcp.project.headingSpace', {
+            id: fx.ids.P,
+            name: 'P',
+            details: space('editor', 'A'),
+          }),
+        );
+        // E's own default project, made by the listing, is E's.
+        const defaults = listed.split('\n').filter((l) => l.includes(t('mcp.project.flagDefault')));
+        expect(defaults).toHaveLength(1);
+        expect(defaults[0]).toContain(space('owner', 'E'));
+
+        const viewer = await agent('V');
+        const asViewer = await viewer.ok('get_project', { project_id: fx.ids.P });
+        expect(asViewer.split('\n')[0]).toContain(space('viewer', 'A'));
+      });
+
       test('create_project makes a project the caller owns', async () => {
         const stranger = await agent('S');
         const text = await stranger.ok('create_project', { name: 'Mine' });

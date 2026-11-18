@@ -122,6 +122,7 @@ function toThreadOut(th: CommentThread): ThreadOut {
   const { anchor } = th;
   return {
     id: th.id,
+    status: th.status,
     version: { number: th.version.number },
     anchor: {
       page: anchor.page,
@@ -228,7 +229,8 @@ export const reviewTools: ToolModule = (server, ctx) => {
         summary,
         // Said once, ahead of the first comment, in the tool's own voice.
         ...(threads.length === 0 ? [] : [t('mcp.comments.untrusted')]),
-        ...threads.map(formatThread),
+        // Open threads are all a default call lists; any other call says which each one is.
+        ...threads.map((th) => formatThread(th, a.status !== 'open')),
       ];
       return withMore(lines, 'list_comments', nextCursor);
     }),
