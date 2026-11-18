@@ -370,7 +370,7 @@ describe.each(dialects)('the review loop budget on %s', (dialect) => {
     expect(edited.text).toMatch(/^Review link: /);
     expect(edited.text).toMatch(/^Published v2 \(version_id ver_\w+, artifact_id art_\w+\)\.$/m);
     expect(edited.text).toMatch(/^index\.html: 4 replacements, now lines \d+–\d+$/m);
-    expect(resolved.text.split('\n')[0]).toBe(t('mcp.resolve.summary', { ok: 5, total: 5 }));
+    expect(resolved.text.split('\n')[0]).toBe(t('mcp.resolve.summary', { ok: 5, count: 5 }));
     expect(versionId).toMatch(/^ver_/);
     let expected = plain.html;
     for (const { old_string, new_string } of FOUR_REPLACES) {
@@ -492,7 +492,7 @@ describe.each(dialects)('the review loop budget on %s', (dialect) => {
     // The 4 edits are 4 hunks. The diff shows the first ones whole, old line and new, in the
     // order of the page, and says how many it left out: none missing, none twice.
     const shown = diff.match(/^@@ /gm)?.length ?? 0;
-    const left = Number(/^index\.html: (\d+) more changes not shown/m.exec(diff)?.[1] ?? 0);
+    const left = Number(/^index\.html: (\d+) more changes? not shown/m.exec(diff)?.[1] ?? 0);
     expect(shown).toBeGreaterThanOrEqual(1);
     expect(shown + left).toBe(4);
     if (left > 0) {

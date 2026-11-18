@@ -4,7 +4,7 @@ import { mayExpose } from '../../domain/exposure.ts';
 import { limitsOf, quotaApplies, usageOf } from '../../domain/usage.ts';
 import { t } from '../../lib/i18n.ts';
 import { DESCRIPTIONS } from '../descriptions.ts';
-import { formatBytes } from '../format.ts';
+import { formatBytes, urlMinutes } from '../format.ts';
 import { authoringNotes } from '../notes.ts';
 import { runTool } from '../results.ts';
 import type { ToolContext, ToolModule } from '../server.ts';
@@ -30,8 +30,7 @@ async function whoami({ deps, auth }: ToolContext): Promise<WhoamiOut> {
       max_version_bytes: limits.maxVersionBytes,
       max_files: limits.maxFiles,
     },
-    // A whole number of minutes, never more than the URL lives, as `create_publish_session` says it.
-    upload_url_minutes: Math.max(1, Math.floor(config.ttl.uploadSessionMs / 60_000)),
+    upload_url_minutes: urlMinutes(config),
     authoring_notes: authoringNotes(config),
     // The fields below are shown only when their setting is not at its 1.0 default.
     ...(quotaApplies(config, user)
@@ -41,6 +40,15 @@ async function whoami({ deps, auth }: ToolContext): Promise<WhoamiOut> {
       ? { can_create_share_links: mayExpose(config, user) }
       : {}),
   };
+}
+
+/**
+ * Who the account is: its name with its email, as the description promises both; a person
+ * without a name is known by their email, else by their id.
+ */
+function accountName({ id, name, email }: WhoamiOut['user']): string {
+  if (name === null) return email ?? id;
+  return email === null ? name : t('mcp.whoami.nameEmail', { name, email });
 }
 
 /** "no limit" for a limit that is null, else `show` of it. */
@@ -80,8 +88,7 @@ export const registerIdentityTools: ToolModule = (server, ctx) => {
       const { user } = me;
       const summary = t('mcp.whoami.text', {
         url: me.pinwall_url,
-        // A person without a name is known by their email, else by their id.
-        name: user.name ?? user.email ?? user.id,
+        name: accountName(user),
         role: user.role,
         via: me.via,
         isolation: me.isolation,

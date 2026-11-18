@@ -289,7 +289,7 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
         version_id: v2.version_id,
         threads: [{ comment_id: pinned.id }],
       });
-      expect(resolved).toBe(`Resolved 1 of 1 threads.\n- ${pinned.id}: resolved in v2`);
+      expect(resolved).toBe(`Resolved 1 of 1 thread.\n- ${pinned.id}: resolved in v2`);
 
       // 3. The reviewer sees it resolved by v2, still pinned where they put it.
       const r = await app.request(
@@ -377,7 +377,9 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
       if (authorizationUrl === null) throw new Error('the SDK never sent the browser anywhere');
       await first.finishAuth(await approveInBrowser(app, authorizationUrl, bea.cookie));
       client = await connectMcp(app, { authProvider: provider, fetch: traffic.fetch });
-      expect(await ok(client, 'whoami')).toContain(`as Bea (member, via oauth)`);
+      expect(await ok(client, 'whoami')).toContain(
+        `as Bea <${bea.user.email}> (member, via oauth)`,
+      );
 
       // The IdP is down for longer than Pinwall acts on its last answer. The refresh is told to
       // try later, so the SDK keeps everything it holds and opens no browser.
@@ -407,7 +409,9 @@ describe.each(dialects)('an agent over MCP on %s', (dialect) => {
       idp.setReachable(true);
       clock.advance(IDP_RETRY_BACKOFF_MS + 1);
       traffic.calls.length = 0;
-      expect(await ok(client, 'whoami')).toContain(`as Bea (member, via oauth)`);
+      expect(await ok(client, 'whoami')).toContain(
+        `as Bea <${bea.user.email}> (member, via oauth)`,
+      );
       expect(traffic.calls).toEqual([
         'POST /mcp 401',
         'POST /oauth/token refresh_token 200',

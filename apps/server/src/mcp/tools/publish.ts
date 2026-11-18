@@ -14,7 +14,7 @@ import { t } from '../../lib/i18n.ts';
 import { ingestInline } from '../../publish/ingest.ts';
 import { createPublishSession, toPublishResult } from '../../publish/sessions.ts';
 import { DESCRIPTIONS, FIELDS, fillDescription } from '../descriptions.ts';
-import { flatten, formatBytes } from '../format.ts';
+import { flatten, formatBytes, urlMinutes } from '../format.ts';
 import { refusalAppendix } from '../merge-diff.ts';
 import { runTool } from '../results.ts';
 import type { ToolModule } from '../server.ts';
@@ -122,9 +122,7 @@ export const publishTools: ToolModule = (server, ctx) => {
   const { deps, auth } = ctx;
   const { config } = deps;
   const { user } = auth;
-  const ttlMs = config.ttl.uploadSessionMs;
-  // A whole number of minutes, never more than the URL lives.
-  const minutes = Math.max(1, Math.floor(ttlMs / 60_000));
+  const minutes = urlMinutes(config);
   // A refusal of a stale base ends with what changed, so the agent can merge without another call.
   const appendix = (err: unknown, args: TargetArgs) =>
     refusalAppendix(deps, scopeForUser(deps, user), args, ctx.c.var.requestId)(err);

@@ -245,7 +245,7 @@ describe.each(dialects)('merge diffs on refusals on %s', (dialect) => {
       'index.html': '<h1>y</h1>',
       ...Object.fromEntries(names.map((name, i) => [name, i % 2 === 0 ? '<p>y</p>' : PNG])),
     });
-    const more = /^and (\d+) more changed files$/;
+    const more = /^and (\d+) more changed files?$/;
     const least = HEADING.length + 1 + t('mcp.merge.moreFiles', { count: 7 }).length;
     for (let max = least; max < 1_100; max += 11) {
       const text = await mergeDiff(ctx.deps, scope(), id, 1, 2, null, max);
@@ -297,6 +297,11 @@ describe.each(dialects)('merge diffs on refusals on %s', (dialect) => {
     expect(t('mcp.merge.moreHunks', { path: 'index.html', count: 2 })).toBe(
       'index.html: 2 more changes not shown (use read_file)',
     );
+    expect(t('mcp.merge.moreHunks', { path: 'index.html', count: 1 })).toBe(
+      'index.html: 1 more change not shown (use read_file)',
+    );
+    expect(t('mcp.merge.moreFiles', { count: 1 })).toBe('and 1 more changed file');
+    expect(t('mcp.merge.moreFiles', { count: 2 })).toBe('and 2 more changed files');
     expect(diff).not.toContain('diff not shown');
     // As many as fit: one more hunk would not have.
     const next = shownOf(full.slice(1)).hunks[hunks.length] ?? [];
@@ -363,8 +368,8 @@ describe.each(dialects)('merge diffs on refusals on %s', (dialect) => {
 
     const fileStart = /^--- (.+)\tv1$/;
     const named = /^(.+) \(diff not shown: use read_file\)$/;
-    const hunksLeft = /^(.+): (\d+) more changes not shown \(use read_file\)$/;
-    const filesLeft = /^and (\d+) more changed files$/;
+    const hunksLeft = /^(.+): (\d+) more changes? not shown \(use read_file\)$/;
+    const filesLeft = /^and (\d+) more changed files?$/;
     const least = HEADING.length + 1 + t('mcp.merge.moreFiles', { count: everything }).length;
     const order = ['a.html', 'b.png', 'c.html', 'd.html', 'e.png', 'index.html', 'spread.html'];
     let partial = 0;
@@ -501,7 +506,7 @@ describe.each(dialects)('merge diffs on refusals on %s', (dialect) => {
       expect(text.length).toBeGreaterThan(MERGE_DIFF_MAX_CHARS - 300);
 
       const lines = text.split('\n');
-      const left = /^and (\d+) more changed files$/.exec(lines.at(-1) ?? '');
+      const left = /^and (\d+) more changed files?$/.exec(lines.at(-1) ?? '');
       expect(left, lines.at(-1)).not.toBeNull();
       // 301 files changed; every one is in a patch, a name line, or the count at the end.
       const patches = lines.filter((line) => line.startsWith('--- ')).length;

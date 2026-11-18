@@ -568,7 +568,7 @@ describe.each(dialects)('MCP comment and share-link tools on %s', (dialect) => {
       const C = await openThread();
       const D = await openThread();
       const current = await ok('resolve_comments', { threads: [{ comment_id: C }] });
-      expect(current.split('\n')).toEqual(['Resolved 1 of 1 threads.', `- ${C}: resolved in v2`]);
+      expect(current.split('\n')).toEqual(['Resolved 1 of 1 thread.', `- ${C}: resolved in v2`]);
       const older = await ok('resolve_comments', {
         version_id: v1.id,
         threads: [{ comment_id: D }, { comment_id: A, reply: 'Xong' }],

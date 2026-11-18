@@ -470,7 +470,7 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
         id: v.id,
         number,
         current: current ? t('mcp.version.current') : '',
-        files,
+        count: files,
         size: formatBytes(v.total_bytes),
         source: 'api',
         created: new Date(T + (number - 1) * 1000).toISOString(),
@@ -502,6 +502,8 @@ describe.each(dialects)('MCP library tools on %s', (dialect) => {
         t('mcp.artifact.next', { artifact_id: id, version_id: second.version.id }),
       ].join('\n'),
     );
+    expect(text).toContain(`- v2 ${second.version.id} (current): 2 files, `);
+    expect(text).toContain(`- v1 ${first.version.id}: 1 file, `);
   });
 
   test('get_artifact lists 3 versions, the files and the next step, without per-version links', async () => {

@@ -194,13 +194,13 @@ describe.each(dialects)('/me, whoami and the public config on %s', (dialect) => 
       const { A, X } = fx.people;
       const { config } = team.deps;
 
-      // A team with the defaults answers exactly as 1.0 did.
+      // A team with the defaults answers as 1.0 did, with the email 1.2 adds to the name.
       const plain = await whoami(team, A);
       expect(plain).toBe(
         [
           t('mcp.whoami.text', {
             url: config.publicOrigin,
-            name: 'A',
+            name: `A <${A.user.email}>`,
             role: 'member',
             via: 'api_token',
             isolation: config.isolation.mode,

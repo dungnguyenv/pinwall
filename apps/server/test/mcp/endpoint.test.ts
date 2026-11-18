@@ -158,13 +158,15 @@ describe.each(dialects)('/mcp on %s', (dialect) => {
     const client = new Client({ name: 'socket-probe', version: '1.0.0' });
     await client.connect(transport);
     clients.push(client);
-    expect(await whoami(client)).toContain('as Ada (member, via api_token)');
+    expect(await whoami(client)).toContain(`as Ada <${ada.user.email}> (member, via api_token)`);
   });
 
   test('an OAuth access token connects', async () => {
     await start();
     const { access } = await issueTestTokens(ctx, ada.cookie);
-    expect(await whoami(await connect(access))).toContain('as Ada (member, via oauth)');
+    expect(await whoami(await connect(access))).toContain(
+      `as Ada <${ada.user.email}> (member, via oauth)`,
+    );
   });
 
   test('a foreign Origin is refused', async () => {
@@ -274,7 +276,8 @@ describe.each(dialects)('/mcp on %s', (dialect) => {
     expect(text).toBe(
       `${t('mcp.whoami.text', {
         url: 'http://localhost:8080',
-        name: 'Ada',
+        // The description promises the email: it follows the name.
+        name: `Ada <${ada.user.email}>`,
         role: 'member',
         via: 'api_token',
         isolation: 'single-domain',
@@ -291,6 +294,15 @@ describe.each(dialects)('/mcp on %s', (dialect) => {
     const owner = await createSignedInUser(ctx, { kind: 'owner', name: 'Olu' });
     const mine = await whoami(await connect(await createUserToken(ctx, owner.user.id)));
     expect(mine).toContain('as Olu (admin, via api_token)');
+
+    // A person without a name is known by their email alone.
+    await ctx.deps.db.db
+      .updateTable('users')
+      .set({ name: null })
+      .where('id', '=', ada.user.id)
+      .execute();
+    const nameless = await whoami(await connect(await createUserToken(ctx, ada.user.id)));
+    expect(nameless).toContain(`as ${ada.user.email} (member, via api_token)`);
   });
 
   test('whoami reports every limit and value its description promises', async () => {

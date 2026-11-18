@@ -7,7 +7,7 @@ import { badRequest } from '../../lib/errors.ts';
 import { t } from '../../lib/i18n.ts';
 import { createDownloadSession } from '../../publish/download.ts';
 import { DESCRIPTIONS, FIELDS } from '../descriptions.ts';
-import { flatten } from '../format.ts';
+import { flatten, urlMinutes } from '../format.ts';
 import { runTool } from '../results.ts';
 import type { ToolModule } from '../server.ts';
 import { findLines, splitLines, windowLines } from '../text-window.ts';
@@ -70,8 +70,7 @@ const CreateDownloadIn = z.object({
  */
 export const fileTools: ToolModule = (server, ctx) => {
   const { deps, auth } = ctx;
-  // A whole number of minutes, never more than the URL lives.
-  const minutes = Math.max(1, Math.floor(deps.config.ttl.uploadSessionMs / 60_000));
+  const minutes = urlMinutes(deps.config);
 
   server.registerTool(
     'read_file',
@@ -96,7 +95,7 @@ export const fileTools: ToolModule = (server, ctx) => {
         path: flatten(file.path),
         number: version.number,
         version_id: version.id,
-        total: lines.length,
+        count: lines.length,
       });
       return [header, t('mcp.read.notice'), ...bodyOf(a, lines)].join('\n');
     }),
@@ -116,12 +115,16 @@ export const fileTools: ToolModule = (server, ctx) => {
         version: a.version,
         directory: a.directory,
       });
-      return t('mcp.download.session', {
-        minutes,
-        command: session.command,
-        number: session.version.number,
-        version_id: session.version.id,
-      });
+      return [
+        t('mcp.download.session', {
+          minutes,
+          command: session.command,
+          number: session.version.number,
+          version_id: session.version.id,
+        }),
+        // curl hands the body of a refusal to tar, so its hint never reaches the agent.
+        t('mcp.download.failed'),
+      ].join('\n');
     }),
   );
 };
@@ -138,7 +141,7 @@ function bodyOf(a: z.output<typeof ReadFileIn>, lines: string[]): string[] {
   }
   if (lines.length === 0) return [t('mcp.read.empty')];
   if (a.offset > lines.length) {
-    throw badRequest(t('mcp.read.pastEnd', { total: lines.length, offset: a.offset }), {
+    throw badRequest(t('mcp.read.pastEnd', { count: lines.length, offset: a.offset }), {
       field: 'offset',
     });
   }

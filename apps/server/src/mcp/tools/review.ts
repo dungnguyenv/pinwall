@@ -322,7 +322,7 @@ export const reviewTools: ToolModule = (server, ctx) => {
         }
       }
       const text = [
-        t('mcp.resolve.summary', { ok: resolved, total: a.threads.length }),
+        t('mcp.resolve.summary', { ok: resolved, count: a.threads.length }),
         ...lines,
       ].join('\n');
       // Only a call that resolved nothing is an error; the lines still say why for each item.

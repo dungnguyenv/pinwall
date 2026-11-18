@@ -1,9 +1,18 @@
+import type { Config } from '../config/types.ts';
 import type { Located, SourceLocation } from '../content/locate.ts';
 import { t } from '../lib/i18n.ts';
 import type { ThreadOut } from './types.ts';
 
 // Tool texts and the rest of the server write sizes the same way.
 export { formatBytes } from '../lib/format.ts';
+
+/**
+ * How long an upload or download URL stays valid, as the tools say it: a whole number of
+ * minutes, never more than the URL lives, and at least one.
+ */
+export function urlMinutes(config: { ttl: Pick<Config['ttl'], 'uploadSessionMs'> }): number {
+  return Math.max(1, Math.floor(config.ttl.uploadSessionMs / 60_000));
+}
 
 /** The line breaks that end a line of text; other control characters are dropped, not split on. */
 const LINE_BREAK = /\r\n|[\n\r\p{Zl}\p{Zp}]/u;

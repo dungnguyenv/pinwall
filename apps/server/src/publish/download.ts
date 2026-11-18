@@ -70,9 +70,12 @@ export async function createDownloadSession(
 }
 
 /**
- * The shell command that fetches `url` and unpacks the archive into `directory`. `--fail-with-body`
- * makes curl exit non-zero, and show the error, for a refused URL; the pipe ends the archive
- * with tar's own check of the gzip stream, so one cut short fails as well.
+ * The shell command that fetches `url` and unpacks the archive into `directory`. For a refused
+ * URL, `--fail-with-body` makes curl print its status (`curl: (22) … 404`) and exit non-zero,
+ * but the body, the JSON error with its hint, goes down the pipe to tar, which fails on it as
+ * not gzip: the agent sees curl's status and tar's complaint, never the hint, so
+ * `create_download_session` says itself what a 404 means. tar's own check of the gzip stream
+ * also fails an archive cut short.
  */
 export function downloadCommand(url: string, directory: string): string {
   const dir = shellQuote(directory);

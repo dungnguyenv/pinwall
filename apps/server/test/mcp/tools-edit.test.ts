@@ -107,7 +107,7 @@ describe.each(dialects)('MCP edit_artifact on %s', (dialect) => {
       edits: [{ op: 'replace', path: 'index.html', old_string: 'Một', new_string: 'Hai' }],
     });
     expect(text).toMatch(/^Review link: /);
-    expect(text).toContain('index.html: 1 replacements, now lines 1–1');
+    expect(text).toContain('index.html: 1 replacement, now lines 1–1');
     const files = await filesOfCurrent(ctx, id);
     expect(files.get('img/a.png')).toBe(v1Files.get('img/a.png'));
     expect(files.get('notes.md')).toBe(v1Files.get('notes.md'));
@@ -126,7 +126,7 @@ describe.each(dialects)('MCP edit_artifact on %s', (dialect) => {
     expect(text.split('\n')).toEqual([
       `Review link: http://localhost:8080/a/${id}`,
       `Published v2 (version_id ${currentVersion.id}, artifact_id ${id}).`,
-      'index.html: 1 replacements, now lines 1–1',
+      'index.html: 1 replacement, now lines 1–1',
     ]);
   });
 
@@ -261,7 +261,7 @@ describe.each(dialects)('MCP edit_artifact on %s', (dialect) => {
       ],
       { expected_version_id: v2.version.id },
     );
-    expect(text).toContain('index.html: 1 replacements, now lines 3–5');
+    expect(text).toContain('index.html: 1 replacement, now lines 3–5');
     const sha256 = (await filesOfCurrent(ctx, id)).get('index.html') ?? '';
     const bytes = Buffer.concat(await (await ctx.deps.blobs.get(sha256)).toArray());
     expect(
@@ -289,7 +289,7 @@ describe.each(dialects)('MCP edit_artifact on %s', (dialect) => {
       ],
       { expected_version_id: v2.version.id },
     );
-    expect(text).toContain('index.html: 1 replacements, now lines 2–3');
+    expect(text).toContain('index.html: 1 replacement, now lines 2–3');
     const sha256 = (await filesOfCurrent(ctx, id)).get('index.html') ?? '';
     const bytes = Buffer.concat(await (await ctx.deps.blobs.get(sha256)).toArray());
     expect(bytes.toString('utf8')).toBe('<ul>\r\n  <li>Một</li>\r\n  <li>Hai</li>\r\n</ul>\r\n');

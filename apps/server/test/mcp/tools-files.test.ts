@@ -99,11 +99,11 @@ describe.each(dialects)('MCP read_file on %s', (dialect) => {
     const v2 = await publishNext({ 'index.html': '<p>hai</p>', 'notes.md': '# Mới\n' }, v1);
 
     const notes = await ok({ path: 'notes.md' });
-    expect(notes.split('\n')[0]).toBe(`notes.md · v2 (${v2.version.id}) · 1 lines`);
+    expect(notes.split('\n')[0]).toBe(`notes.md · v2 (${v2.version.id}) · 1 line`);
     expect(notes).toContain('     1| # Mới');
 
     const old = await ok({ path: 'notes.md', version: 1 });
-    expect(old.split('\n')[0]).toBe(`notes.md · v1 (${v1.id}) · 1 lines`);
+    expect(old.split('\n')[0]).toBe(`notes.md · v1 (${v1.id}) · 1 line`);
     expect(old).toContain('     1| # Ghi chú');
 
     // The entry of version 1 is the entry of version 1, whatever the current one is.
@@ -128,10 +128,11 @@ describe.each(dialects)('MCP read_file on %s', (dialect) => {
   });
 
   test('a long line is cut at 2,000 characters with a marker', async () => {
-    await publishNext({ 'index.html': `${'x'.repeat(80_000)}\nshort` }, v1);
+    await publishNext({ 'index.html': `${'x'.repeat(80_000)}\n${'y'.repeat(2001)}\nshort` }, v1);
     const text = await ok();
     expect(text).toContain(`     1| ${'x'.repeat(2000)}… [+78000 characters]`);
-    expect(text).toContain('     2| short');
+    expect(text).toContain(`     2| ${'y'.repeat(2000)}… [+1 character]`);
+    expect(text).toContain('     3| short');
   });
 
   test('a long file is read in windows that name the next offset', async () => {
@@ -163,6 +164,11 @@ describe.each(dialects)('MCP read_file on %s', (dialect) => {
     const r = await read({ offset: 6 });
     expect(r.isError).toBe(true);
     expect(r.text).toContain('5 lines');
+
+    await publishNext({ 'index.html': '<p>một</p>' }, v1);
+    expect((await read({ offset: 2 })).text).toContain(
+      'The file has 1 line, so offset 2 is past its end.',
+    );
   });
 
   test('an empty file says so', async () => {
@@ -376,6 +382,10 @@ describe.each(dialects)('MCP create_download_session on %s', (dialect) => {
     expect(r.text).toContain(`It holds v1 (${v1.id}).`);
     expect(r.text).toContain(
       'Download into an empty folder, then compare with your copy; never unpack over uncommitted work.',
+    );
+    // curl sends the body of a refusal down the pipe to tar, so the text says what a 404 means.
+    expect(r.text.split('\n').at(-1)).toBe(
+      'If curl fails with 404, the URL was used or has expired: call create_download_session again.',
     );
 
     const first = await ctx.request(new URL(url).pathname);

@@ -250,7 +250,7 @@ function versionLine(v: VersionOut): string {
     id: v.id,
     number: v.number,
     current: v.is_current ? t('mcp.version.current') : '',
-    files: v.file_count,
+    count: v.file_count,
     size: formatBytes(v.total_bytes),
     source: v.source,
     created: new Date(v.created_at).toISOString(),

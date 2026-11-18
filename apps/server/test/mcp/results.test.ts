@@ -49,6 +49,14 @@ test('a reason hint comes before the code hint', () => {
   ]);
 });
 
+test('a role refusal and a share refusal before approval say that they are final', () => {
+  for (const reason of ['role', 'share_links_not_approved']) {
+    const lines = toolText(toolError(toolCtx, forbidden('m', { reason }))).split('\n');
+    expect(lines[1], reason).toBe(t(`mcp.hint.forbidden.${reason}`));
+    expect(lines[1], reason).toMatch(/^Do not retry/);
+  }
+});
+
 test('unexpected errors are logged and hidden', () => {
   const logged = vi.spyOn(ctx.deps.logger, 'error');
   const internal = t('mcp.error.internal', { requestId: REQUEST_ID });
