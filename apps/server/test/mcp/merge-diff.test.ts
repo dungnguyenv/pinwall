@@ -24,6 +24,13 @@ const PNG_EDITED = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 
 
 const notShown = (path: string) => t('mcp.merge.notShown', { path });
 
+/**
+ * For the tests that compute many merge diffs in one go (a sweep of about 150 caps, or 300 files).
+ * Each diff reads its versions and blobs again, and on Postgres with S3 under CI load the sweep
+ * took 10 to 20 s, against the 20 s default.
+ */
+const MANY_DIFFS = { timeout: 60_000 };
+
 /** Whether a character is a control character other than the tab and the newline, or a line separator. */
 function isUnsafe(char: string): boolean {
   const code = char.codePointAt(0) ?? 0;
@@ -386,83 +393,87 @@ describe.each(dialects)('merge diffs on refusals on %s', (dialect) => {
     }
   });
 
-  test('every file and every hunk is accounted for once, whatever the cap', async () => {
-    const spread = new Set([10, 60, 110, 160]);
-    const pair = new Set([5, 90]);
-    const v1Files = {
-      'a.html': '<p>x</p>\n',
-      'b.png': PNG,
-      'c.html': '<p>x</p>\n',
-      'd.html': longText(100, 'old', pair, 80),
-      'e.png': PNG,
-      'spread.html': longText(200, 'old', spread, 80),
-      'index.html': '<h1>x</h1>\n',
-    };
-    await start(v1Files);
-    await next({
-      'a.html': '<p>y</p>\n',
-      'b.png': PNG_EDITED,
-      'c.html': '<p>y</p>\n',
-      'd.html': longText(100, 'new', pair, 80),
-      'e.png': PNG_EDITED,
-      'spread.html': longText(200, 'new', spread, 80),
-      'index.html': '<h1>y</h1>\n',
-    });
-    const run = (max: number) => mergeDiff(ctx.deps, scope(), id, 1, 2, null, max);
-    const everything = 7;
-    const hunkCounts = new Map([
-      ['a.html', 1],
-      ['c.html', 1],
-      ['d.html', 2],
-      ['index.html', 1],
-      ['spread.html', 4],
-    ]);
-    const whole = await run(100_000);
-    expect([...whole.matchAll(/^@@ /gm)]).toHaveLength(9);
+  test(
+    'every file and every hunk is accounted for once, whatever the cap',
+    MANY_DIFFS,
+    async () => {
+      const spread = new Set([10, 60, 110, 160]);
+      const pair = new Set([5, 90]);
+      const v1Files = {
+        'a.html': '<p>x</p>\n',
+        'b.png': PNG,
+        'c.html': '<p>x</p>\n',
+        'd.html': longText(100, 'old', pair, 80),
+        'e.png': PNG,
+        'spread.html': longText(200, 'old', spread, 80),
+        'index.html': '<h1>x</h1>\n',
+      };
+      await start(v1Files);
+      await next({
+        'a.html': '<p>y</p>\n',
+        'b.png': PNG_EDITED,
+        'c.html': '<p>y</p>\n',
+        'd.html': longText(100, 'new', pair, 80),
+        'e.png': PNG_EDITED,
+        'spread.html': longText(200, 'new', spread, 80),
+        'index.html': '<h1>y</h1>\n',
+      });
+      const run = (max: number) => mergeDiff(ctx.deps, scope(), id, 1, 2, null, max);
+      const everything = 7;
+      const hunkCounts = new Map([
+        ['a.html', 1],
+        ['c.html', 1],
+        ['d.html', 2],
+        ['index.html', 1],
+        ['spread.html', 4],
+      ]);
+      const whole = await run(100_000);
+      expect([...whole.matchAll(/^@@ /gm)]).toHaveLength(9);
 
-    const fileStart = /^--- (.+)\tv1$/;
-    const named = /^(.+) \(diff not shown: use read_file\)$/;
-    const hunksLeft = /^(.+): (\d+) more changes? not shown \(use read_file\)$/;
-    const filesLeft = /^and (\d+) more changed files?$/;
-    const least = HEADING.length + 1 + t('mcp.merge.moreFiles', { count: everything }).length;
-    const order = ['a.html', 'b.png', 'c.html', 'd.html', 'e.png', 'index.html', 'spread.html'];
-    let partial = 0;
-    for (let max = least; max <= whole.length + 20; max += 13) {
-      const text = await run(max);
-      expect(text.length, `cap ${max}`).toBeLessThanOrEqual(max);
-      const seen: string[] = [];
-      const shown = new Map<string, number>();
-      let current = '';
-      let left = 0;
-      for (const line of text.split('\n').slice(1)) {
-        const start = fileStart.exec(line);
-        if (start !== null) {
-          current = start[1] ?? '';
-          seen.push(current);
-          shown.set(current, 0);
-        } else if (line.startsWith('@@ ')) {
-          shown.set(current, (shown.get(current) ?? 0) + 1);
-        } else if (hunksLeft.test(line)) {
-          const [, path, count] = hunksLeft.exec(line) ?? [];
-          expect(path, `cap ${max}`).toBe(current);
-          partial += 1;
-          shown.set(current, (shown.get(current) ?? 0) + Number(count));
-        } else if (named.test(line)) {
-          seen.push(named.exec(line)?.[1] ?? '');
-        } else if (filesLeft.test(line)) {
-          left = Number(filesLeft.exec(line)?.[1]);
+      const fileStart = /^--- (.+)\tv1$/;
+      const named = /^(.+) \(diff not shown: use read_file\)$/;
+      const hunksLeft = /^(.+): (\d+) more changes? not shown \(use read_file\)$/;
+      const filesLeft = /^and (\d+) more changed files?$/;
+      const least = HEADING.length + 1 + t('mcp.merge.moreFiles', { count: everything }).length;
+      const order = ['a.html', 'b.png', 'c.html', 'd.html', 'e.png', 'index.html', 'spread.html'];
+      let partial = 0;
+      for (let max = least; max <= whole.length + 20; max += 13) {
+        const text = await run(max);
+        expect(text.length, `cap ${max}`).toBeLessThanOrEqual(max);
+        const seen: string[] = [];
+        const shown = new Map<string, number>();
+        let current = '';
+        let left = 0;
+        for (const line of text.split('\n').slice(1)) {
+          const start = fileStart.exec(line);
+          if (start !== null) {
+            current = start[1] ?? '';
+            seen.push(current);
+            shown.set(current, 0);
+          } else if (line.startsWith('@@ ')) {
+            shown.set(current, (shown.get(current) ?? 0) + 1);
+          } else if (hunksLeft.test(line)) {
+            const [, path, count] = hunksLeft.exec(line) ?? [];
+            expect(path, `cap ${max}`).toBe(current);
+            partial += 1;
+            shown.set(current, (shown.get(current) ?? 0) + Number(count));
+          } else if (named.test(line)) {
+            seen.push(named.exec(line)?.[1] ?? '');
+          } else if (filesLeft.test(line)) {
+            left = Number(filesLeft.exec(line)?.[1]);
+          }
         }
+        // Each file once, in path order, none skipped; the closing line counts the rest.
+        expect(seen, `cap ${max}`).toEqual(order.slice(0, seen.length));
+        expect(seen.length + left, `cap ${max}`).toBe(everything);
+        // Each hunk of a patch is shown or counted in its file's line.
+        for (const [path, count] of shown)
+          expect(count, `cap ${max}: ${path}`).toBe(hunkCounts.get(path));
       }
-      // Each file once, in path order, none skipped; the closing line counts the rest.
-      expect(seen, `cap ${max}`).toEqual(order.slice(0, seen.length));
-      expect(seen.length + left, `cap ${max}`).toBe(everything);
-      // Each hunk of a patch is shown or counted in its file's line.
-      for (const [path, count] of shown)
-        expect(count, `cap ${max}: ${path}`).toBe(hunkCounts.get(path));
-    }
-    // The caps went through patches whole, patches cut after a hunk, names and the closing line.
-    expect(partial).toBeGreaterThan(5);
-  });
+      // The caps went through patches whole, patches cut after a hunk, names and the closing line.
+      expect(partial).toBeGreaterThan(5);
+    },
+  );
 
   test('a file that cannot be compared is named, and the others are still shown', async () => {
     // Each file has its own text, so its own blob.
@@ -537,49 +548,55 @@ describe.each(dialects)('merge diffs on refusals on %s', (dialect) => {
     }
   });
 
-  test('300 changed files give a text of at most 4,000 characters: as many names as fit, and a count of the rest', async () => {
-    const paths = Array.from(
-      { length: 300 },
-      (_, i) => `pages/page-${String(i).padStart(3, '0')}.html`,
-    );
-    const page = (path: string, word: string) => `<p>${word} ${path}</p>\n`;
-    await start({
-      'index.html': '<h1>Một</h1>',
-      ...Object.fromEntries(paths.map((path) => [path, page(path, 'cũ')])),
-    });
-    await next({
-      'index.html': '<h1>Hai</h1>',
-      ...Object.fromEntries(paths.map((path) => [path, page(path, 'mới')])),
-    });
-    const read = vi.spyOn(ctx.deps.blobs, 'get');
-    try {
-      const r = await staleInline();
-      expect(r.isError).toBe(true);
-      const text = r.text.slice(r.text.indexOf(HEADING));
-      expect(text.length).toBeLessThanOrEqual(MERGE_DIFF_MAX_CHARS);
-      expect(text.length).toBeGreaterThan(MERGE_DIFF_MAX_CHARS - 300);
+  test(
+    '300 changed files give a text of at most 4,000 characters: as many names as fit, and a count of the rest',
+    MANY_DIFFS,
+    async () => {
+      const paths = Array.from(
+        { length: 300 },
+        (_, i) => `pages/page-${String(i).padStart(3, '0')}.html`,
+      );
+      const page = (path: string, word: string) => `<p>${word} ${path}</p>\n`;
+      await start({
+        'index.html': '<h1>Một</h1>',
+        ...Object.fromEntries(paths.map((path) => [path, page(path, 'cũ')])),
+      });
+      await next({
+        'index.html': '<h1>Hai</h1>',
+        ...Object.fromEntries(paths.map((path) => [path, page(path, 'mới')])),
+      });
+      const read = vi.spyOn(ctx.deps.blobs, 'get');
+      try {
+        const r = await staleInline();
+        expect(r.isError).toBe(true);
+        const text = r.text.slice(r.text.indexOf(HEADING));
+        expect(text.length).toBeLessThanOrEqual(MERGE_DIFF_MAX_CHARS);
+        expect(text.length).toBeGreaterThan(MERGE_DIFF_MAX_CHARS - 300);
 
-      const lines = text.split('\n');
-      const left = /^and (\d+) more changed files?$/.exec(lines.at(-1) ?? '');
-      expect(left, lines.at(-1)).not.toBeNull();
-      // 301 files changed; every one is in a patch, a name line, or the count at the end. The
-      // names come first: no patch takes the room another name would have needed.
-      const patches = lines.filter((line) => line.startsWith('--- ')).length;
-      const named = lines.filter((line) => line.endsWith('(diff not shown: use read_file)')).length;
-      expect(patches + named).toBeGreaterThan(60);
-      const next = notShown(`pages/page-${String(patches + named - 1).padStart(3, '0')}.html`);
-      expect(text.length + 1 + next.length).toBeGreaterThan(MERGE_DIFF_MAX_CHARS);
-      expect(Number(left?.[1])).toBeGreaterThan(200);
-      expect(patches + named + Number(left?.[1])).toBe(301);
-      expect(lines.at(-1)).toBe(t('mcp.merge.moreFiles', { count: Number(left?.[1]) }));
-      // The files left out were not compared, and neither was one whose patch could not fit:
-      // every file the text shows was read once, two sides each, and no other.
-      expect(read.mock.calls.length).toBeGreaterThan(0);
-      expect(read.mock.calls.length).toBeLessThanOrEqual(2 * (patches + named));
-    } finally {
-      read.mockRestore();
-    }
-  });
+        const lines = text.split('\n');
+        const left = /^and (\d+) more changed files?$/.exec(lines.at(-1) ?? '');
+        expect(left, lines.at(-1)).not.toBeNull();
+        // 301 files changed; every one is in a patch, a name line, or the count at the end. The
+        // names come first: no patch takes the room another name would have needed.
+        const patches = lines.filter((line) => line.startsWith('--- ')).length;
+        const named = lines.filter((line) =>
+          line.endsWith('(diff not shown: use read_file)'),
+        ).length;
+        expect(patches + named).toBeGreaterThan(60);
+        const next = notShown(`pages/page-${String(patches + named - 1).padStart(3, '0')}.html`);
+        expect(text.length + 1 + next.length).toBeGreaterThan(MERGE_DIFF_MAX_CHARS);
+        expect(Number(left?.[1])).toBeGreaterThan(200);
+        expect(patches + named + Number(left?.[1])).toBe(301);
+        expect(lines.at(-1)).toBe(t('mcp.merge.moreFiles', { count: Number(left?.[1]) }));
+        // The files left out were not compared, and neither was one whose patch could not fit:
+        // every file the text shows was read once, two sides each, and no other.
+        expect(read.mock.calls.length).toBeGreaterThan(0);
+        expect(read.mock.calls.length).toBeLessThanOrEqual(2 * (patches + named));
+      } finally {
+        read.mockRestore();
+      }
+    },
+  );
 
   test('edited_on_server shows only the edited paths', async () => {
     const names = Array.from({ length: 22 }, (_, i) => `f${String(i + 1).padStart(2, '0')}.html`);
