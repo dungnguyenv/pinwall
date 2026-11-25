@@ -10,6 +10,17 @@ every 1.0 item still holds. Pinwall 1.2 adds `1.2-1` and `1.2-2`, the checks of 
 earlier item still holds. This page holds the record, the steps of each manual check, and how the
 automated part runs.
 
+## 1.2.1
+
+A patch release with no new acceptance item: the member-lookup change of
+[#2](https://github.com/dungnguyenv/pinwall/issues/2) is proven by
+`apps/server/test/spaces/members-email.test.ts`, and every 1.2 item still holds. Tagged `v1.2.1` at
+`50761d3` on 2026-11-26. 1.2.1 (`sha256:eea0b2c0…3adf`) went live on `pinwall.ap.vn` the same
+night, after a backup of 1.2.0. Checked there: `version` prints `1.2.1` and the pod runs that digest;
+the log since start has no warning or error; `healthz` and `readyz` answer 200; `/mcp` without a
+token answers 401 with the resource metadata on `pinwall.ap.vn`; adding a member without a session
+answers 401; the public config still says `personal` and `approved`.
+
 ## Before tagging 1.2.0
 
 Nothing below counts until it is run against the commit that will be tagged, and recorded on this
@@ -89,6 +100,9 @@ the date, the commit, what ran, who ran it and the outcome. Keep older rows.
 | 2026-11-19 | `636611f` | `pnpm lint`, `pnpm typecheck`, `pnpm test` on SQLite (server 2,679, web 713, tools 251, annotator 81, shared 36) | controller | pass |
 | 2026-11-19 | `636611f` | GitHub Actions CI on `main` (all seven jobs: `pnpm test` with Postgres and Silo, end-to-end with the annotator and Keycloak suites, acceptance, image, chart, licenses, workflows) | GitHub Actions | pass |
 | 2026-11-19 | `636611f` (`v1.2.0`) | `release.yml`: tag check, CI, image for amd64 and arm64, cosign signature, provenance and SBOM attestations, chart push, GitHub release. Afterwards: `1.2.0`, `1.2`, `1` and `latest` all give `sha256:85546feb…b065`; `cosign verify` (cosign 3) with the documented identity; `gh attestation verify` for the provenance and both SPDX SBOMs; the chart's values carry that digest; `version` prints `1.2.0` | controller | pass |
+| 2026-11-26 | `ac05d55` (same tree as `50761d3`) | `pnpm lint`, `pnpm typecheck`; the server's `test/spaces` and `test/auth` on SQLite and Postgres | controller | pass |
+| 2026-11-26 | `50761d3` | GitHub Actions CI on `main` (all seven jobs) | GitHub Actions | pass |
+| 2026-11-26 | `50761d3` (`v1.2.1`) | `release.yml`. The first attempt's CI failed one web test (`users-spaces.test.tsx`: a toast not yet visible) that passed in the same commit's CI on `main`; re-running the failed jobs passed and published. Afterwards: `1.2.1`, `1.2`, `1` and `latest` all give `sha256:eea0b2c0…3adf`; `cosign verify` (cosign 3) with the documented identity; `gh attestation verify` for the provenance; the chart's values carry that digest; `version` prints `1.2.1` | controller | pass |
 
 ## Results
 
