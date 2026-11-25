@@ -261,8 +261,8 @@ function pickAccount(matches: UserRow[], userId: string | null): UserRow {
 }
 
 /**
- * Whether `viewer` already knows every account in `matches` (those that use `email`), so that
- * the answer to looking them up shows them nothing new: an admin sees every account's email in
+ * Whether `viewer` already knows every account in `matches` (the accounts using `email` that the
+ * answer can be about), so that it shows them nothing new: an admin sees every account's email in
  * user management, and an owner sees the emails of the members of their projects (and knows
  * their own). No match is never known: that answer says no account uses the email.
  *
@@ -270,8 +270,9 @@ function pickAccount(matches: UserRow[], userId: string | null): UserRow {
  * takes does not tell an owner whose hour is used up whether the email has an account.
  *
  * Bounded leak, by design: once a person's hour is used up, a 429 for the email of someone they
- * know (where the lookup would have been free) says that an account they do not know uses it
- * too. That is one bit per member email they already see, never about an email they have not.
+ * know, sent without a `user_id` (where the lookup would have been free), says that an account
+ * they do not know uses it too. That is one bit per member email they already see, never about an
+ * email they have not.
  */
 async function knowsAll(
   db: Db,
@@ -313,7 +314,9 @@ export async function addMember(
   const viewer = personalScope(scope);
   assertCan(viewer, await roleIn(db, viewer, projectId), 'manageMembers');
   const matches = await findUsersByEmail(db, p.email);
-  if (!(await knowsAll(db, viewer, p.email, matches))) {
+  // With `userId` the answer is about that account alone (pickAccount), so only it must be known.
+  const named = p.userId === null ? matches : matches.filter((user) => user.id === p.userId);
+  if (!(await knowsAll(db, viewer, p.email, named))) {
     await countAttempt(deps, RATE_RULES.memberLookup, viewer.user.id);
   }
   const user = pickAccount(matches, p.userId);
