@@ -19,6 +19,8 @@ Every release of Pinwall, newest first. Versions follow [Semantic Versioning](ht
   count, refused ones included, so the limit still holds back probing for accounts. Attempts that
   never look an email up, by someone who is not the project's owner or with a malformed body, no
   longer count either.
+- **Choosing a mode.** The open-instance guide compares `team` and `personal` mode for a small
+  team, and the members guide says how to bring a team into several projects.
 
 ## 1.2.0
 

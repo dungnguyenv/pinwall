@@ -283,6 +283,12 @@ It depends on `PINWALL_VISIBILITY`. With `team`, the default, every member sees 
 `personal`, only you do, together with the people you add to a project and anyone you give a share
 link to. See [Spaces, projects and members](docs/spaces.md#your-space).
 
+**Which mode fits a small team?**
+Usually `team`: everyone who signs in sees every project, so there is nobody to add. Keep sign-in
+to your team with a member rule. Choose `personal` when strangers can sign in, or when people need
+projects nobody else sees; owners then add people with **Members**.
+[Choosing a mode](docs/open-instance.md#choosing-a-mode) compares the two.
+
 **Can I let anyone with a Google account sign up?**
 Yes, in `personal` mode, where each person gets a space of their own and sees nothing of anyone
 else's. Pair it with quotas, approval for sharing outside Pinwall and a separate content domain.
