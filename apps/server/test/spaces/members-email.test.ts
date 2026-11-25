@@ -499,19 +499,45 @@ describe.each(dialects)('adding project members by email on %s', (dialect: DbDia
     await inOwnContext(async (own) => {
       const fx = await spacesFixture(own);
       const { A } = fx.people;
-      const { D } = await sameEmailAccounts(own);
+      const { O, D } = await sameEmailAccounts(own);
       await letIn(own, fx.ids.P, D.user.id, 'viewer', A.user.id);
       await useUpLookups(A, fx.ids.P, { on: own });
 
       // D is in P, but O, the owner account, uses D's email too, and A has never seen it.
-      for (const add of [
-        { email: 'same@example.test', role: 'viewer' },
-        { email: 'same@example.test', role: 'viewer', user_id: D.user.id },
-      ]) {
-        expectStatus(await as(A, own).post(membersOf(fx.ids.Q), add), 429);
-      }
+      const add = { email: 'same@example.test', role: 'viewer' };
+      expectStatus(await as(A, own).post(membersOf(fx.ids.Q), add), 429);
+      expectStatus(await as(A, own).post(membersOf(fx.ids.Q), { ...add, user_id: O.user.id }), 429);
       expect(await storedRoles(own, fx.ids.Q)).toEqual({});
+
+      // Picking D, whom A knows, answers about D alone: not counted.
+      const picked = await as(A, own).post(membersOf(fx.ids.Q), { ...add, user_id: D.user.id });
+      expectStatus(picked, 201);
+      expect(picked.body).toEqual(asMember(D, 'viewer', T + 1000));
     });
+  });
+
+  test('only the projects you own make an email known', async () => {
+    const fx = await spacesFixture(ctx);
+    const { A, E, V } = fx.people;
+    // E edits A's P, where only A sees the emails. E's own project R gets E's own limit.
+    const R = await createProject(ctx.deps, E.user, { name: 'R' });
+    await useUpLookups(E, R.id);
+    for (const person of [V, A]) {
+      const r = await as(E).post(membersOf(R.id), { email: person.user.email, role: 'viewer' });
+      expectStatus(r, 429);
+    }
+    expect(await storedRoles(ctx, R.id)).toEqual({});
+  });
+
+  test('someone removed from your projects is counted again', async () => {
+    const fx = await spacesFixture(ctx);
+    const { A } = fx.people;
+    const B = await personWith(ctx, { kind: 'oidc', name: 'B', email: freshEmail() });
+    const addB = { email: B.user.email, role: 'viewer' };
+    expectStatus(await as(A).post(membersOf(fx.ids.P), addB), 201);
+    expectStatus(await as(A).del(`${membersOf(fx.ids.P)}/${B.user.id}`), 204);
+    await useUpLookups(A, fx.ids.P, { used: 1 });
+    expectStatus(await as(A).post(membersOf(fx.ids.Q), addB), 429);
   });
 
   test("an admin's lookups are not counted: user management shows every email anyway", async () => {

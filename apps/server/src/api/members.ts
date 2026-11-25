@@ -59,7 +59,7 @@ const addMemberRoute = createRoute({
   path: '/projects/{id}/members',
   tags: ['members'],
   summary: 'Add a member by email',
-  description: `Lets the person whose Pinwall account uses \`email\` (letter case aside) into the project as an \`editor\` or a \`viewer\`. Only the project's owner may. The account must be active, and an IdP account's email verified; someone who never signed in has no account yet. When several accounts use the email, the 409 lists them, and \`user_id\` picks one. The owner may look up 30 emails an hour, refused ones included; an email whose accounts are all members of the owner's projects is not counted, nor is any add by an admin. ${PERSONAL_ONLY}`,
+  description: `Lets the person whose Pinwall account uses \`email\` (letter case aside) into the project as an \`editor\` or a \`viewer\`. Only the project's owner may. The account must be active, and an IdP account's email verified; someone who never signed in has no account yet. When several accounts use the email, the 409 lists them, and \`user_id\` picks one. The owner may look up 30 emails an hour, refused ones included; an email whose accounts (or the one \`user_id\` picks) are all members of the owner's projects is not counted, nor is any add by an admin. ${PERSONAL_ONLY}`,
   middleware: [personalOnly, requireAuth, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
   security,
   request: {
