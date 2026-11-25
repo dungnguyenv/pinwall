@@ -10,6 +10,8 @@ Claude Code, Cursor, Codex and any MCP client publish HTML pages, static sites a
 Pinwall. You review every version in the browser, pin comments on the exact spot, and the agent
 reads them over MCP, fixes the page and publishes the next version.
 
+**Try it free on [pinwall.ap.vn](https://pinwall.ap.vn)**, or run your own with one `docker run`.
+
 [![CI](https://github.com/dungnguyenv/pinwall/actions/workflows/ci.yml/badge.svg)](https://github.com/dungnguyenv/pinwall/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/dungnguyenv/pinwall?sort=semver)](https://github.com/dungnguyenv/pinwall/releases)
 [![License: Apache-2.0](https://img.shields.io/github/license/dungnguyenv/pinwall)](LICENSE)
@@ -17,6 +19,7 @@ reads them over MCP, fixes the page and publishes the next version.
 [![Helm chart](https://img.shields.io/badge/helm-OCI%20chart-0F1689?logo=helm&logoColor=white)](deploy/helm/pinwall/README.md)
 [![MCP server](https://img.shields.io/badge/MCP-server%20with%20OAuth-6E56CF)](docs/connect-an-agent.md)
 
+[Try it](#try-it-on-pinwallapvn) ·
 [Quick start](#quick-start) ·
 [Connect an agent](#connect-an-agent) ·
 [Features](#features) ·
@@ -128,6 +131,41 @@ sequenceDiagram
   </tr>
 </table>
 
+## Try it on pinwall.ap.vn
+
+[pinwall.ap.vn](https://pinwall.ap.vn) is a public Pinwall that the maintainer runs on the latest
+release. Anyone with a Google account can sign up, and it is free.
+
+Connect Claude Code:
+
+```sh
+claude mcp add --transport http --scope user pinwall https://pinwall.ap.vn/mcp
+```
+
+Then type `/mcp`, pick **pinwall** and sign in with Google. Your browser opens on Pinwall, you
+approve the agent, and Claude Code keeps and renews its own access. Ask it to publish something, and
+open the review link it gives you. Cursor, Codex and other clients use the same address, see
+[Connect an agent](docs/connect-an-agent.md). The [Claude Code skill](docs/connect-an-agent.md#installing-the-skill)
+teaches your agent the publish, review and fix loop.
+
+What to expect there:
+
+- **Your work is private.** Only you see it, and the people you add to a project. Admins cannot
+  open it. See [Spaces, projects and members](docs/spaces.md).
+- **Limits per person:** currently 500 MB of storage, 200 artifacts, 50,000 files, and 50 MB for one
+  upload. **Settings → Usage** shows where you stand.
+- **Sharing outside Pinwall needs approval.** Reviewing, commenting and project members work right
+  away. Share links and raw pages work once an admin has approved you: ask at the contact address in
+  the [privacy notice](https://pinwall.ap.vn/privacy).
+- **Pages run apart from the app,** each version on its own host under `*.artifacts.io.vn`.
+- **Best effort, from one person.** There is no uptime guarantee, so keep a copy of anything that
+  matters. Do not publish secrets or confidential material: as with any hosted service, the operator
+  can technically reach the stored data. The [privacy notice](https://pinwall.ap.vn/privacy) says
+  what is kept and where.
+- **Leave at any time.** **Settings → Usage → Delete all my content** removes everything you own.
+
+For a team, your own data and your own sign-in, run Pinwall yourself.
+
 ## Quick start
 
 ```sh
@@ -216,6 +254,11 @@ else, which is the strongest isolation and the one to choose for a team. See
 | [Security](SECURITY.md) | The security model, verifying a release, reporting a vulnerability |
 
 ## FAQ
+
+**Can I use Pinwall without hosting it?**
+Yes. [pinwall.ap.vn](#try-it-on-pinwallapvn) is a free public instance: sign up with a Google
+account and connect your agent to `https://pinwall.ap.vn/mcp`. It runs in `personal` mode with
+quotas, so your work stays in a space of your own.
 
 **Which agents work with Pinwall?**
 Any client that speaks the Model Context Protocol over Streamable HTTP. Claude Code, Cursor and
