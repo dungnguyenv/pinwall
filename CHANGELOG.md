@@ -2,6 +2,24 @@
 
 Every release of Pinwall, newest first. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 1.2.1
+
+### Upgrading from 1.2.0
+
+- **No migration.** The database schema, the web app and the MCP tools stay as they are in 1.2.0.
+
+### Changed
+
+- **Adding project members counts only the lookups that could show the owner someone new**
+  ([#2](https://github.com/dungnguyenv/pinwall/issues/2)). The `member-lookup` limit, 30 an hour,
+  counted every `POST /api/v1/projects/{id}/members`, so an owner bringing 7 people into 26
+  projects waited about 6 hours. Now an add is not counted when every account that uses the email
+  is already a member of one of the owner's projects, nor when an admin adds someone, since user
+  management shows admins every email anyway. Emails the owner has not seen in their projects still
+  count, refused ones included, so the limit still holds back probing for accounts. Attempts that
+  never look an email up, by someone who is not the project's owner or with a malformed body, no
+  longer count either.
+
 ## 1.2.0
 
 ### Upgrading from 1.1

@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../app.ts';
+import type { AppDeps } from '../deps.ts';
 import { clientIp } from '../http/client-ip.ts';
 import { rateLimited } from '../lib/errors.ts';
 import { authOf } from './guards.ts';
@@ -35,7 +36,10 @@ export const RATE_RULES: {
   grant: { name: 'grant', limit: 600, windowMs: 3_600_000 },
   shareLinkCreate: { name: 'share-link-create', limit: 30, windowMs: 3_600_000 },
   projectCreate: { name: 'project-create', limit: 30, windowMs: 3_600_000 },
-  /** Adding a project member by email, per person: every attempt counts, refused ones too. */
+  /**
+   * An owner's add-by-email that could show them an account they do not know, per person: refused
+   * ones too. `addMember` decides which adds count (domain/members.ts).
+   */
   memberLookup: { name: 'member-lookup', limit: 30, windowMs: 3_600_000 },
   /**
    * A member's comment writes, per person: new threads, replies, edits, resolves and reopens.
@@ -55,9 +59,20 @@ export async function enforceRateLimit(
   rule: RateRule,
   key?: string,
 ): Promise<void> {
-  const { config, rateLimiter } = c.var.deps;
-  const subject = key ?? clientIp(c, config.trustProxy);
-  const { allowed, retryAfterMs } = await rateLimiter.consume(
+  const { deps } = c.var;
+  await countAttempt(deps, rule, key ?? clientIp(c, deps.config.trustProxy));
+}
+
+/**
+ * `enforceRateLimit` without a request, for code that decides itself whether an attempt counts:
+ * counts one attempt under `rule` for `subject` and throws `rate_limited` once it is used up.
+ */
+export async function countAttempt(
+  deps: Pick<AppDeps, 'rateLimiter'>,
+  rule: RateRule,
+  subject: string,
+): Promise<void> {
+  const { allowed, retryAfterMs } = await deps.rateLimiter.consume(
     `${rule.name}:${subject}`,
     rule.limit,
     rule.windowMs,

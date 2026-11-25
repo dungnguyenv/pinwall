@@ -11,6 +11,7 @@ import type { TestContext } from '../helpers/context.ts';
 import { dialects } from '../helpers/db.ts';
 import { type ErrorJson, type Reply, restClient } from '../helpers/rest.ts';
 import {
+  addMember as letIn,
   type Person,
   sameAnswer,
   spacesContext,
@@ -376,23 +377,48 @@ describe.each(dialects)('adding project members by email on %s', (dialect: DbDia
     expect(await storedRoles(ctx, fx.ids.P)).toEqual(before);
   });
 
-  test('add-by-email attempts are limited to 30 an hour per person', async () => {
+  /**
+   * Uses up the rest of `person`'s hour of lookups in `on`, `used` of which went already: adds of
+   * an email no account uses, then one more, refused.
+   */
+  async function useUpLookups(
+    person: Account,
+    projectId: string,
+    o: { on?: TestContext; used?: number } = {},
+  ) {
+    const on = o.on ?? ctx;
+    const lookup = () =>
+      as(person, on).post(membersOf(projectId), { email: NOBODY, role: 'viewer' });
+    for (let i = (o.used ?? 0) + 1; i <= 30; i++) {
+      const r = await lookup();
+      expect(r.status, `lookup ${i}: ${JSON.stringify(r.body)}`).toBe(404);
+    }
+    expectStatus(await lookup(), 429);
+  }
+
+  test("an owner's lookups of accounts they do not know are limited to 30 an hour", async () => {
     const fx = await spacesFixture(ctx);
-    const { A, E, S } = fx.people;
+    const { A } = fx.people;
     const members = membersOf(fx.ids.P);
     const newcomer = (name: string) => personWith(ctx, { kind: 'oidc', name, email: freshEmail() });
     const newcomers = [await newcomer('B'), await newcomer('C'), await newcomer('D')];
+    const U = await personWith(ctx, {
+      kind: 'oidc',
+      name: 'Unverified',
+      email: freshEmail(),
+      set: { email_verified: 0 },
+    });
     const N = await newcomer('N');
 
-    // 3 additions, then 9 rounds of the 3 refusals: 30 attempts.
+    // 3 additions of people A did not know, then 27 emails no account answers to: 30 lookups.
     const added: [unknown, number][] = newcomers.map((person) => [
       { email: person.user.email, role: 'viewer' },
       201,
     ]);
     const refused: [unknown, number][] = [
       [{ email: NOBODY, role: 'viewer' }, 404],
-      [{ email: E.user.email, role: 'viewer' }, 409],
-      [{ email: 'x' }, 400],
+      [{ email: U.user.email, role: 'viewer' }, 404],
+      [{ email: N.user.email, role: 'viewer', user_id: U.user.id }, 404],
     ];
     const tries = [...added, ...Array.from({ length: 9 }, () => refused).flat()];
     expect(tries).toHaveLength(30);
@@ -400,7 +426,6 @@ describe.each(dialects)('adding project members by email on %s', (dialect: DbDia
       const r = await as(A).post(members, body);
       expect(r.status, `attempt ${i + 1}: ${JSON.stringify(r.body)}`).toBe(status);
     }
-    expect(new Set(tries.map(([, status]) => status))).toEqual(new Set([201, 404, 409, 400]));
 
     const addN = { email: N.user.email, role: 'viewer' };
     const limited = await as(A).post<ErrorJson>(members, addN);
@@ -411,18 +436,115 @@ describe.each(dialects)('adding project members by email on %s', (dialect: DbDia
       details: { retry_after_seconds: 3600 },
     });
     expect(await storedRoles(ctx, fx.ids.P)).not.toHaveProperty(N.user.id);
-
-    // A stranger's probes count against their own limit; nobody else's.
-    for (let i = 1; i <= 30; i++) {
-      const r = await as(S).post(members, { email: NOBODY, role: 'viewer' });
-      expect(r.status, `S, attempt ${i}: ${JSON.stringify(r.body)}`).toBe(404);
+    // Whatever the email, an unknown address answers the same once the hour is used up.
+    for (const email of [NOBODY, U.user.email]) {
+      const r = await as(A).post(members, { email, role: 'viewer' });
+      sameAnswer(r, limited);
     }
-    expectStatus(await as(S).post(members, { email: NOBODY, role: 'viewer' }), 429);
-    expectStatus(await as(E).post(members, { email: NOBODY, role: 'viewer' }), 403);
 
     clockOf(ctx).advance(3_600_000);
     const later = await as(A).post(members, addN);
     expectStatus(later, 201);
     expect(later.body).toEqual(asMember(N, 'viewer', T + 3_600_000));
+  });
+
+  test('adding someone already in one of your projects is not counted', async () => {
+    const fx = await spacesFixture(ctx);
+    const { A, E, V } = fx.people;
+    const B = await personWith(ctx, { kind: 'oidc', name: 'B', email: freshEmail() });
+    expectStatus(
+      await as(A).post(membersOf(fx.ids.P), { email: B.user.email, role: 'viewer' }),
+      201,
+    );
+    await useUpLookups(A, fx.ids.P, { used: 1 });
+
+    // E and V joined P, and B was just added: A sees all three emails in Members already.
+    for (const [person, role] of [
+      [E, 'editor'],
+      [V, 'viewer'],
+      [B, 'viewer'],
+    ] as const) {
+      const r = await as(A).post(membersOf(fx.ids.Q), { email: person.user.email, role });
+      expectStatus(r, 201);
+      expect(r.body).toEqual(asMember(person, role));
+    }
+    // Refusals about people A knows are not counted either, in any letter case.
+    const twice = await as(A).post<ErrorJson>(membersOf(fx.ids.Q), {
+      email: String(E.user.email).toUpperCase(),
+      role: 'viewer',
+    });
+    expectStatus(twice, 409);
+    expect(twice.body.error.details).toEqual({ reason: 'already_member' });
+    const themselves = await as(A).post(membersOf(fx.ids.Q), {
+      email: A.user.email,
+      role: 'viewer',
+    });
+    expectStatus(themselves, 400);
+    expect(themselves.body).toEqual(self);
+    expect(await storedRoles(ctx, fx.ids.Q)).toEqual({
+      [E.user.id]: 'editor',
+      [V.user.id]: 'viewer',
+      [B.user.id]: 'viewer',
+    });
+
+    // Someone A does not know still waits for the hour.
+    const S = fx.people.S;
+    expectStatus(
+      await as(A).post(membersOf(fx.ids.Q), { email: S.user.email, role: 'viewer' }),
+      429,
+    );
+  });
+
+  test("a member's email that an account the owner does not know also uses is counted", async () => {
+    await inOwnContext(async (own) => {
+      const fx = await spacesFixture(own);
+      const { A } = fx.people;
+      const { D } = await sameEmailAccounts(own);
+      await letIn(own, fx.ids.P, D.user.id, 'viewer', A.user.id);
+      await useUpLookups(A, fx.ids.P, { on: own });
+
+      // D is in P, but O, the owner account, uses D's email too, and A has never seen it.
+      for (const add of [
+        { email: 'same@example.test', role: 'viewer' },
+        { email: 'same@example.test', role: 'viewer', user_id: D.user.id },
+      ]) {
+        expectStatus(await as(A, own).post(membersOf(fx.ids.Q), add), 429);
+      }
+      expect(await storedRoles(own, fx.ids.Q)).toEqual({});
+    });
+  });
+
+  test("an admin's lookups are not counted: user management shows every email anyway", async () => {
+    const fx = await spacesFixture(ctx);
+    const { S, X } = fx.people;
+    const R = await createProject(ctx.deps, X.user, { name: 'R' });
+    for (let i = 1; i <= 31; i++) {
+      const r = await as(X).post(membersOf(R.id), { email: NOBODY, role: 'viewer' });
+      expect(r.status, `lookup ${i}: ${JSON.stringify(r.body)}`).toBe(404);
+    }
+    const added = await as(X).post(membersOf(R.id), { email: S.user.email, role: 'viewer' });
+    expectStatus(added, 201);
+    expect(added.body).toEqual(asMember(S, 'viewer'));
+  });
+
+  test('only an owner looks accounts up: other attempts use up no limit', async () => {
+    const fx = await spacesFixture(ctx);
+    const { A, E, S } = fx.people;
+    const members = membersOf(fx.ids.P);
+    for (let i = 1; i <= 31; i++) {
+      const stranger = await as(S).post(members, { email: NOBODY, role: 'viewer' });
+      expect(stranger.status, `S, attempt ${i}: ${JSON.stringify(stranger.body)}`).toBe(404);
+      sameAnswer(
+        stranger,
+        await as(S).post(membersOf(UNKNOWN_IDS.P), { email: NOBODY, role: 'viewer' }),
+      );
+      expectStatus(await as(E).post(members, { email: NOBODY, role: 'viewer' }), 403);
+      expectStatus(await as(A).post(members, { email: 'x' }), 400);
+    }
+    // A's 30 lookups are all still there.
+    await useUpLookups(A, fx.ids.P);
+    // And a stranger's own project gets their whole hour too.
+    const R = await createProject(ctx.deps, S.user, { name: 'R' });
+    await useUpLookups(S, R.id);
   });
 });

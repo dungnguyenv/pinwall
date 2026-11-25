@@ -1,6 +1,7 @@
 import type { MemberCandidate, ProjectMember } from '@pinwall/shared';
 import type { Transaction } from 'kysely';
 import type { Db } from '../auth/passkeys.ts';
+import { countAttempt, RATE_RULES } from '../auth/rate-limits.ts';
 import { hasAccess } from '../auth/roles.ts';
 import { revokeProjectGrants } from '../content/grants.ts';
 import type { DbDialect } from '../db/connect.ts';
@@ -260,10 +261,47 @@ function pickAccount(matches: UserRow[], userId: string | null): UserRow {
 }
 
 /**
+ * Whether `viewer` already knows every account in `matches` (those that use `email`), so that
+ * the answer to looking them up shows them nothing new: an admin sees every account's email in
+ * user management, and an owner sees the emails of the members of their projects (and knows
+ * their own). No match is never known: that answer says no account uses the email.
+ *
+ * For anyone but an admin it runs the same query whatever `matches` holds, so how long a refusal
+ * takes does not tell an owner whose hour is used up whether the email has an account.
+ *
+ * Bounded leak, by design: once a person's hour is used up, a 429 for the email of someone they
+ * know (where the lookup would have been free) says that an account they do not know uses it
+ * too. That is one bit per member email they already see, never about an email they have not.
+ */
+async function knowsAll(
+  db: Db,
+  viewer: ViewerScope,
+  email: string,
+  matches: UserRow[],
+): Promise<boolean> {
+  if (viewer.admin) return true;
+  const members = await db
+    .selectFrom('project_members')
+    .innerJoin('projects', 'projects.id', 'project_members.project_id')
+    .innerJoin('users', 'users.id', 'project_members.user_id')
+    .select('project_members.user_id')
+    .distinct()
+    .where('projects.owner_id', '=', viewer.user.id)
+    .where((eb) => eb(eb.fn('lower', ['users.email']), '=', eb.fn('lower', [eb.val(email)])))
+    .execute();
+  const known = new Set([viewer.user.id, ...members.map((row) => row.user_id)]);
+  return matches.length > 0 && matches.every((user) => known.has(user.id));
+}
+
+/**
  * The owner lets the person with `email` into the project with `role`. The accounts are looked
  * up only once the viewer is known to be the owner: anyone else learns nothing about emails.
  * When several accounts use the email, `userId` picks one of them. Returns the new member in the
  * owner's view.
+ *
+ * The add counts against the owner's `memberLookup` limit unless they already know every account
+ * that uses the email (knowsAll), so adding the people of one project to the next is not slowed
+ * down. It counts before any answer about the email, refusals included.
  */
 export async function addMember(
   deps: AppDeps,
@@ -274,7 +312,11 @@ export async function addMember(
   const { db, dialect } = deps.db;
   const viewer = personalScope(scope);
   assertCan(viewer, await roleIn(db, viewer, projectId), 'manageMembers');
-  const user = pickAccount(await findUsersByEmail(db, p.email), p.userId);
+  const matches = await findUsersByEmail(db, p.email);
+  if (!(await knowsAll(db, viewer, p.email, matches))) {
+    await countAttempt(deps, RATE_RULES.memberLookup, viewer.user.id);
+  }
+  const user = pickAccount(matches, p.userId);
   if (user.id === viewer.user.id) throw badRequest(t('spaces.members.self'), { field: 'email' });
 
   const now = deps.clock.now();

@@ -143,7 +143,7 @@ addresses), and answer HTTP 429 `rate_limited` with the seconds to wait:
 | Content grants: review, raw links and previews | 600 per hour |
 | Share links created | 30 per hour |
 | Projects created | 30 per hour |
-| Adding a project member by email | 30 per hour |
+| Adding a project member by an email that could show the owner someone new (not a member of one of their projects; admins are not counted) | 30 per hour |
 | Comment writes: new threads, replies, edits, resolves and reopens, over REST and MCP | 60 per 10 minutes |
 | Agent file reads over MCP: `read_file`, `create_download_session` and `list_comments` | 600 per hour |
 

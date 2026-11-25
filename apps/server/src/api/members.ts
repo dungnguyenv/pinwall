@@ -9,8 +9,7 @@ import {
 import type { MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import type { AppEnv } from '../app.ts';
-import { authOf, requireAuth } from '../auth/guards.ts';
-import { RATE_RULES, rateLimit } from '../auth/rate-limits.ts';
+import { requireAuth } from '../auth/guards.ts';
 import { addMember, listMembers, removeMember, setMemberRole } from '../domain/members.ts';
 import { scopeOf } from '../domain/spaces.ts';
 import { jsonBodyLimit } from './body-limit.ts';
@@ -60,13 +59,8 @@ const addMemberRoute = createRoute({
   path: '/projects/{id}/members',
   tags: ['members'],
   summary: 'Add a member by email',
-  description: `Lets the person whose Pinwall account uses \`email\` (letter case aside) into the project as an \`editor\` or a \`viewer\`. Only the project's owner may. The account must be active, and an IdP account's email verified; someone who never signed in has no account yet. When several accounts use the email, the 409 lists them, and \`user_id\` picks one. Every attempt counts against the caller's limit of 30 an hour, refused ones included. ${PERSONAL_ONLY}`,
-  middleware: [
-    personalOnly,
-    requireAuth,
-    rateLimit(RATE_RULES.memberLookup, (c) => authOf(c).user.id),
-    jsonBodyLimit,
-  ] as MiddlewareHandler<AppEnv>[],
+  description: `Lets the person whose Pinwall account uses \`email\` (letter case aside) into the project as an \`editor\` or a \`viewer\`. Only the project's owner may. The account must be active, and an IdP account's email verified; someone who never signed in has no account yet. When several accounts use the email, the 409 lists them, and \`user_id\` picks one. The owner may look up 30 emails an hour, refused ones included; an email whose accounts are all members of the owner's projects is not counted, nor is any add by an admin. ${PERSONAL_ONLY}`,
+  middleware: [personalOnly, requireAuth, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
   security,
   request: {
     params: IdParam,
@@ -88,7 +82,9 @@ const addMemberRoute = createRoute({
     409: error(
       'Several accounts use the email and no `user_id` picks one (`conflict`, `details.reason` `several_accounts`, `details.candidates`), or the person is already a member (`conflict`, `details.reason` `already_member`)',
     ),
-    429: error('Over 30 attempts in an hour by the caller (`rate_limited`, with `Retry-After`)'),
+    429: error(
+      'Over 30 counted lookups in an hour by the owner (`rate_limited`, with `Retry-After`)',
+    ),
   },
 });
 

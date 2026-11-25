@@ -85,7 +85,8 @@ or **Viewer**, and choose **Add**.
   **Which account?** lists them with their name and how each signs in, and you choose one.
 - You cannot add yourself, and adding someone twice is refused: change their role instead.
 - Looking up emails is limited to 30 an hour, because the answer shows whether an address has an
-  account.
+  account. Only emails that could show you someone new count: adding a person who is already a
+  member of one of your projects is not counted, and neither is anything an admin adds.
 
 **Changing a role and removing someone.** The owner changes a person's role in the list, or
 removes them with the bin button beside their name, after a confirmation.
