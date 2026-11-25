@@ -88,6 +88,14 @@ or **Viewer**, and choose **Add**.
   account. Only emails that could show you someone new count: adding a person who is already a
   member of one of your projects is not counted, and neither is anything an admin adds.
 
+**Bringing a team in.** To give several people several projects, add each person to one project
+first. That is one lookup per person. Adding them to your other projects after that is not counted,
+so it is never held up by the hourly limit. A script can do the same through the REST API with a
+token from **Settings → API tokens**: `POST /api/v1/projects/{id}/members` with the person's
+`email` and a `role`. When it answers 429, wait the seconds in `Retry-After`. If everyone on your
+Pinwall should see every project, ask its operator whether `team` mode fits better, see
+[Choosing a mode](open-instance.md#choosing-a-mode).
+
 **Changing a role and removing someone.** The owner changes a person's role in the list, or
 removes them with the bin button beside their name, after a confirmation.
 

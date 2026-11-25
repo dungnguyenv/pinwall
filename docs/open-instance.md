@@ -5,6 +5,7 @@ their own, and nobody sees another person's work. This guide gives the settings 
 to change an instance that already holds work, what the limits do, who may share pages outside
 Pinwall, and what to do when someone reports abuse.
 
+- [Choosing a mode](#choosing-a-mode)
 - [Settings](#settings)
 - [Order of operations](#order-of-operations)
 - [Quotas and rate limits](#quotas-and-rate-limits)
@@ -25,6 +26,30 @@ Adding someone to a project needs no consent from them. Any owner can put a proj
 **Shared with me**, admins included, and add them again after they leave. A project's instructions
 are text its owner wrote for agents to follow, so an agent connected to a stranger's project reads a
 stranger's instructions. Treat such projects as you would any text from someone you do not know.
+
+## Choosing a mode
+
+This guide is for an instance that people you do not know can sign in to. A small team whose people
+trust each other is often better served by `team` mode, the default:
+
+| | `team` | `personal` |
+| --- | --- | --- |
+| Who sees a project | everyone who signs in | its owner, and the people the owner adds |
+| Roles in a project | none: every member can publish, rename and delete in every project, as in 1.0 | owner, editor and viewer |
+| A new person | sees every project at once | starts with an empty space, until owners add them |
+| Work nobody else sees | none | every project its owner has not shared |
+
+- **Choose `team`** when everyone who can sign in may see everything. Keep sign-in to your team
+  then, with a member rule (`PINWALL_OIDC_MEMBER_GROUPS`, `PINWALL_MEMBER_DOMAINS` or
+  `PINWALL_MEMBER_EMAILS`, see [Sign-in](sign-in.md)): in `team` mode everyone the provider admits
+  sees every project.
+- **Choose `personal`** when strangers can sign in, or when people need projects that nobody else
+  sees. Owners then bring people in with **Members**. Each person costs the owner one email lookup,
+  and adding them to the owner's other projects after that is free, see
+  [Project members](spaces.md#project-members).
+- **Going from `personal` back to `team`** shows every project to every member, so Pinwall asks you
+  to confirm it once with `pinwall visibility team --confirm`, see
+  [Moving work between people](#moving-work-between-people).
 
 ## Settings
 
