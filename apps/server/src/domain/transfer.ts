@@ -134,7 +134,8 @@ export async function transferContent(
         : 0;
     await trx
       .updateTable('projects')
-      .set({ owner_id: to.id, updated_at: now })
+      // The new owner never chose to show these projects to everyone: they move private.
+      .set({ owner_id: to.id, updated_at: now, visible_to_everyone: 0 })
       .where('id', 'in', ids)
       .execute();
     const artifacts = await trx

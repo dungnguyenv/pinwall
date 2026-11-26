@@ -292,7 +292,8 @@ or a team's work that the rest of the organization may read.
 - **Everyone views it as a viewer.** They see its artifacts, versions and comments, find them in
   search, and comment. They cannot publish, make share links or change anything. People the owner
   added keep their roles.
-- **They see the members' names,** as a viewer does, never their emails.
+- **They see what any viewer sees:** the members' names but never their emails, and which artifacts
+  have share links and who made them, but never the links themselves.
 - **A default project cannot be visible to everyone,** because agents publish there when they name
   no project. The owner makes a project of its own for everyone.
 - **Turning it off takes effect at once:** the project and its pages stop opening for everyone who
@@ -301,8 +302,13 @@ or a team's work that the rest of the organization may read.
   share links, and a project stays visible to everyone only while its owner is still approved.
   Taking an approval back, or blocking the owner, hides their projects from everyone else at once.
   Approving the owner again brings back the projects they had opened.
+- **A project is visible to everyone only while its owner can still use Pinwall,** as with their share
+  links: blocking or disabling the owner, or their removal at your identity provider, hides it.
+  Pinwall keeps asking the provider about such owners even while they are signed out.
 - **Turning the setting off** hides every such project from everyone but its owner and members, and
   turning it on again brings them back. The owners' choices are kept.
+- **`pinwall transfer` makes the projects it moves private,** since the new owner never chose to
+  show them to everyone.
 
 It is off by default because, where anyone can sign up, "everyone who signs in" can mean anyone
 with an account at your identity provider. On such an instance, keep `PINWALL_SHARE_LINKS=approved`

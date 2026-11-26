@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import { type Expression, type SqlBool, sql, type Transaction } from 'kysely';
 import type { AppEnv } from '../app.ts';
 import { authOf } from '../auth/guards.ts';
+import { MAX_IDP_STALENESS_MS } from '../auth/oidc/gate.ts';
 import type { Db } from '../auth/passkeys.ts';
 import { effectiveRole } from '../auth/roles.ts';
 import type { Config, Visibility } from '../config/types.ts';
@@ -14,13 +15,14 @@ import { newId } from '../lib/ids.ts';
 import { ensureDefaultProject } from './projects.ts';
 import {
   type EveryoneRule,
+  type EveryoneSight,
   everyoneProjects,
   personalViewer,
   visibleCondition,
 } from './visible-condition.ts';
 
 // Lives in visible-condition.ts, where the database layer can load it, and is part of this API.
-export { type EveryoneRule, visibleCondition };
+export { type EveryoneRule, type EveryoneSight, visibleCondition };
 
 /** What someone is to a project they can see. */
 export type ProjectRole = 'owner' | MemberRole;
@@ -34,7 +36,7 @@ export type ViewerScope = {
   user: UserRow;
   visibility: Visibility;
   admin: boolean;
-  everyone: EveryoneRule;
+  everyone: EveryoneSight;
 };
 
 /**
@@ -62,7 +64,25 @@ export function scopeForUser(deps: AppDeps, user: UserRow): ViewerScope {
     user,
     visibility: deps.config.visibility,
     admin: effectiveRole(user) === 'admin',
-    everyone: everyoneRule(deps.config),
+    everyone: everyoneSight(deps.config, deps.clock.now()),
+  };
+}
+
+/**
+ * The instance's `EveryoneRule` as `everyoneProjects` reads it at `now`: the times after which an
+ * IdP owner's last check must fall to be current (`idpAccessDeadline`), with a refresh token and
+ * without one.
+ */
+export function everyoneSight(
+  config: Pick<Config, 'visibility' | 'everyoneProjects' | 'shareLinks' | 'access'>,
+  now: number,
+): EveryoneSight {
+  const rule = everyoneRule(config);
+  if (rule === 'off') return 'off';
+  return {
+    rule,
+    checkedAfterWithRefresh: now - MAX_IDP_STALENESS_MS,
+    checkedAfterWithout: now - config.access.recheckIntervalMs,
   };
 }
 
@@ -122,10 +142,10 @@ function isEveryone(row: StandingRow): boolean {
 
 /**
  * Projects, each with the viewer's membership role in it (null when not a member), and
- * `everyone` 1 when it is visible to everyone under `rule` (else 0).
+ * `everyone` 1 when it is visible to everyone under `sight` (else 0).
  */
-function projectsWithMembership(db: Db, userId: string, rule: EveryoneRule) {
-  const everyone = everyoneProjects(rule);
+function projectsWithMembership(db: Db, userId: string, sight: EveryoneSight) {
+  const everyone = everyoneProjects(sight);
   return db
     .selectFrom('projects')
     .leftJoin('project_members', (join) =>

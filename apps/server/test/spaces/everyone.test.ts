@@ -1,5 +1,6 @@
 import type { Project, ProjectList, ProjectMemberList, PublicConfig } from '@pinwall/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { idpAccessCurrent, MAX_IDP_STALENESS_MS } from '../../src/auth/oidc/gate.ts';
 import { effectiveRole, hasAccess, type Role } from '../../src/auth/roles.ts';
 import { createGrant, resolveGrant } from '../../src/content/grants.ts';
 import type { DbDialect } from '../../src/db/connect.ts';
@@ -7,7 +8,8 @@ import type { RoleOverride, UserKind } from '../../src/db/schema.ts';
 import type { AppDeps } from '../../src/deps.ts';
 import { mayExpose } from '../../src/domain/exposure.ts';
 import { getProject } from '../../src/domain/projects.ts';
-import { defaultProjectFor, scopeForUser } from '../../src/domain/spaces.ts';
+import { defaultProjectFor, SYSTEM_SCOPE, scopeForUser } from '../../src/domain/spaces.ts';
+import { transferContent } from '../../src/domain/transfer.ts';
 import { t } from '../../src/lib/i18n.ts';
 import { newId } from '../../src/lib/ids.ts';
 import type { TestContext } from '../helpers/context.ts';
@@ -403,60 +405,86 @@ describe.each(dialects)('projects visible to everyone on %s', (dialect: DbDialec
     });
     afterAll(() => ctx?.close());
 
-    test('agrees with hasAccess and mayExpose for every kind of owner', async () => {
+    test('agrees with hasAccess, idpAccessCurrent and mayExpose for every kind of owner', async () => {
       const { db } = ctx.deps.db;
       const viewer = await spacesFixture(ctx);
       const { S } = viewer.people;
-      const kinds: UserKind[] = ['owner', 'oidc'];
-      const idpRoles: (Role | null)[] = [null, 'member', 'admin'];
-      const overrides: (RoleOverride | null)[] = [null, 'member', 'admin', 'blocked'];
-      const cases: { id: string; projectId: string }[] = [];
-      for (const kind of kinds) {
-        for (const idpRole of idpRoles) {
-          for (const override of overrides) {
-            for (const approved of [0, 1] as const) {
-              for (const disabled of [null, T]) {
-                const id = newId('usr');
-                const oidc = kind === 'oidc';
-                await db
-                  .insertInto('users')
-                  .values({
-                    id,
-                    kind,
-                    name: id,
-                    email: null,
-                    email_verified: 0,
-                    idp_role: idpRole,
-                    role_override: override,
-                    share_approved: approved,
-                    disabled_at: disabled,
-                    oidc_issuer: oidc ? 'https://idp.example.test' : null,
-                    oidc_subject: oidc ? id : null,
-                    idp_checked_at: oidc ? T : null,
-                    created_at: T,
-                  })
-                  .execute();
-                const projectId = newId('prj');
-                await db
-                  .insertInto('projects')
-                  .values({
-                    id: projectId,
-                    name: id,
-                    instructions: '',
-                    is_default: 0,
-                    archived_at: null,
-                    owner_id: id,
-                    created_by: id,
-                    created_at: T,
-                    updated_at: T,
-                    visible_to_everyone: 1,
-                  })
-                  .execute();
-                cases.push({ id, projectId });
+      const recheck = ctx.deps.config.access.recheckIntervalMs;
+      type Owner = {
+        kind: UserKind;
+        idp_role: Role | null;
+        role_override: RoleOverride | null;
+        share_approved: 0 | 1;
+        disabled_at: number | null;
+        idp_checked_at: number | null;
+        idp_refresh_token: string | null;
+      };
+      const owners: Owner[] = [];
+      for (const share_approved of [0, 1] as const) {
+        for (const disabled_at of [null, T]) {
+          owners.push({
+            kind: 'owner',
+            idp_role: null,
+            role_override: null,
+            share_approved,
+            disabled_at,
+            idp_checked_at: null,
+            idp_refresh_token: null,
+          });
+          for (const idp_role of [null, 'member', 'admin'] as const) {
+            for (const role_override of [null, 'member', 'admin', 'blocked'] as const) {
+              // Never checked; just now; past a re-check without a refresh token; past any bound.
+              for (const idp_checked_at of [null, T, T - recheck - 1, T - MAX_IDP_STALENESS_MS]) {
+                for (const idp_refresh_token of [null, 'refresh']) {
+                  owners.push({
+                    kind: 'oidc',
+                    idp_role,
+                    role_override,
+                    share_approved,
+                    disabled_at,
+                    idp_checked_at,
+                    idp_refresh_token,
+                  });
+                }
               }
             }
           }
         }
+      }
+      const cases: { id: string; projectId: string }[] = [];
+      for (const owner of owners) {
+        const id = newId('usr');
+        const oidc = owner.kind === 'oidc';
+        await db
+          .insertInto('users')
+          .values({
+            id,
+            name: id,
+            email: null,
+            email_verified: 0,
+            oidc_issuer: oidc ? 'https://idp.example.test' : null,
+            oidc_subject: oidc ? id : null,
+            created_at: T,
+            ...owner,
+          })
+          .execute();
+        const projectId = newId('prj');
+        await db
+          .insertInto('projects')
+          .values({
+            id: projectId,
+            name: id,
+            instructions: '',
+            is_default: 0,
+            archived_at: null,
+            owner_id: id,
+            created_by: id,
+            created_at: T,
+            updated_at: T,
+            visible_to_everyone: 1,
+          })
+          .execute();
+        cases.push({ id, projectId });
       }
       for (const shareLinks of ['members', 'approved'] as const) {
         const deps = { ...ctx.deps, config: { ...ctx.deps.config, shareLinks } };
@@ -466,11 +494,36 @@ describe.each(dialects)('projects visible to everyone on %s', (dialect: DbDialec
             .selectAll()
             .where('id', '=', id)
             .executeTakeFirstOrThrow();
-          const expected = hasAccess(owner) && mayExpose(deps.config, owner);
-          const label = `${shareLinks}: ${owner.kind} idp=${owner.idp_role} override=${owner.role_override} approved=${owner.share_approved} disabled=${owner.disabled_at !== null} (${effectiveRole(owner)})`;
+          const expected =
+            hasAccess(owner) &&
+            idpAccessCurrent(owner, T, deps.config) &&
+            mayExpose(deps.config, owner);
+          const label = `${shareLinks}: ${owner.kind} idp=${owner.idp_role} override=${owner.role_override} approved=${owner.share_approved} disabled=${owner.disabled_at !== null} checked=${owner.idp_checked_at} refresh=${owner.idp_refresh_token !== null} (${effectiveRole(owner)})`;
           expect(await sees(deps, S, projectId), label).toBe(expected);
         }
       }
+    });
+  });
+
+  describe('moving a space', () => {
+    let ctx: TestContext;
+    beforeAll(async () => {
+      ctx = await spacesContext(dialect, 'personal', EVERYONE_ON);
+    });
+    afterAll(() => ctx?.close());
+
+    test('projects moved to someone else become private: the new owner never chose otherwise', async () => {
+      const fx = await spacesFixture(ctx);
+      const { A, V, S } = fx.people;
+      expectStatus(
+        await restClient(ctx, A.cookie).patch(`/projects/${fx.ids.P}`, makeVisible(true)),
+        200,
+      );
+      expect(await sees(ctx.deps, S, fx.ids.P)).toBe(true);
+      await transferContent(ctx.deps, SYSTEM_SCOPE, A.user, V.user);
+      expect(await sees(ctx.deps, S, fx.ids.P)).toBe(false);
+      const moved = await restClient(ctx, V.cookie).get<Project>(`/projects/${fx.ids.P}`);
+      expect(moved.body).toMatchObject({ role: 'owner', visible_to_everyone: false });
     });
   });
 });

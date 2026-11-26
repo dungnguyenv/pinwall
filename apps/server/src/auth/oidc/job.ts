@@ -1,4 +1,5 @@
 import type { AppDeps } from '../../deps.ts';
+import { everyoneRule } from '../../domain/spaces.ts';
 import { oidcErrorCode, oidcRuntime } from './client.ts';
 import { type RecheckOutcome, recheckUser } from './recheck.ts';
 
@@ -23,8 +24,10 @@ export interface RecheckSummary {
  * use Pinwall, holding a refresh token and at least one live credential (a session that has not
  * expired, an API token neither revoked nor expired, an OAuth grant not revoked, or a share link
  * they made that is neither revoked nor expired, since its guests see what it shows whether or
- * not its maker is signed in). Someone with no live credential cannot use Pinwall, so the IdP is
- * not asked about them until they sign in.
+ * not its maker is signed in), or, where projects may be visible to everyone, a project of theirs
+ * they made visible to everyone, which everyone sees only while their IdP check is current.
+ * Someone with none of these cannot use Pinwall, so the IdP is not asked about them until they
+ * sign in.
  */
 async function dueUserIds(deps: AppDeps, issuer: string): Promise<string[]> {
   const now = deps.clock.now();
@@ -81,6 +84,18 @@ async function dueUserIds(deps: AppDeps, issuer: string): Promise<string[]> {
                 ]),
               ),
           ),
+          ...(everyoneRule(deps.config) === 'off'
+            ? []
+            : [
+                eb.exists(
+                  eb
+                    .selectFrom('projects')
+                    .select('projects.id')
+                    .whereRef('projects.owner_id', '=', 'users.id')
+                    .where('projects.visible_to_everyone', '=', 1)
+                    .where('projects.is_default', '=', 0),
+                ),
+              ]),
         ]),
       ]),
     )
