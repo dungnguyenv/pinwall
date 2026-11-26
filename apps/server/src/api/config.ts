@@ -3,6 +3,7 @@ import { PublicConfig } from '@pinwall/shared';
 import type { AppEnv } from '../app.ts';
 import { ownerExists } from '../auth/users.ts';
 import { passkeysAvailable } from '../auth/webauthn.ts';
+import { everyoneRule } from '../domain/spaces.ts';
 
 const publicConfig = createRoute({
   method: 'get',
@@ -30,6 +31,7 @@ export function registerConfigRoutes(api: OpenAPIHono<AppEnv>): void {
       // New fields are sent only in personal mode or when set: a default instance answers as 1.0 did.
       ...(config.visibility === 'personal' ? { visibility: 'personal' as const } : {}),
       ...(config.shareLinks === 'approved' ? { share_links: 'approved' as const } : {}),
+      ...(everyoneRule(config) === 'off' ? {} : { everyone_projects: true as const }),
       ...(config.abuseContact === null ? {} : { abuse_contact: config.abuseContact }),
       ...(config.termsUrl === null ? {} : { terms_url: config.termsUrl }),
       ...(config.privacyUrl === null ? {} : { privacy_url: config.privacyUrl }),

@@ -195,11 +195,14 @@ function defaultFirst(projects: Project[]): Project[] {
 }
 
 /**
- * What a project shared with the person says under its name: whose it is and
- * what they may do in it. Their own projects, and every project in team mode,
- * say nothing.
+ * What a project says under its name: for one shared with the person, whose it
+ * is and what they may do in it; for their own, that everyone may view it, when
+ * that is so. Other own projects, and every project in team mode, say nothing.
  */
 function sharedNote(project: Project, t: TFunction): string | undefined {
+  if (project.role === 'owner' && project.everyone_can_view === true) {
+    return t('web.sidebar.visibleToEveryone');
+  }
   if (project.role !== 'editor' && project.role !== 'viewer') return undefined;
   return t('web.sidebar.sharedBy', {
     owner: project.owner?.name ?? t('web.project.someone'),
@@ -221,12 +224,16 @@ function ProjectsSection({ onNavigate }: { onNavigate?: () => void }) {
   const projects = useProjects(false);
   const headingId = useId();
   const sharedHeadingId = useId();
+  const everyoneHeadingId = useId();
   const archivedId = useId();
   const archivedButtonId = useId();
   // The archived list loads only once someone asks for it.
   const [archivedOpen, setArchivedOpen] = useState(false);
-  // In team mode every project is the person's own, so nothing is shared.
-  const { own, shared } = splitProjects(projects.data?.items ?? []);
+  // In team mode every project is the person's own, so nothing is shared. Someone else's project
+  // that everyone may view goes under its own heading, even for its members.
+  const { own, shared: allShared } = splitProjects(projects.data?.items ?? []);
+  const shared = allShared.filter((project) => project.everyone_can_view !== true);
+  const everyone = allShared.filter((project) => project.everyone_can_view === true);
 
   return (
     <div>
@@ -246,6 +253,16 @@ function ProjectsSection({ onNavigate }: { onNavigate?: () => void }) {
           <LinkRows
             items={projectLinks(shared, t)}
             labelledBy={sharedHeadingId}
+            onNavigate={onNavigate}
+          />
+        </>
+      ) : null}
+      {everyone.length > 0 ? (
+        <>
+          <SectionHeading id={everyoneHeadingId}>{t('web.sidebar.everyone')}</SectionHeading>
+          <LinkRows
+            items={projectLinks(everyone, t)}
+            labelledBy={everyoneHeadingId}
             onNavigate={onNavigate}
           />
         </>

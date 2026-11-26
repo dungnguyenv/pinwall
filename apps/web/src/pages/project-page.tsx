@@ -237,12 +237,16 @@ function ProjectView({ projectId }: { projectId: string }) {
   });
   // A project shared with the person says whose it is and what they may do in it.
   const owner = p.owner?.name ?? t('web.project.someone');
-  const sharedNote =
+  const roleNote =
     p.role === 'editor'
       ? t('web.project.sharedEditor', { owner })
       : p.role === 'viewer'
         ? t('web.project.sharedViewer', { owner })
         : null;
+  // Whoever sees a project that everyone may view is told so, its owner above all.
+  const everyoneNote = p.everyone_can_view === true ? t('web.project.everyoneNote') : null;
+  const sharedNote =
+    roleNote && everyoneNote ? `${roleNote} · ${everyoneNote}` : (roleNote ?? everyoneNote);
   const uploadButton = (label: string, variant: 'primary' | 'secondary') => (
     <UploadButton
       label={label}

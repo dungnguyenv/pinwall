@@ -46,6 +46,7 @@ describe.each(dialects)('projects on %s', (dialect) => {
       created_at: T,
       updated_at: T,
       owner_id: null,
+      visible_to_everyone: 0,
     };
     expect(made).toEqual([expected, expected, expected]);
     expect(await projectRows()).toEqual([expected]);
@@ -96,6 +97,7 @@ describe.each(dialects)('projects on %s', (dialect) => {
       created_at: T,
       updated_at: T,
       owner_id: actor.id,
+      visible_to_everyone: 0,
     });
     expect(await getProject(ctx.deps.db.db, SYSTEM_SCOPE, project.id)).toEqual(project);
 

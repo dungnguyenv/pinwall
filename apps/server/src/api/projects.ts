@@ -23,7 +23,7 @@ import {
   updateProject,
   withArtifactCounts,
 } from '../domain/projects.ts';
-import { defaultProjectFor, rolesIn, type Scope, scopeOf, seesAll } from '../domain/spaces.ts';
+import { defaultProjectFor, type Scope, scopeOf, seesAll, standingsIn } from '../domain/spaces.ts';
 import { jsonBodyLimit } from './body-limit.ts';
 import { IdParam, ListQuery } from './pagination.ts';
 
@@ -106,9 +106,9 @@ const patchProjectRoute = createRoute({
   method: 'patch',
   path: '/projects/{id}',
   tags: ['projects'],
-  summary: 'Rename, describe, archive or unarchive a project',
+  summary: 'Rename, describe, archive or unarchive a project, or make it visible to everyone',
   description:
-    'Only the fields given change. `archived: true` archives the project, which hides its artifacts from the default list and from search, and stops publishes into it; `false` brings it back. The default project cannot be archived.',
+    'Only the fields given change. `archived: true` archives the project, which hides its artifacts from the default list and from search, and stops publishes into it; `false` brings it back. The default project cannot be archived. `visible_to_everyone: true` lets everyone who signs in view the project and comment on it as a viewer, where the instance allows it (`everyone_projects` in `GET /config/public`); with `PINWALL_SHARE_LINKS=approved` only while the owner may make share links. A default project cannot be visible to everyone. `false` keeps the project to its owner and members again, at once.',
   middleware: [requireAuth, jsonBodyLimit] as MiddlewareHandler<AppEnv>[],
   security,
   request: {
@@ -117,13 +117,15 @@ const patchProjectRoute = createRoute({
   },
   responses: {
     200: { description: 'The project', content: { 'application/json': { schema: Project } } },
-    400: error('Invalid fields'),
+    400: error(
+      'Invalid fields, or `visible_to_everyone: true` where the instance does not allow it (`bad_request`, `details.field` `visible_to_everyone`)',
+    ),
     ...authErrors,
     403: error(
-      "In personal mode, someone other than the project's owner (`forbidden`, `details.reason` `role`), or a cross-site request with the session cookie (`forbidden`)",
+      "In personal mode, someone other than the project's owner (`forbidden`, `details.reason` `role`); `visible_to_everyone: true` from an owner who may not make share links (`forbidden`, `details.reason` `share_links_not_approved`); or a cross-site request with the session cookie (`forbidden`)",
     ),
     ...notFoundError,
-    409: error('The default project cannot be archived (`conflict`)'),
+    409: error('The default project cannot be archived, nor made visible to everyone (`conflict`)'),
   },
 });
 
@@ -140,28 +142,34 @@ export function toProject(row: ProjectWithCount): Project {
   };
 }
 
-/** What a personal-mode response adds to a project: who owns it and what the viewer is to it. */
-export type SpaceFields = Pick<Project, 'owner' | 'role'>;
+/**
+ * What a personal-mode response adds to a project: who owns it, what the viewer is to it, and
+ * whether everyone sees it (with the owner's own choice, for the owner).
+ */
+export type SpaceFields = Pick<
+  Project,
+  'owner' | 'role' | 'everyone_can_view' | 'visible_to_everyone'
+>;
 
 /**
- * For each of `rows`, its owner and the viewer's role in it, loaded for all rows at once (one
- * query for the owners' names, one for the roles); `null` in team mode, which shows neither. The
- * rows come from lookups in the viewer's scope.
+ * For each of `rows`, its owner, the viewer's role in it and whether everyone sees it, loaded for
+ * all rows at once (one query for the owners' names, one for the roles); `null` in team mode,
+ * which shows none of them. The rows come from lookups in the viewer's scope.
  */
 export async function spaceFieldsOf(
   deps: AppDeps,
   scope: Scope,
-  rows: readonly Pick<ProjectRow, 'id' | 'owner_id'>[],
+  rows: readonly Pick<ProjectRow, 'id' | 'owner_id' | 'visible_to_everyone'>[],
 ): Promise<Map<string, SpaceFields> | null> {
   if (seesAll(scope)) return null;
   if (rows.length === 0) return new Map();
   const { db } = deps.db;
   const ownerIds = [...new Set(rows.flatMap((row) => row.owner_id ?? []))];
-  const [owners, roles] = await Promise.all([
+  const [owners, standings] = await Promise.all([
     ownerIds.length === 0
       ? []
       : db.selectFrom('users').select(['id', 'name']).where('id', 'in', ownerIds).execute(),
-    rolesIn(
+    standingsIn(
       db,
       scope,
       rows.map((row) => row.id),
@@ -171,12 +179,17 @@ export async function spaceFieldsOf(
   return new Map(
     rows.map((row) => {
       const owner = row.owner_id === null ? undefined : ownerById.get(row.owner_id);
-      const role = roles.get(row.id);
+      const standing = standings.get(row.id);
       return [
         row.id,
         {
           owner: owner === undefined ? null : { id: owner.id, name: owner.name },
-          ...(role === undefined ? {} : { role }),
+          ...(standing === undefined
+            ? {}
+            : { role: standing.role, everyone_can_view: standing.everyone }),
+          ...(standing?.role === 'owner'
+            ? { visible_to_everyone: row.visible_to_everyone === 1 }
+            : {}),
         },
       ];
     }),
@@ -251,6 +264,9 @@ export function registerProjectRoutes(api: OpenAPIHono<AppEnv>): void {
       ...(body.name === undefined ? {} : { name: body.name }),
       ...(body.instructions === undefined ? {} : { instructions: body.instructions }),
       ...(body.archived === undefined ? {} : { archived: body.archived }),
+      ...(body.visible_to_everyone === undefined
+        ? {}
+        : { visibleToEveryone: body.visible_to_everyone }),
     });
     return c.json(await projectOf(deps, scope, row), 200, noStore);
   });

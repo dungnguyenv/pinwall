@@ -160,6 +160,11 @@ export interface ProjectsTable {
    * has adopted yet (spec §8.1). An owner has at most one default project.
    */
   owner_id: string | null;
+  /**
+   * 1 when the owner chose to let everyone who signs in view the project (`0004_everyone`). It is
+   * in effect only as `everyoneProjects` (domain/visible-condition.ts) decides when it is read.
+   */
+  visible_to_everyone: Generated<DbBool>;
 }
 
 export type MemberRole = 'editor' | 'viewer';

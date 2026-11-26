@@ -378,6 +378,7 @@ describe.each(dialects)('spaces on %s', (dialect) => {
       user: member,
       visibility: 'personal',
       admin: false,
+      everyone: 'off',
     });
     expect(scopeForUser(ctx.deps, admin)).toMatchObject({ visibility: 'personal', admin: true });
     expect(scopeForUser(ctx.deps, owner)).toMatchObject({ admin: true });

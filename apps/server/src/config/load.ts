@@ -497,6 +497,7 @@ export function loadConfig(
       'PINWALL_SHARE_LINKS',
       z.enum(['members', 'approved'], { error: 'must be "members" or "approved"' }),
     ) ?? 'members';
+  const everyoneProjects = r.read('PINWALL_EVERYONE_PROJECTS', stringBoolean) ?? false;
   const abuseContact = r.read('PINWALL_ABUSE_CONTACT', custom(parseAbuseContact)) ?? null;
   const termsUrl = r.read('PINWALL_TERMS_URL', custom(parsePolicyUrl)) ?? null;
   const privacyUrl = r.read('PINWALL_PRIVACY_URL', custom(parsePolicyUrl)) ?? null;
@@ -547,6 +548,7 @@ export function loadConfig(
     access,
     visibility,
     shareLinks,
+    everyoneProjects,
     abuseContact,
     termsUrl,
     privacyUrl,

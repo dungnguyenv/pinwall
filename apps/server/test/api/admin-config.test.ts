@@ -171,6 +171,7 @@ describe('describeConfig', () => {
       'access PINWALL_ACCESS_RECHECK_INTERVAL',
       'spaces PINWALL_VISIBILITY',
       'spaces PINWALL_SHARE_LINKS',
+      'spaces PINWALL_EVERYONE_PROJECTS',
       'spaces PINWALL_ABUSE_CONTACT',
       'spaces PINWALL_TERMS_URL',
       'spaces PINWALL_PRIVACY_URL',

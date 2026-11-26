@@ -91,7 +91,10 @@ const GetArtifactIn = z.object({
     .describe('How many of the newest versions to list.'),
 });
 
-/** `space`: the owner and role a personal-mode viewer sees (`spaceFieldsOf`); none in team mode. */
+/**
+ * `space`: the owner, role and whether everyone sees it, as a personal-mode viewer sees them
+ * (`spaceFieldsOf`); none in team mode.
+ */
 function toProjectOut(row: ProjectRow, space?: SpaceFields): ProjectOut {
   return {
     id: row.id,
@@ -100,7 +103,15 @@ function toProjectOut(row: ProjectRow, space?: SpaceFields): ProjectOut {
     archived: row.archived_at !== null,
     // Instructions of nothing but blank space tell an agent nothing.
     has_instructions: row.instructions.trim() !== '',
-    ...space,
+    ...(space === undefined
+      ? {}
+      : {
+          owner: space.owner,
+          ...(space.role === undefined ? {} : { role: space.role }),
+          ...(space.everyone_can_view === undefined
+            ? {}
+            : { everyone_can_view: space.everyone_can_view }),
+        }),
   };
 }
 
@@ -168,10 +179,14 @@ async function readProject(
   return getProject(deps.db.db, scope, id);
 }
 
-/** What a project says about the caller's place in it: their role and its owner; nothing in team mode. */
-function spaceDetails({ role, owner }: ProjectOut): string[] {
+/**
+ * What a project says about the caller's place in it: their role, its owner, and whether everyone
+ * who signs in sees it; nothing in team mode.
+ */
+function spaceDetails({ role, owner, everyone_can_view: everyone }: ProjectOut): string[] {
   return [
     ...(role === undefined ? [] : [t('mcp.project.role', { role })]),
+    ...(everyone === true ? [t('mcp.project.everyone')] : []),
     ...(owner === undefined || owner === null
       ? []
       : // A person without a name is known by their id. A name is data: the person chose it.

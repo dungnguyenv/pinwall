@@ -35,7 +35,13 @@ const unusable = new Proxy(
 
 test('holdRoleIn runs no query in team mode or for the system', async () => {
   const user = { id: 'usr_teamviewer' } as UserRow;
-  const teamScope: Scope = { kind: 'viewer', user, visibility: 'team', admin: false };
+  const teamScope: Scope = {
+    kind: 'viewer',
+    user,
+    visibility: 'team',
+    admin: false,
+    everyone: 'off',
+  };
   expect(await holdRoleIn(unusable, 'postgres', teamScope, 'prj_x')).toBe('owner');
   expect(await holdRoleIn(unusable, 'postgres', SYSTEM_SCOPE, 'prj_x')).toBe('owner');
 });

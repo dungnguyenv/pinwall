@@ -8,6 +8,7 @@ who run one want [Running an open instance](open-instance.md).
 - [Your space](#your-space)
 - [Shared with me](#shared-with-me)
 - [Project members](#project-members)
+- [Projects for everyone](#projects-for-everyone)
 - [Sharing outside Pinwall](#sharing-outside-pinwall)
 - [Usage and limits](#usage-and-limits)
 - [Delete all my content](#delete-all-my-content)
@@ -22,7 +23,7 @@ apply in both modes, wherever the operator sets them.
 ## Your space
 
 Your space is the set of projects you own. Only you see what is in it, and no other member does,
-until you add people to a project or make a share link. Admins cannot either, see
+until you add people to a project, make a project visible to everyone, or make a share link. Admins cannot either, see
 [Who can see your work](#who-can-see-your-work).
 
 - **A new space is empty.** Connect an agent, drop a file or a folder on the page, or create a
@@ -49,6 +50,9 @@ Its artifacts show up in **All artifacts**, search and **Recent** with your own.
 them whatever your role is. What else you can do depends on the role, see
 [Project members](#project-members). An agent connected with your account sees these projects too,
 with your role in each, and publishes into one only when you are an editor there.
+
+Someone else's project that its owner made visible to everyone is under **Shared with everyone**
+instead, even when you are a member of it, see [Projects for everyone](#projects-for-everyone).
 
 ## Project members
 
@@ -111,6 +115,28 @@ When someone is removed, or leaves, it takes effect at once:
 
 When the owner changes an editor to a viewer, the share links that person made in the project are
 revoked as well, because viewers cannot make them. Nothing else of theirs changes.
+
+## Projects for everyone
+
+Where the operator allows it (`PINWALL_EVERYONE_PROJECTS`), an owner can let everyone who signs in
+view a project, with nobody to add: open the project, choose **Members**, and turn on **Everyone on
+this Pinwall can view**. The switch is not there when the operator has not allowed it.
+
+- **Everyone else is a viewer there.** They see the project, its artifacts, versions and comments,
+  and they comment, but they cannot publish or make share links. They see the members' names, not
+  their emails. People you added keep their roles.
+- **It shows under Shared with everyone** in their sidebar, and its artifacts in their **All
+  artifacts** and search. The project page says "Visible to everyone on this Pinwall".
+- **Your default project cannot be visible to everyone,** because your agents publish there when
+  they name no project. Create a project of its own for everyone, and publish into it by name.
+- **Turning it off takes effect at once.** The project and its pages stop opening for everyone you
+  did not add.
+- **Where sharing outside Pinwall needs an admin's approval,** so does this: until an admin approves
+  you, the switch stays off and says why. If an admin takes your approval back, your projects stop
+  being visible to everyone until you are approved again. You can always turn the switch off.
+
+Someone who sees a project only because everyone may has no **Leave project**: there is no
+membership to leave. Only the owner decides.
 
 ## Sharing outside Pinwall
 
@@ -207,9 +233,10 @@ already deleted stays deleted, and running it again finishes the job.
 
 ## Who can see your work
 
-- **You,** and nobody else, until you add project members or make share links. The people you add
-  see that project, and what they may do in it depends on their role. A share link opens only what
-  you made it for.
+- **You,** and nobody else, until you add project members, make a project visible to everyone or
+  make share links. The people you add see that project, and what they may do in it depends on
+  their role. A project visible to everyone is seen by everyone who signs in, as viewers. A share
+  link opens only what you made it for.
 - **Admins cannot browse it.** They manage accounts: they see how many projects, artifacts and
   versions a person has and how much they store, set limits, approve sharing, block an account and
   delete everything it owns. They can look up who made a link that someone reported, to learn whose

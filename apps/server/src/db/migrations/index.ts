@@ -3,6 +3,7 @@ import type { DbDialect } from '../connect.ts';
 import * as m0001 from './0001_initial.ts';
 import * as m0002 from './0002_publishing.ts';
 import * as m0003 from './0003_spaces.ts';
+import * as m0004 from './0004_everyone.ts';
 
 /** A migration sees the schema as it was when it was written, not today's `Database`. */
 // biome-ignore lint/suspicious/noExplicitAny: same as Kysely's own `Migration` type.
@@ -24,4 +25,5 @@ export const migrations: Record<string, PinwallMigration> = {
   '0001_initial': m0001,
   '0002_publishing': m0002,
   '0003_spaces': m0003,
+  '0004_everyone': m0004,
 };
