@@ -14,7 +14,9 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   useEffect,
+  useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -22,6 +24,7 @@ import { useTranslation } from 'react-i18next';
 import { errorMessage } from '../../api/client.ts';
 import type { Comment, CommentThread } from '../../api/dto.ts';
 import { formatDate, formatRelativeTime } from '../../lib/format.ts';
+import { linkify } from '../../lib/linkify.ts';
 import {
   Avatar,
   Badge,
@@ -304,21 +307,52 @@ function Meta({ version, at, className }: { version: number; at: number; classNa
   );
 }
 
-/** A comment's text as written, line breaks kept, marked when its author changed it. */
+/**
+ * A comment's text as written, line breaks kept, marked when its author changed
+ * it. Its http(s) URLs are links that open in a new tab; the rest is plain text.
+ */
 function CommentBody({ comment }: { comment: Comment }) {
   const { t } = useTranslation();
+  const hint = useId();
+  const parts = useMemo(() => linkify(comment.body), [comment.body]);
   return (
-    <p className="whitespace-pre-wrap text-base text-fg [overflow-wrap:anywhere]">
-      {comment.body}
-      {comment.edited_at === null ? null : (
-        <>
-          {' '}
-          <span title={formatDate(comment.edited_at)} className="text-fg-muted text-xs">
-            {t('web.comments.edited')}
-          </span>
-        </>
-      )}
-    </p>
+    <>
+      <p className="whitespace-pre-wrap text-base text-fg [overflow-wrap:anywhere]">
+        {parts.map((part, i) =>
+          part.kind === 'text' ? (
+            part.text
+          ) : (
+            <a
+              // The same URL may appear twice, so the position is part of the identity.
+              // biome-ignore lint/suspicious/noArrayIndexKey: the parts of a text never move
+              key={i}
+              href={part.href}
+              target="_blank"
+              // A reader's link: no access to this page, no referrer, and no endorsement.
+              rel="noopener noreferrer nofollow ugc"
+              aria-describedby={hint}
+              className="rounded-sm text-accent-text underline underline-offset-2 [overflow-wrap:anywhere] hover:decoration-2"
+            >
+              {part.text}
+            </a>
+          ),
+        )}
+        {comment.edited_at === null ? null : (
+          <>
+            {' '}
+            <span title={formatDate(comment.edited_at)} className="text-fg-muted text-xs">
+              {t('web.comments.edited')}
+            </span>
+          </>
+        )}
+      </p>
+      {/* Each link's description for assistive technology, kept out of the comment's text. */}
+      {parts.some((part) => part.kind === 'link') ? (
+        <span id={hint} hidden>
+          {t('web.comments.linkNewTab')}
+        </span>
+      ) : null}
+    </>
   );
 }
 

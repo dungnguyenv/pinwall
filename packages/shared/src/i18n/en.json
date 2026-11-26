@@ -467,6 +467,7 @@
   "web.comments.onPage": "On {{page}}",
   "web.comments.onStartPage": "On the start page",
   "web.comments.edited": "edited",
+  "web.comments.linkNewTab": "Opens in a new tab",
   "web.comments.resolve": "Resolve",
   "web.comments.reopen": "Reopen",
   "web.comments.actions": "Actions for comment {{number}}",

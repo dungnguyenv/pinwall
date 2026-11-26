@@ -609,6 +609,75 @@ test('clicking a card focuses its pin; the empty and error states', async () => 
   expect(reads).toBe(2);
 });
 
+test('URLs in comments and replies are links to a new tab, and nothing else is', async () => {
+  const body =
+    'See https://example.com/spec).\n\n  javascript:alert(1), data:text/html,x, www.example.com\nhttps://example.com/b';
+  const reply = fx.comment({
+    id: 'r1',
+    thread_id: 't9',
+    author: { type: 'guest', name: 'Lan' },
+    version: v(3),
+    body: 'Fixed in HTTP://localhost:5173/a/art_1?v=2!',
+    created_at: 10,
+    updated_at: 10,
+  });
+  const linked = fx.thread({
+    id: 't9',
+    author: ada,
+    version: v(3),
+    created_at: 9,
+    body,
+    replies: [reply],
+  });
+  const { user, bridge } = setup({ threads: [linked] });
+  const thread = await card('Comment 1 by Ada');
+
+  const anchors = within(thread).getAllByRole('link');
+  expect(anchors.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
+    ['https://example.com/spec', 'https://example.com/spec'],
+    ['https://example.com/b', 'https://example.com/b'],
+    ['HTTP://localhost:5173/a/art_1?v=2', 'http://localhost:5173/a/art_1?v=2'],
+  ]);
+  for (const a of anchors) {
+    expect(a).toHaveAttribute('target', '_blank');
+    expect(a).toHaveAttribute('rel', 'noopener noreferrer nofollow ugc');
+    expect(a).toHaveAccessibleDescription('Opens in a new tab');
+    expect(a.tabIndex).toBe(0);
+  }
+  // No other scheme became a link, and the text reads as written, line breaks and all.
+  expect(thread.querySelectorAll('[href]')).toHaveLength(3);
+  expect(anchors[0]?.closest('p')?.textContent).toBe(body);
+  expect(anchors[2]?.closest('p')?.textContent).toBe(reply.body);
+
+  // Opening a link, by mouse or keyboard, is not a click on the card.
+  const navigations: string[] = [];
+  const stopNavigation = (event: MouseEvent) => {
+    const link = (event.target as Element).closest('a');
+    if (link === null) return;
+    navigations.push(link.href);
+    event.preventDefault();
+  };
+  window.addEventListener('click', stopNavigation, { capture: true });
+  try {
+    await user.click(anchors[0] as HTMLElement);
+    act(() => anchors[1]?.focus());
+    expect(anchors[1]).toHaveFocus();
+    await user.keyboard('{Enter}');
+  } finally {
+    window.removeEventListener('click', stopNavigation, { capture: true });
+  }
+  expect(navigations).toEqual(['https://example.com/spec', 'https://example.com/b']);
+  expect(bridge.focus).not.toHaveBeenCalled();
+  expect(thread).not.toHaveAttribute('aria-current');
+});
+
+test('a comment without a URL has no link and no new-tab hint', async () => {
+  setup({ threads: [t1] });
+  const thread = await card('Comment 1 by Ada');
+  expect(within(thread).queryByRole('link')).not.toBeInTheDocument();
+  expect(within(thread).queryByText('Opens in a new tab')).not.toBeInTheDocument();
+});
+
 test('the overlay notice appears when the annotator is missing', async () => {
   const blocked = setup({ annotator: 'missing', liveStatus: 'reconnecting' });
   await card('Comment 1 by Ada');
