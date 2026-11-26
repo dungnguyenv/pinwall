@@ -2,12 +2,12 @@ import type { ViewerToPageMessage } from '@pinwall/shared/protocol';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { HttpResponse, http } from 'msw';
 import { afterEach, expect, test, vi } from 'vitest';
-import type { FileChange, MarkdownDiff, TextFileDiff } from '../../api/dto.ts';
+import type { CommentThread, FileChange, MarkdownDiff, TextFileDiff } from '../../api/dto.ts';
 import i18n from '../../i18n.ts';
 import { simFrame } from '../../test/annotator-sim.ts';
 import { fx } from '../../test/fixtures.ts';
 import { renderRoute, setViewport } from '../../test/render.tsx';
-import { grantUrl, reviewer, serveReview } from '../../test/review.ts';
+import { grantUrl, quoteOf, reviewer, serveReview, threadOn } from '../../test/review.ts';
 import { API, apiError, server } from '../../test/server.ts';
 import { CONTENT_SANDBOX } from '../frame/sandbox.ts';
 
@@ -40,9 +40,10 @@ function serveCompare(
     files?: FileChange[];
     texts?: Record<string, Partial<TextFileDiff>>;
     markdown?: Record<string, Partial<MarkdownDiff>>;
+    threads?: CommentThread[];
   } = {},
 ) {
-  const s = serveReview({ versions: o.versions });
+  const s = serveReview({ versions: o.versions, threads: o.threads });
   if (o.kind) s.artifact = { ...s.artifact, kind: o.kind };
   const diff = { files: o.files ?? [] };
   const query = (request: Request) => new URL(request.url).searchParams;
@@ -450,4 +451,226 @@ test('from and to can be swapped and changed', async () => {
   await user.click(screen.getByRole('radio', { name: 'Files' }));
   expect(router.state.location.search).toBe('?from=2&to=1&view=files');
   expect(router.state.historyAction).toBe('REPLACE');
+});
+
+// Comments. Threads in the order they were written: on version 4's page the
+// thread on v3 is the second pin, ahead of two written earlier on v2.
+const lan = { type: 'guest', name: 'Lan' } as const;
+const resolvedIn = (n: number): Partial<CommentThread> => ({
+  status: 'resolved',
+  resolved_in_version: { id: `ver_${n}`, number: n },
+  resolved_by: { user_id: 'usr_1', name: 'Ada' },
+  resolved_at: Date.now(),
+});
+const laterThread = threadOn(5, { id: 'cmt_g', body: 'Written later' });
+const threads = [
+  threadOn(1, { id: 'cmt_a', body: 'Bigger heading', anchor: quoteOf('Pricing') }),
+  threadOn(3, { id: 'cmt_c', body: 'Tighten the footer' }),
+  threadOn(2, { id: 'cmt_b', body: 'Swap the photo', ...resolvedIn(3) }),
+  threadOn(2, { id: 'cmt_d', body: 'Fix the typo', ...resolvedIn(2) }),
+  threadOn(4, { id: 'cmt_e', body: 'Align the prices', ...resolvedIn(5) }),
+  threadOn(4, {
+    id: 'cmt_f',
+    author: lan,
+    body: 'Màu nền tối quá',
+    replies: [fx.comment({ id: 'cmt_r', thread_id: 'cmt_f', body: 'Agreed' })],
+  }),
+  laterThread,
+];
+const FIVE = [5, 4, 3, 2, 1];
+const FILTER_PREF = 'pinwall:comment-filter:usr_1';
+
+const commentsPanel = () => screen.findByRole('region', { name: 'Comments' }, TIMEOUT);
+/** The names of the thread links in `list`, in order. */
+const threadNames = (list: HTMLElement) =>
+  within(list)
+    .queryAllByRole('link')
+    .map((link) => link.getAttribute('aria-label'));
+
+test('the comments panel lists both versions’ threads, numbered as on their review pages', async () => {
+  serveCompare({ versions: FIVE, threads });
+  const { user } = renderRoute('/a/art_1/compare?from=2&to=4', { me: reviewer });
+  const panel = await commentsPanel();
+  expect(within(panel).getByRole('heading', { level: 2, name: 'Comments' })).toBeInTheDocument();
+
+  // Open is the default filter; the counts are those of both versions together.
+  const filter = within(panel).getByRole('radiogroup', { name: 'Filter comments' });
+  const open = await within(filter).findByRole('radio', { name: 'Open (3)' }, TIMEOUT);
+  expect(open).toHaveAttribute('aria-checked', 'true');
+  expect(within(filter).getByRole('radio', { name: 'Resolved (3)' })).toHaveAttribute(
+    'aria-checked',
+    'false',
+  );
+  expect(screen.getByRole('button', { name: 'Comments, 3 open' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+
+  // The older version first, with what its page shows; then what the newer one adds.
+  const older = within(panel).getByRole('list', { name: 'v2' });
+  const newer = within(panel).getByRole('list', { name: 'v4' });
+  expect(older.compareDocumentPosition(newer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(within(panel).getByText('Written on v2 or before')).toBeInTheDocument();
+  expect(within(panel).getByText('Written after v2')).toBeInTheDocument();
+  expect(threadNames(older)).toEqual(['Comment 1 on v2 by Ada']);
+  expect(threadNames(newer)).toEqual(['Comment 2 on v4 by Ada', 'Comment 6 on v4 by Lan']);
+
+  // Each row leads to its thread on the version it is listed under.
+  const first = within(older).getByRole('link', { name: 'Comment 1 on v2 by Ada' });
+  expect(first).toHaveAttribute('href', '/a/art_1/v/2?comment=cmt_a');
+  expect(first).toHaveAccessibleDescription(expect.stringContaining('Bigger heading'));
+  // Where it was written, and the words it points at.
+  expect(within(first).getByText('v1').closest('[title]')).toHaveAttribute(
+    'title',
+    'Written on v1',
+  );
+  expect(within(first).getByText('Pricing')).toBeInTheDocument();
+  const guest = within(newer).getByRole('link', { name: 'Comment 6 on v4 by Lan' });
+  expect(guest).toHaveAttribute('href', '/a/art_1/v/4?comment=cmt_f');
+  expect(within(guest).getByText('Guest')).toBeInTheDocument();
+  expect(guest).toHaveAccessibleDescription(expect.stringContaining('1 reply'));
+
+  // Nothing written after the newer version, under any filter.
+  await user.click(within(filter).getByRole('radio', { name: 'All' }));
+  expect(threadNames(older)).toEqual([
+    'Comment 1 on v2 by Ada',
+    'Comment 2 on v2 by Ada',
+    'Comment 3 on v2 by Ada',
+  ]);
+  expect(threadNames(newer)).toEqual([
+    'Comment 2 on v4 by Ada',
+    'Comment 5 on v4 by Ada',
+    'Comment 6 on v4 by Lan',
+  ]);
+  expect(within(panel).queryByText('Written later')).not.toBeInTheDocument();
+});
+
+test('the filter is the review page’s, and threads the change resolved are marked', async () => {
+  localStorage.setItem(FILTER_PREF, 'resolved');
+  serveCompare({ versions: FIVE, threads });
+  const { user } = renderRoute('/a/art_1/compare?from=2&to=4', { me: reviewer });
+  const panel = await commentsPanel();
+  const filter = within(panel).getByRole('radiogroup', { name: 'Filter comments' });
+  expect(
+    await within(filter).findByRole('radio', { name: 'Resolved (3)' }, TIMEOUT),
+  ).toHaveAttribute('aria-checked', 'true');
+
+  const older = within(panel).getByRole('list', { name: 'v2' });
+  const newer = within(panel).getByRole('list', { name: 'v4' });
+  expect(threadNames(older)).toEqual(['Comment 2 on v2 by Ada', 'Comment 3 on v2 by Ada']);
+  expect(threadNames(newer)).toEqual(['Comment 5 on v4 by Ada']);
+
+  // Resolved in v3, between the two: marked.
+  const answered = within(older).getByRole('link', { name: 'Comment 2 on v2 by Ada' });
+  expect(within(answered).getByText('Resolved in v3').closest('mark')).not.toBeNull();
+  expect(answered).toHaveAccessibleDescription(expect.stringContaining('Resolved in v3'));
+  // Resolved in v2 already, before the change; and in v5, after it: not marked.
+  const before = within(older).getByRole('link', { name: 'Comment 3 on v2 by Ada' });
+  expect(within(before).getByText('Resolved in v2').closest('mark')).toBeNull();
+  const after = within(newer).getByRole('link', { name: 'Comment 5 on v4 by Ada' });
+  expect(within(after).getByText('Resolved in v5').closest('mark')).toBeNull();
+  expect(panel.querySelectorAll('mark')).toHaveLength(1);
+
+  // Choosing a filter here is remembered for the review page too.
+  await user.click(within(filter).getByRole('radio', { name: 'Open (3)' }));
+  expect(localStorage.getItem(FILTER_PREF)).toBe('open');
+  expect(threadNames(older)).toEqual(['Comment 1 on v2 by Ada']);
+});
+
+test('choosing a thread opens its version’s review page with it selected', async () => {
+  serveCompare({ versions: FIVE, threads });
+  const { user, router } = renderRoute('/a/art_1/compare?from=2&to=4', { me: reviewer });
+  const newer = await within(await commentsPanel()).findByRole('list', { name: 'v4' }, TIMEOUT);
+
+  await user.click(within(newer).getByRole('link', { name: 'Comment 2 on v4 by Ada' }));
+  expect(router.state.location.pathname).toBe('/a/art_1/v/4');
+  expect(router.state.location.search).toBe('?comment=cmt_c');
+  // The review page gives the thread the number the compare panel showed.
+  const card = await screen.findByRole('article', { name: 'Comment 2 by Ada' }, TIMEOUT);
+  await waitFor(() => expect(card).toHaveAttribute('aria-current', 'true'), TIMEOUT);
+  expect(card).toHaveTextContent('Tighten the footer');
+});
+
+test('a thread on the current version leads to the review page that follows it', async () => {
+  serveCompare({ threads: [threadOn(3, { id: 'cmt_now', body: 'Now' })] });
+  renderRoute('/a/art_1/compare', { me: reviewer });
+  const panel = await commentsPanel();
+  const newer = await within(panel).findByRole('list', { name: 'v3' }, TIMEOUT);
+  expect(within(newer).getByRole('link', { name: 'Comment 1 on v3 by Ada' })).toHaveAttribute(
+    'href',
+    '/a/art_1?comment=cmt_now',
+  );
+  // The older version has none, and says so under its heading, with no empty list.
+  expect(within(panel).getByRole('heading', { level: 3, name: 'v2' })).toBeInTheDocument();
+  expect(within(panel).queryByRole('list', { name: 'v2' })).not.toBeInTheDocument();
+  expect(within(panel).getByText('No open comments')).toBeInTheDocument();
+  expect(within(panel).getAllByRole('link')).toHaveLength(1);
+});
+
+test('versions without comments say so', async () => {
+  // Only a thread written after both versions.
+  serveCompare({ versions: FIVE, threads: [laterThread] });
+  renderRoute('/a/art_1/compare?from=2&to=4', { me: reviewer });
+  const panel = await commentsPanel();
+  expect(
+    await within(panel).findByText('No comments on these versions', {}, TIMEOUT),
+  ).toBeInTheDocument();
+  expect(within(panel).queryByRole('list')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Comments, 0 open' })).toBeInTheDocument();
+});
+
+test('comments that fail to load offer Retry', async () => {
+  const s = serveCompare({ versions: FIVE, threads });
+  let failing = true;
+  server.use(
+    http.get(`${API}/artifacts/art_1/comments`, () =>
+      failing
+        ? apiError(500, 'internal', 'The comments are unavailable.')
+        : HttpResponse.json(fx.page(s.threads)),
+    ),
+  );
+  const { user } = renderRoute('/a/art_1/compare?from=2&to=4', { me: reviewer });
+  const panel = await commentsPanel();
+  const alert = await within(panel).findByRole('alert', {}, TIMEOUT);
+  expect(alert).toHaveTextContent('Comments could not be loaded');
+  expect(alert).toHaveTextContent('The comments are unavailable.');
+  // The pages are compared all the same.
+  await frameOf(4);
+
+  failing = false;
+  await user.click(within(panel).getByRole('button', { name: 'Retry' }));
+  expect(await within(panel).findByRole('list', { name: 'v2' }, TIMEOUT)).toBeInTheDocument();
+});
+
+test('the panel closes, stays closed, and Shift+C brings it back', async () => {
+  serveCompare({ versions: FIVE, threads });
+  const { user } = renderRoute('/a/art_1/compare?from=2&to=4', { me: reviewer });
+  await commentsPanel();
+  const toggle = await screen.findByRole('button', { name: 'Comments, 3 open' }, TIMEOUT);
+
+  await user.click(screen.getByRole('button', { name: 'Close comments' }));
+  expect(screen.queryByRole('region', { name: 'Comments' })).not.toBeInTheDocument();
+  expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  expect(localStorage.getItem('pinwall:compare-panel:usr_1')).toBe('closed');
+
+  await user.keyboard('{Shift>}C{/Shift}');
+  expect(await commentsPanel()).toBeInTheDocument();
+  await user.click(toggle);
+  expect(screen.queryByRole('region', { name: 'Comments' })).not.toBeInTheDocument();
+});
+
+test('on a phone the comments open in a sheet', async () => {
+  setViewport(360);
+  serveCompare({ versions: FIVE, threads });
+  const { user } = renderRoute('/a/art_1/compare?from=2&to=4', { me: reviewer });
+  const toggle = await screen.findByRole('button', { name: 'Comments, 3 open' }, TIMEOUT);
+  expect(screen.queryByRole('region', { name: 'Comments' })).not.toBeInTheDocument();
+
+  await user.click(toggle);
+  const sheet = await screen.findByRole('dialog', { name: 'Comments' }, TIMEOUT);
+  expect(threadNames(within(sheet).getByRole('list', { name: 'v2' }))).toEqual([
+    'Comment 1 on v2 by Ada',
+  ]);
+  expect(within(sheet).getByRole('list', { name: 'v4' })).toBeInTheDocument();
+  expect(within(sheet).getByRole('radiogroup', { name: 'Filter comments' })).toBeInTheDocument();
 });

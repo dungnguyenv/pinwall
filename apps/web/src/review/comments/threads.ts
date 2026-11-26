@@ -15,6 +15,13 @@ export type ThreadScope =
 
 export type ThreadFilter = 'open' | 'resolved' | 'all';
 
+export const THREAD_FILTERS: readonly ThreadFilter[] = ['open', 'resolved', 'all'];
+
+/** Where a member's comment filter is kept: one choice for every review and comparison. */
+export function commentFilterPref(userId: string): string {
+  return `pinwall:comment-filter:${userId}`;
+}
+
 /** Creation order: oldest first, the id settling two made in the same millisecond. */
 function byCreation(x: { created_at: number; id: string }, y: { created_at: number; id: string }) {
   return x.created_at - y.created_at || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0);

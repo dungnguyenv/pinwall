@@ -5,12 +5,18 @@ import { errorMessage } from '../../api/client.ts';
 import { useVersionDiff } from '../../api/diff.ts';
 import type { ArtifactSummary } from '../../api/dto.ts';
 import { useArtifact } from '../../api/library.ts';
+import { useMe } from '../../api/session.ts';
 import { reviewPath, useVersions } from '../../api/versions.ts';
 import { PHONE_QUERY, useMediaQuery } from '../../lib/media.ts';
 import { usePageTitle } from '../../lib/page-title.ts';
+import { useShortcuts } from '../../lib/shortcuts.ts';
+import { usePref } from '../../lib/storage.ts';
 import { LibraryPage, PageError } from '../../pages/library-page.tsx';
 import { Button, ErrorState, LoadingRegion, Skeleton } from '../../ui/index.ts';
+import { CommentSheet } from '../comments/comment-sheet.tsx';
+import { keysOf } from '../viewer/shortcuts.ts';
 import { BackLink, CompareBar, CompareHeading } from './compare-bar.tsx';
+import { CompareCommentsPanel, useCompareComments } from './compare-comments.tsx';
 import { COMPARE_VIEWS, type CompareView, defaultPair, isMarkdownPath } from './defaults.ts';
 import { OverlayView } from './overlay-view.tsx';
 import { RenderedDiff } from './rendered-diff.tsx';
@@ -25,12 +31,14 @@ function numberParam(value: string | null): number | undefined {
 }
 
 const PAGE_CLASS = 'flex h-dvh flex-col bg-canvas max-md:h-[calc(100dvh-var(--topbar-height))]';
+const PANEL_STATES = ['open', 'closed'] as const;
 
 /**
  * `/a/:artifactId/compare?from=&to=&view=`: two versions of an artifact side
- * by side, overlaid with a slider, as source changes, or as rendered Markdown.
- * The address holds the choice; missing or unknown parts are filled in and
- * written back in place, so a link always opens the same comparison.
+ * by side, overlaid with a slider, as source changes, or as rendered Markdown,
+ * with the two versions' comments beside them. The address holds the choice;
+ * missing or unknown parts are filled in and written back in place, so a link
+ * always opens the same comparison.
  */
 export function ComparePage(): ReactElement {
   const { artifactId = '' } = useParams();
@@ -137,6 +145,22 @@ function Compare({ artifact }: { artifact: ArtifactSummary }) {
       setParams(new URLSearchParams(normal), { replace: true });
   }, [normal, search, setParams]);
 
+  // Comments: docked at the right, open unless closed before; in a sheet on a phone.
+  const me = useMe().data;
+  const comments = useCompareComments(artifact.id, pair, me?.id ?? null);
+  const [panelPref, setPanelPref] = usePref(
+    me ? `pinwall:compare-panel:${me.id}` : null,
+    PANEL_STATES,
+    'open',
+  );
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const toggleComments = () => {
+    if (phone) setSheetOpen((open) => !open);
+    else setPanelPref(panelPref === 'open' ? 'closed' : 'open');
+  };
+  // The review screen's key for its panel.
+  useShortcuts([{ keys: keysOf('togglePanel'), run: toggleComments, enabled: pair !== null }]);
+
   if (versions.isError && versions.data === undefined) {
     return (
       <div className={PAGE_CLASS}>
@@ -162,6 +186,14 @@ function Compare({ artifact }: { artifact: ArtifactSummary }) {
     else write({ ...pair, [side]: n, view });
   };
   const entry = list.find((v) => v.number === pair.to)?.entry_path;
+  const panel = (
+    <CompareCommentsPanel
+      c={comments}
+      artifact={artifact}
+      variant={phone ? 'sheet' : 'dock'}
+      onClose={() => (phone ? setSheetOpen(false) : setPanelPref('closed'))}
+    />
+  );
 
   const content = (() => {
     switch (view) {
@@ -194,8 +226,23 @@ function Compare({ artifact }: { artifact: ArtifactSummary }) {
         onSwap={() => write({ from: pair.to, to: pair.from, view })}
         onView={(next) => write({ ...pair, view: next })}
         onSync={setSync}
+        commentsOpen={phone ? sheetOpen : panelPref === 'open'}
+        openCount={comments.query.data === undefined ? null : comments.counts.open}
+        onComments={toggleComments}
       />
-      <div className="relative min-h-0 flex-1">{content}</div>
+      <div className="flex min-h-0 flex-1">
+        <div className="relative min-h-0 min-w-0 flex-1">{content}</div>
+        {!phone && panelPref === 'open' ? (
+          <div className="w-(--review-panel-width) max-w-[50%] shrink-0 animate-panel-in">
+            {panel}
+          </div>
+        ) : null}
+      </div>
+      {phone ? (
+        <CommentSheet open={sheetOpen} onOpenChange={setSheetOpen} title={t('web.comments.title')}>
+          {panel}
+        </CommentSheet>
+      ) : null}
     </div>
   );
 }

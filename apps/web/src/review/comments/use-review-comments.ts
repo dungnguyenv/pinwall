@@ -11,6 +11,7 @@ import {
   countThreads,
   filterThreads,
   pinNumbers,
+  THREAD_FILTERS,
   type ThreadFilter,
   type ThreadScope,
   threadsForVersion,
@@ -82,7 +83,6 @@ export interface ReviewComments {
   applyLive(e: LiveEvent): void;
 }
 
-const FILTERS = ['open', 'resolved', 'all'] as const;
 const REPLY = 'reply:';
 const EDIT = 'edit:';
 const NOTHING: ReadonlySet<string> = new Set();
@@ -135,7 +135,7 @@ export function useReviewComments(o: {
   const actions = useCommentActions(backend);
   const list = query.data;
 
-  const [filter, writeFilter] = usePref<ThreadFilter>(o.filterPrefKey, FILTERS, 'open');
+  const [filter, writeFilter] = usePref<ThreadFilter>(o.filterPrefKey, THREAD_FILTERS, 'open');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [picked, setPicked] = useState<Omit<Draft, 'versionId'> | null>(null);
   const [texts, setTexts] = useState<ReadonlyMap<string, string>>(new Map());

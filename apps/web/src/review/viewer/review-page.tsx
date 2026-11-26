@@ -29,6 +29,7 @@ import { CommentPanel } from '../comments/comment-panel.tsx';
 import { CommentSheet } from '../comments/comment-sheet.tsx';
 import { Composer } from '../comments/composer.tsx';
 import { composerFloats, composerPosition } from '../comments/composer-position.ts';
+import { commentFilterPref } from '../comments/threads.ts';
 import { useReviewComments, type VersionLookup } from '../comments/use-review-comments.ts';
 import { ContentFrame } from '../frame/content-frame.tsx';
 import { CUSTOM_WIDTH, clampCustomWidth, type Device, frameBox } from '../frame/device.ts';
@@ -242,7 +243,7 @@ function Review({
     permissions,
     shown: shown ?? 0,
     versionId: shownVersion?.id ?? null,
-    filterPrefKey: `pinwall:comment-filter:${me.id}`,
+    filterPrefKey: commentFilterPref(me.id),
     versions: { frame: held?.n ?? null, lookup: lookupVersion },
   });
   if (c.composing !== composing) setComposing(c.composing);

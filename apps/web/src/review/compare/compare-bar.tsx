@@ -6,6 +6,7 @@ import type { ArtifactSummary, VersionSummary } from '../../api/dto.ts';
 import { reviewPath } from '../../api/versions.ts';
 import { claimHeadingFocus, HeadingFocusContext } from '../../app/shell/page-header.tsx';
 import { IconButton, Segmented, Select, Switch } from '../../ui/index.ts';
+import { CommentsToggle } from '../viewer/comment-toggles.tsx';
 import type { CompareView } from './defaults.ts';
 
 /**
@@ -61,12 +62,17 @@ export interface CompareBarProps {
   onSwap(): void;
   onView(view: CompareView): void;
   onSync(on: boolean): void;
+  /** Whether the comments are showing: the docked panel, or the sheet on a phone. */
+  commentsOpen: boolean;
+  /** Open threads of the two versions; null until they are read. */
+  openCount: number | null;
+  onComments(): void;
 }
 
 /**
  * The compare screen's bar: back to the artifact, the two versions with a
- * swap between them, the view, and on the side-by-side view the scroll sync.
- * On a phone the view switch takes a row of its own.
+ * swap between them, the view, on the side-by-side view the scroll sync, and
+ * the comments. On a phone the view switch takes a row of its own.
  */
 export function CompareBar(p: CompareBarProps) {
   const { t } = useTranslation();
@@ -112,11 +118,14 @@ export function CompareBar(p: CompareBarProps) {
           items={p.views.map((v) => ({ value: v, label: t(`web.compare.view.${v}`) }))}
         />
       </div>
-      {p.sync === null ? null : (
-        <div className="ml-auto shrink-0 max-md:[&_label]:block max-md:[&_label]:max-w-14 max-md:[&_label]:text-xs max-md:[&_label]:leading-tight">
-          <Switch label={t('web.compare.sync')} checked={p.sync} onCheckedChange={p.onSync} />
-        </div>
-      )}
+      <div className="ml-auto flex shrink-0 items-center gap-2 md:gap-3">
+        {p.sync === null ? null : (
+          <div className="max-md:[&_label]:block max-md:[&_label]:max-w-14 max-md:[&_label]:text-xs max-md:[&_label]:leading-tight">
+            <Switch label={t('web.compare.sync')} checked={p.sync} onCheckedChange={p.onSync} />
+          </div>
+        )}
+        <CommentsToggle open={p.commentsOpen} count={p.openCount} onToggle={p.onComments} />
+      </div>
     </header>
   );
 }

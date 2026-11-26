@@ -75,7 +75,8 @@ sequenceDiagram
 - 📌 **Pinned comments** on an element, a text selection or any point, with threads, replies and
   resolve/reopen. Comments follow their spot when the next version moves things around.
 - 📱 **Phone, tablet and desktop widths**, or any width you type, without leaving the page.
-- 🔀 **Compare versions** side by side, as an overlay, or file by file, with synced scrolling.
+- 🔀 **Compare versions** side by side, as an overlay, or file by file, with synced scrolling and
+  both versions' comments beside them, the ones the change resolved marked.
 - ⚡ **Live updates.** An open review tab switches to the new version, and new comments appear as
   they are written.
 - 📝 **Markdown documents** rendered as pages, next to HTML pages and multi-page static sites.
