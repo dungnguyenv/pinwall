@@ -4,7 +4,7 @@ import type { AppEnv } from '../app.ts';
 import { authOf } from '../auth/guards.ts';
 import type { Db } from '../auth/passkeys.ts';
 import { effectiveRole } from '../auth/roles.ts';
-import type { Visibility } from '../config/types.ts';
+import type { Config, Visibility } from '../config/types.ts';
 import type { DbDialect } from '../db/connect.ts';
 import type { Database, MemberRole, ProjectRow, UserRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
@@ -12,16 +12,30 @@ import { type AppError, forbidden, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { newId } from '../lib/ids.ts';
 import { ensureDefaultProject } from './projects.ts';
-import { personalViewer, visibleCondition } from './visible-condition.ts';
+import {
+  type EveryoneRule,
+  everyoneProjects,
+  personalViewer,
+  visibleCondition,
+} from './visible-condition.ts';
 
 // Lives in visible-condition.ts, where the database layer can load it, and is part of this API.
-export { visibleCondition };
+export { type EveryoneRule, visibleCondition };
 
 /** What someone is to a project they can see. */
 export type ProjectRole = 'owner' | MemberRole;
 
-/** Whose view a lookup serves: a signed-in person, in the instance's visibility mode. */
-export type ViewerScope = { kind: 'viewer'; user: UserRow; visibility: Visibility; admin: boolean };
+/**
+ * Whose view a lookup serves: a signed-in person, in the instance's visibility mode, with the
+ * instance's rule for projects visible to everyone.
+ */
+export type ViewerScope = {
+  kind: 'viewer';
+  user: UserRow;
+  visibility: Visibility;
+  admin: boolean;
+  everyone: EveryoneRule;
+};
 
 /**
  * Pinwall itself, which sees every project. `SYSTEM_SCOPE` is the only value of it, so a function
@@ -48,7 +62,19 @@ export function scopeForUser(deps: AppDeps, user: UserRow): ViewerScope {
     user,
     visibility: deps.config.visibility,
     admin: effectiveRole(user) === 'admin',
+    everyone: everyoneRule(deps.config),
   };
+}
+
+/**
+ * The instance's `EveryoneRule`: 'off' unless `PINWALL_EVERYONE_PROJECTS` is on in `personal`
+ * mode; then 'approved' where exposing content needs an admin's approval, else 'any'.
+ */
+export function everyoneRule(
+  config: Pick<Config, 'visibility' | 'everyoneProjects' | 'shareLinks'>,
+): EveryoneRule {
+  if (config.visibility !== 'personal' || !config.everyoneProjects) return 'off';
+  return config.shareLinks === 'approved' ? 'approved' : 'any';
 }
 
 /** The scope of the person making the request (401 when nobody is signed in). */
@@ -71,16 +97,35 @@ export function whereVisible<QB extends { where(e: Expression<SqlBool>): QB }>(
   return condition === null ? qb : qb.where(condition);
 }
 
-/** The role in a project row read together with the viewer's membership, or null for none. */
-function roleFrom(
-  row: { owner_id: string | null; member_role: MemberRole | null },
-  userId: string,
-): ProjectRole | null {
-  return row.owner_id === userId ? 'owner' : row.member_role;
+/** A project row read together with the viewer's membership and whether everyone sees it. */
+type StandingRow = {
+  owner_id: string | null;
+  member_role: MemberRole | null;
+  everyone: number | string | boolean | null;
+};
+
+/**
+ * The role in a project row read together with the viewer's membership, or null for none. The
+ * owner is the owner and a member keeps their role; anyone else views a project visible to
+ * everyone.
+ */
+function roleFrom(row: StandingRow, userId: string): ProjectRole | null {
+  if (row.owner_id === userId) return 'owner';
+  if (row.member_role !== null) return row.member_role;
+  return isEveryone(row) ? 'viewer' : null;
 }
 
-/** Projects, each with the viewer's membership role in it (null when not a member). */
-function projectsWithMembership(db: Db, userId: string) {
+/** Whether the row's project is visible to everyone now; Postgres may hand the flag over as text. */
+function isEveryone(row: StandingRow): boolean {
+  return Number(row.everyone) === 1;
+}
+
+/**
+ * Projects, each with the viewer's membership role in it (null when not a member), and
+ * `everyone` 1 when it is visible to everyone under `rule` (else 0).
+ */
+function projectsWithMembership(db: Db, userId: string, rule: EveryoneRule) {
+  const everyone = everyoneProjects(rule);
   return db
     .selectFrom('projects')
     .leftJoin('project_members', (join) =>
@@ -88,7 +133,15 @@ function projectsWithMembership(db: Db, userId: string) {
         .onRef('project_members.project_id', '=', 'projects.id')
         .on('project_members.user_id', '=', userId),
     )
-    .select(['projects.id', 'projects.owner_id', 'project_members.role as member_role']);
+    .select([
+      'projects.id',
+      'projects.owner_id',
+      'project_members.role as member_role',
+      (everyone === null
+        ? sql<number>`0`
+        : sql<number>`case when projects.id in (${everyone}) then 1 else 0 end`
+      ).as('everyone'),
+    ]);
 }
 
 /**
@@ -97,8 +150,8 @@ function projectsWithMembership(db: Db, userId: string) {
  */
 export async function roleIn(db: Db, scope: Scope, projectId: string): Promise<ProjectRole> {
   const userId = personalViewer(scope);
-  if (userId === null) return 'owner';
-  const row = await projectsWithMembership(db, userId)
+  if (userId === null || scope.kind !== 'viewer') return 'owner';
+  const row = await projectsWithMembership(db, userId, scope.everyone)
     .where('projects.id', '=', projectId)
     .executeTakeFirst();
   const role = row === undefined ? null : roleFrom(row, userId);
@@ -115,18 +168,40 @@ export async function rolesIn(
   scope: Scope,
   projectIds: readonly string[],
 ): Promise<Map<string, ProjectRole>> {
+  const standings = await standingsIn(db, scope, projectIds);
+  return new Map([...standings].map(([id, standing]) => [id, standing.role]));
+}
+
+/** What the viewer is to a project they see, and whether everyone who signs in sees it now. */
+export interface ProjectStanding {
+  role: ProjectRole;
+  everyone: boolean;
+}
+
+/**
+ * `rolesIn`, with whether each project is visible to everyone now (in effect: the owner chose so
+ * and the instance's rule lets their projects be). Team mode and the system: 'owner' and false
+ * for each, without a query.
+ */
+export async function standingsIn(
+  db: Db,
+  scope: Scope,
+  projectIds: readonly string[],
+): Promise<Map<string, ProjectStanding>> {
   const userId = personalViewer(scope);
-  if (userId === null) return new Map(projectIds.map((id) => [id, 'owner']));
+  if (userId === null || scope.kind !== 'viewer') {
+    return new Map(projectIds.map((id) => [id, { role: 'owner', everyone: false }]));
+  }
   if (projectIds.length === 0) return new Map();
-  const rows = await projectsWithMembership(db, userId)
+  const rows = await projectsWithMembership(db, userId, scope.everyone)
     .where('projects.id', 'in', projectIds)
     .execute();
-  const roles = new Map<string, ProjectRole>();
+  const standings = new Map<string, ProjectStanding>();
   for (const row of rows) {
     const role = roleFrom(row, userId);
-    if (role !== null) roles.set(row.id, role);
+    if (role !== null) standings.set(row.id, { role, everyone: isEveryone(row) });
   }
-  return roles;
+  return standings;
 }
 
 /**

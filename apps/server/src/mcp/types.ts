@@ -32,10 +32,10 @@ export interface WhoamiOut {
 }
 
 /**
- * A project as the project tools show it. `owner` and `role` (as the REST API sends them) are
- * there only in `personal` mode.
+ * A project as the project tools show it. `owner`, `role` and `everyone_can_view` (as the REST
+ * API sends them) are there only in `personal` mode.
  */
-export interface ProjectOut extends Pick<Project, 'owner' | 'role'> {
+export interface ProjectOut extends Pick<Project, 'owner' | 'role' | 'everyone_can_view'> {
   id: string;
   name: string;
   is_default: boolean;

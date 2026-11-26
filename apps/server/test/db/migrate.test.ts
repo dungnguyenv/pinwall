@@ -16,7 +16,7 @@ const T = 1_762_000_000_000;
 const SHA_A = 'a'.repeat(64);
 const SHA_B = 'b'.repeat(64);
 /** Every migration, in the order they apply. */
-const ALL_MIGRATIONS = ['0001_initial', '0002_publishing', '0003_spaces'];
+const ALL_MIGRATIONS = ['0001_initial', '0002_publishing', '0003_spaces', '0004_everyone'];
 
 type Rows = { [K in keyof Database]: Required<Insertable<Database[K]>>[] };
 
@@ -156,6 +156,7 @@ function graph(): Rows {
         created_at: T,
         updated_at: T + 1,
         owner_id: owner,
+        visible_to_everyone: 1,
       },
     ],
     artifacts: [

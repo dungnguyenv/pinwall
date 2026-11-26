@@ -4,11 +4,13 @@ import type { Db } from '../auth/passkeys.ts';
 import type { DbBool, ProjectRow, ProjectsTable, UserRow } from '../db/schema.ts';
 import type { AppDeps } from '../deps.ts';
 import { decodeCursor, encodeCursor } from '../lib/cursor.ts';
-import { conflict, notFound } from '../lib/errors.ts';
+import { badRequest, conflict, forbidden, notFound } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 import { newId } from '../lib/ids.ts';
+import { mayExpose } from './exposure.ts';
 import {
   assertCan,
+  everyoneRule,
   roleIn,
   type Scope,
   seesAll,
@@ -75,29 +77,44 @@ export async function createProject(
     created_at: now,
     updated_at: now,
     owner_id: actor.id,
+    visible_to_everyone: 0,
   };
   await deps.db.db.insertInto('projects').values(project).execute();
   return project;
 }
 
 /**
- * Renames a project, replaces its instructions, or archives or unarchives it. Archiving one that
- * is already archived keeps the time it was first archived. A default project cannot be
- * archived: it is where publishes without a project go (in team mode, the later ones left from
- * a personal period stay unarchivable too). A project `scope` does not see answers 404, as a
- * missing one does; in personal mode only its owner may change it.
+ * Renames a project, replaces its instructions, archives or unarchives it, or makes it visible to
+ * everyone who signs in or not. Archiving one that is already archived keeps the time it was
+ * first archived. A default project cannot be archived: it is where publishes without a project
+ * go (in team mode, the later ones left from a personal period stay unarchivable too). Nor can it
+ * be made visible to everyone, for the same reason. A project `scope` does not see answers 404, as
+ * a missing one does; in personal mode only its owner may change it.
+ *
+ * Making a project visible to everyone needs `PINWALL_EVERYONE_PROJECTS` in personal mode (else
+ * 400) and an owner who may expose content (`mayExpose`, else 403 with reason
+ * `share_links_not_approved`). Making it private again is always allowed.
  */
 export function updateProject(
   deps: AppDeps,
   scope: Scope,
   id: string,
-  p: { name?: string; instructions?: string; archived?: boolean },
+  p: { name?: string; instructions?: string; archived?: boolean; visibleToEveryone?: boolean },
 ): Promise<ProjectRow> {
   return deps.db.db.transaction().execute(async (trx) => {
     const project = await getProject(trx, scope, id);
     assertCan(scope, await roleIn(trx, scope, id), 'manageProject');
     if (p.archived === true && project.is_default === 1) {
       throw conflict(t('project.defaultArchive'));
+    }
+    if (p.visibleToEveryone === true) {
+      if (everyoneRule(deps.config) === 'off') {
+        throw badRequest(t('project.everyoneOff'), { field: 'visible_to_everyone' });
+      }
+      if (project.is_default === 1) throw conflict(t('project.everyoneDefault'));
+      if (scope.kind === 'viewer' && !mayExpose(deps.config, scope.user)) {
+        throw forbidden(t('project.everyoneNotApproved'), { reason: 'share_links_not_approved' });
+      }
     }
     const now = deps.clock.now();
     const patch = {
@@ -107,6 +124,9 @@ export function updateProject(
       ...(p.archived === undefined
         ? {}
         : { archived_at: p.archived ? (project.archived_at ?? now) : null }),
+      ...(p.visibleToEveryone === undefined
+        ? {}
+        : { visible_to_everyone: p.visibleToEveryone ? (1 as const) : (0 as const) }),
     } satisfies Updateable<ProjectsTable>;
     await trx.updateTable('projects').set(patch).where('id', '=', id).execute();
     return { ...project, ...patch };

@@ -10,6 +10,7 @@ Pinwall, and what to do when someone reports abuse.
 - [Order of operations](#order-of-operations)
 - [Quotas and rate limits](#quotas-and-rate-limits)
 - [Who may share outside Pinwall](#who-may-share-outside-pinwall)
+- [Projects for everyone](#projects-for-everyone)
 - [Handling an abuse report](#handling-an-abuse-report)
 - [The moderation log](#the-moderation-log)
 - [Moving work between people](#moving-work-between-people)
@@ -38,6 +39,7 @@ trust each other is often better served by `team` mode, the default:
 | Roles in a project | none: every member can publish, rename and delete in every project, as in 1.0 | owner, editor and viewer |
 | A new person | sees every project at once | starts with an empty space, until owners add them |
 | Work nobody else sees | none | every project its owner has not shared |
+| Projects everyone sees | all of them | none, or those owners open to everyone with `PINWALL_EVERYONE_PROJECTS=true` |
 
 - **Choose `team`** when everyone who can sign in may see everything. Keep sign-in to your team
   then, with a member rule (`PINWALL_OIDC_MEMBER_GROUPS`, `PINWALL_MEMBER_DOMAINS` or
@@ -47,6 +49,9 @@ trust each other is often better served by `team` mode, the default:
   sees. Owners then bring people in with **Members**. Each person costs the owner one email lookup,
   and adding them to the owner's other projects after that is free, see
   [Project members](spaces.md#project-members).
+- **Need both?** Private spaces and projects that everyone who signs in sees, such as a handbook
+  or an onboarding project: run `personal` with `PINWALL_EVERYONE_PROJECTS=true`, see
+  [Projects for everyone](#projects-for-everyone).
 - **Going from `personal` back to `team`** shows every project to every member, so Pinwall asks you
   to confirm it once with `pinwall visibility team --confirm`, see
   [Moving work between people](#moving-work-between-people).
@@ -92,6 +97,8 @@ PINWALL_ABUSE_CONTACT=abuse@pinwall.example
   page.
 - `PINWALL_TERMS_URL` and `PINWALL_PRIVACY_URL`, optional: links to your terms and your privacy
   notice, shown on the sign-in page.
+- `PINWALL_EVERYONE_PROJECTS=true`, optional and off by default: lets owners make a project visible
+  to everyone who signs in, see [Projects for everyone](#projects-for-everyone).
 - `PINWALL_TRUST_PROXY`, behind a reverse proxy or a tunnel: which proxies to believe about the
   visitor's address (see [configuration.md](configuration.md#general)). Without it every visitor
   has the proxy's address, so the limits Pinwall keeps per address, on opening share links, on
@@ -273,6 +280,33 @@ does: it opens again as soon as those people are approved.
   `PINWALL_PREVIEW_TTL` short, and treat a report of hotlinked files like any other.
 
 Approval changes nothing while `PINWALL_SHARE_LINKS` is `members`.
+
+## Projects for everyone
+
+With `PINWALL_EVERYONE_PROJECTS=true`, in `personal` mode, an owner can make a project visible to
+everyone who signs in: in the project's **Members**, they turn on **Everyone on this Pinwall can
+view**. A newcomer then finds it under **Shared with everyone** the first time they sign in, with
+nobody adding them. It suits a handbook, an onboarding project with a demo page and a short guide,
+or a team's work that the rest of the organization may read.
+
+- **Everyone views it as a viewer.** They see its artifacts, versions and comments, find them in
+  search, and comment. They cannot publish, make share links or change anything. People the owner
+  added keep their roles.
+- **They see the members' names,** as a viewer does, never their emails.
+- **A default project cannot be visible to everyone,** because agents publish there when they name
+  no project. The owner makes a project of its own for everyone.
+- **Turning it off takes effect at once:** the project and its pages stop opening for everyone who
+  is not a member. Live updates already open end within 25 seconds.
+- **With `PINWALL_SHARE_LINKS=approved`,** only admins and approved people can turn it on, as for
+  share links, and a project stays visible to everyone only while its owner is still approved.
+  Taking an approval back, or blocking the owner, hides their projects from everyone else at once.
+  Approving the owner again brings back the projects they had opened.
+- **Turning the setting off** hides every such project from everyone but its owner and members, and
+  turning it on again brings them back. The owners' choices are kept.
+
+It is off by default because, where anyone can sign up, "everyone who signs in" can mean anyone
+with an account at your identity provider. On such an instance, keep `PINWALL_SHARE_LINKS=approved`
+so that only people you trust can put a project in front of everyone.
 
 ## Handling an abuse report
 

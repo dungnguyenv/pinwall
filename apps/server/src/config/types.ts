@@ -59,6 +59,12 @@ export interface Config {
    */
   shareLinks: 'members' | 'approved';
   /**
+   * `PINWALL_EVERYONE_PROJECTS`, `personal` mode only: an owner may make a project visible to
+   * everyone who signs in, as a viewer. With `shareLinks` `approved`, only the projects of owners
+   * who may expose content are.
+   */
+  everyoneProjects: boolean;
+  /**
    * `PINWALL_ABUSE_CONTACT`: where people report abuse, an email address or an http(s) URL. Shown
    * on the pages for links that are gone or not found. `null`: no abuse line anywhere.
    */

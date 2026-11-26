@@ -85,7 +85,7 @@ describe.each(dialects)('migration 0003_spaces on %s', (dialect) => {
     const h = await openV10();
     await seedV10(h);
 
-    expect(await migrateToLatest(h)).toEqual(['0003_spaces']);
+    expect(await migrateToLatest(h)).toEqual(['0003_spaces', '0004_everyone']);
 
     expect(await owners(h)).toEqual({
       [DEFAULT_PROJECT_ID]: 'usr_o',

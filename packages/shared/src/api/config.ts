@@ -13,6 +13,11 @@ export const PublicConfig = z.object({
    * `members`, as in 1.0.
    */
   share_links: z.enum(['members', 'approved']).optional(),
+  /**
+   * `true` when owners may make a project visible to everyone who signs in
+   * (`PINWALL_EVERYONE_PROJECTS`, `personal` mode); absent otherwise.
+   */
+  everyone_projects: z.literal(true).optional(),
   /** An email address or an http(s) URL for reports of abuse; sent only when the admin set one. */
   abuse_contact: z.string().optional(),
   /** An http(s) URL of the terms of use; sent only when the admin set one. */

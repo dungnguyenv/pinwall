@@ -23,6 +23,16 @@ export const Project = z.object({
   owner: z.object({ id: z.string(), name: z.string().nullable() }).nullable().optional(),
   /** What the caller is to the project. Sent only in `personal` mode. */
   role: z.enum(['owner', 'editor', 'viewer']).optional(),
+  /**
+   * Whether everyone who signs in can view the project now, as a viewer: its owner made it
+   * visible to everyone, and this Pinwall lets their projects be. Sent only in `personal` mode.
+   */
+  everyone_can_view: z.boolean().optional(),
+  /**
+   * The owner's choice to make the project visible to everyone. It is in effect as
+   * `everyone_can_view` says. Sent only to the owner, in `personal` mode.
+   */
+  visible_to_everyone: z.boolean().optional(),
 });
 export type Project = z.infer<typeof Project>;
 
@@ -35,10 +45,15 @@ export const CreateProjectRequest = z.object({
 });
 export type CreateProjectRequest = z.infer<typeof CreateProjectRequest>;
 
-/** Only the fields given change. `archived: true` archives, `false` brings the project back. */
+/**
+ * Only the fields given change. `archived: true` archives, `false` brings the project back.
+ * `visible_to_everyone: true` lets everyone who signs in view the project, where this Pinwall
+ * allows it (`PublicConfig.everyone_projects`); `false` keeps it to its owner and members.
+ */
 export const UpdateProjectRequest = z.object({
   name: Label.optional(),
   instructions: Instructions.optional(),
   archived: z.boolean().optional(),
+  visible_to_everyone: z.boolean().optional(),
 });
 export type UpdateProjectRequest = z.infer<typeof UpdateProjectRequest>;

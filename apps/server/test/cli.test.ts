@@ -88,7 +88,7 @@ test('migrate applies the migrations and exits', async () => {
   expect(logLines(output.stdout)).toContainEqual(
     expect.objectContaining({
       msg: 'migrated',
-      applied: ['0001_initial', '0002_publishing', '0003_spaces'],
+      applied: ['0001_initial', '0002_publishing', '0003_spaces', '0004_everyone'],
     }),
   );
 

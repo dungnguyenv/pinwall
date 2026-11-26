@@ -286,7 +286,8 @@ link to. See [Spaces, projects and members](docs/spaces.md#your-space).
 **Which mode fits a small team?**
 Usually `team`: everyone who signs in sees every project, so there is nobody to add. Keep sign-in
 to your team with a member rule. Choose `personal` when strangers can sign in, or when people need
-projects nobody else sees; owners then add people with **Members**.
+projects nobody else sees; owners then add people with **Members**. To have both private spaces and
+projects that everyone who signs in can see, run `personal` with `PINWALL_EVERYONE_PROJECTS=true`.
 [Choosing a mode](docs/open-instance.md#choosing-a-mode) compares the two.
 
 **Can I let anyone with a Google account sign up?**

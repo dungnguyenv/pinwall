@@ -384,6 +384,14 @@ export const CONFIG_VARS: readonly ConfigVar[] = [
       "members: any member may make share links and open raw links, as in Pinwall 1.0. approved: only admins and the members an admin approved in Admin → Users may; everyone else's pages open only inside Pinwall's viewer. Approve people before switching: links made by others stop opening.",
   },
   {
+    name: 'PINWALL_EVERYONE_PROJECTS',
+    section: 'spaces',
+    secret: false,
+    default: 'false',
+    description:
+      'personal mode: true lets owners make a project visible to everyone who signs in, who then view it and comment as viewers, with nobody to add. A default project cannot be. With PINWALL_SHARE_LINKS=approved, only admins and approved members can, and only while they stay approved. Off by default: where anyone can sign up, everyone can mean anyone.',
+  },
+  {
     name: 'PINWALL_ABUSE_CONTACT',
     section: 'spaces',
     secret: false,

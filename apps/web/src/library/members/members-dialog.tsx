@@ -16,6 +16,7 @@ import {
   toast,
 } from '../../ui/index.ts';
 import { AddMemberForm } from './add-member-form.tsx';
+import { EveryoneSetting } from './everyone-setting.tsx';
 import { MemberRow, OwnerRow, useDisplayName } from './member-row.tsx';
 
 function MembersSkeleton() {
@@ -32,8 +33,9 @@ function MembersSkeleton() {
 
 /**
  * The people in a project, in `personal` mode. The owner comes first, then the members, oldest
- * first. The owner sees emails and roles and can add, change and remove people; an editor or
- * viewer sees names only, and may leave.
+ * first. The owner sees emails and roles, can add, change and remove people, and can let everyone
+ * who signs in view the project; an editor or viewer sees names only, and may leave. Someone who
+ * sees the project only because everyone may has no membership to leave.
  */
 export function MembersDialog({
   project,
@@ -57,6 +59,10 @@ export function MembersDialog({
   // Anyone but the owner (or whoever the server did not tell) gets the names-only view.
   const isOwner = project.role === 'owner';
   const items = members.data?.items;
+  // In a project everyone may view, only someone on the list is a member; elsewhere everyone is.
+  const isMember =
+    !isOwner &&
+    (project.everyone_can_view !== true || (items?.some((m) => m.user.id === me?.id) ?? false));
 
   return (
     <>
@@ -65,15 +71,19 @@ export function MembersDialog({
         onOpenChange={onOpenChange}
         title={t('web.members.title', { project: project.name })}
         footer={
-          isOwner ? undefined : (
+          isMember ? (
             <Button variant="secondary" className="text-danger" onClick={() => setLeaving(true)}>
               {t('web.members.leave')}
             </Button>
-          )
+          ) : undefined
         }
       >
         {items ? (
           <div className="flex flex-col gap-5">
+            <EveryoneSetting project={project} />
+            {!isOwner && project.everyone_can_view === true ? (
+              <p className="text-fg-muted text-sm">{t('web.members.everyone.viewerNote')}</p>
+            ) : null}
             <ul aria-label={t('web.members.listLabel')} className="divide-y divide-border">
               {project.owner ? (
                 <OwnerRow owner={project.owner} you={project.owner.id === me?.id} />
