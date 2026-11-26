@@ -25,6 +25,14 @@ three changes is proven by the automated suites, and every earlier item still ho
 - comments on the compare page ([#5](https://github.com/dungnguyenv/pinwall/issues/5)):
   `apps/web/src/review/compare/` and `e2e/review/live-review.spec.ts`.
 
+Tagged `v1.3.0` at `7a048ab` on 2026-11-26. 1.3.0 (`sha256:f43ee654…0a69`) went live on
+`pinwall.ap.vn` the same day, after a backup of 1.2.1. Checked there: `version` prints `1.3.0` and
+the pod runs that digest; `kysely_migration` lists `0004_everyone` and every project has
+`visible_to_everyone` 0; the log since start has no warning or error; `healthz` and `readyz` answer
+200; `/mcp` without a token answers 401 with the resource metadata on `pinwall.ap.vn`; adding a
+member without a session answers 401; the public config still says `personal` and `approved`, and
+has no `everyone_projects`, as `PINWALL_EVERYONE_PROJECTS` is not set there.
+
 ## 1.2.1
 
 A patch release with no new acceptance item: the member-lookup change of
@@ -118,6 +126,10 @@ the date, the commit, what ran, who ran it and the outcome. Keep older rows.
 | 2026-11-26 | `ac05d55` (same tree as `50761d3`) | `pnpm lint`, `pnpm typecheck`; the server's `test/spaces` and `test/auth` on SQLite and Postgres | controller | pass |
 | 2026-11-26 | `50761d3` | GitHub Actions CI on `main` (all seven jobs) | GitHub Actions | pass |
 | 2026-11-26 | `50761d3` (`v1.2.1`) | `release.yml`. The first attempt's CI failed one web test (`users-spaces.test.tsx`: a toast not yet visible) that passed in the same commit's CI on `main`; re-running the failed jobs passed and published. Afterwards: `1.2.1`, `1.2`, `1` and `latest` all give `sha256:eea0b2c0…3adf`; `cosign verify` (cosign 3) with the documented identity; `gh attestation verify` for the provenance; the chart's values carry that digest; `version` prints `1.2.1` | controller | pass |
+| 2026-11-26 | `ab80d6e` (same tree as `7a048ab`) | `pnpm lint`, `pnpm typecheck`, `pnpm test` with Postgres (server 4,494 of 4,496 under load; the two, `merge-diff` and a `transfer` deadlock check, pass when run alone), `test/spaces/everyone.test.ts` and `test/auth/oidc/job.test.ts` on SQLite and Postgres, the e2e review suite | controller | pass |
+| 2026-11-26 | `ab80d6e` | GitHub Actions CI on PR #7 (all seven jobs). The first attempt's Acceptance job could not install Chromium (an Ubuntu mirror was unreachable); re-running it passed | GitHub Actions | pass |
+| 2026-11-26 | `7a048ab` | GitHub Actions CI on `main` (all seven jobs) | GitHub Actions | pass |
+| 2026-11-26 | `7a048ab` (`v1.3.0`) | `release.yml`: tag check, CI, image for amd64 and arm64, cosign signature, provenance and SBOM attestations, chart push, GitHub release, all on the first attempt. Afterwards: `1.3.0`, `1.3`, `1` and `latest` all give `sha256:f43ee654…0a69`; `cosign verify` with the release workflow's identity; `gh attestation verify` for the provenance; `version` prints `1.3.0` | controller | pass |
 
 ## Results
 
