@@ -124,7 +124,8 @@ this Pinwall can view**. The switch is not there when the operator has not allow
 
 - **Everyone else is a viewer there.** They see the project, its artifacts, versions and comments,
   and they comment, but they cannot publish or make share links. They see the members' names, not
-  their emails. People you added keep their roles.
+  their emails, and which artifacts have share links and who made them, not the links. People you
+  added keep their roles.
 - **It shows under Shared with everyone** in their sidebar, and its artifacts in their **All
   artifacts** and search. The project page says "Visible to everyone on this Pinwall".
 - **Your default project cannot be visible to everyone,** because your agents publish there when

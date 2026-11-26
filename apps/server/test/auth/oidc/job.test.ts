@@ -9,6 +9,7 @@ import {
 import { deleteUserSessions } from '../../../src/auth/sessions.ts';
 import { startAuth } from '../../../src/auth/startup.ts';
 import type { UserRow } from '../../../src/db/schema.ts';
+import { createProject } from '../../../src/domain/projects.ts';
 import { createShareLink, revokeShareLink } from '../../../src/domain/shares.ts';
 import { FixedClock } from '../../../src/lib/clock.ts';
 import { createUserToken } from '../../helpers/auth.ts';
@@ -124,6 +125,41 @@ describe.each(dialects)('access re-check job on %s', (dialect) => {
     for (const u of [a, d, f]) expect(await checkedAt(u)).toBe(clock.now());
     for (const u of [b, e]) expect(await checkedAt(u)).toBe(T);
     expect(await checkedAt(c)).toBe(T + 11 * H);
+  });
+
+  test('a project everyone may view keeps its owner re-checked, where the setting allows it', async () => {
+    for (const on of [false, true]) {
+      clock = new FixedClock(T);
+      ctx = await createTestContext({
+        dialect,
+        clock,
+        env: idp.env({
+          ...ROLE_ENV,
+          PINWALL_VISIBILITY: 'personal',
+          PINWALL_EVERYONE_PROJECTS: String(on),
+        }),
+      });
+      const owner = await signedOut();
+      const other = await signedOut();
+      for (const [who, isDefault] of [
+        [owner, 0],
+        [other, 1],
+      ] as const) {
+        const project = await createProject(ctx.deps, who.user, { name: 'Handbook' });
+        await ctx.deps.db.db
+          .updateTable('projects')
+          .set({ visible_to_everyone: 1, is_default: isDefault })
+          .where('id', '=', project.id)
+          .execute();
+      }
+      clock.advance(12 * H);
+      const result = await runAccessRecheck(ctx.deps);
+      // Only a project everyone can see counts: a default project never can.
+      expect(result.checked, `setting ${on}`).toBe(on ? 1 : 0);
+      expect(await checkedAt(owner)).toBe(on ? clock.now() : T);
+      expect(await checkedAt(other)).toBe(T);
+      await ctx.close();
+    }
   });
 
   test('an open share link counts as a live credential, and removal at the IdP revokes it', async () => {
