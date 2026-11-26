@@ -92,6 +92,17 @@ test('a comment pinned on v1 follows the artifact to v2 and shows resolved in v2
   await expect(card).toContainText('Resolved in v2');
   await expect(pin).toHaveAttribute('data-resolved', /.*/);
   expect(await page.evaluate(() => window.__noReload)).toBe(true);
+
+  // Comparing v1 with v2 lists the thread, marked as resolved by the change, and leads back to it.
+  await page.goto(`/a/${v1.artifact_id}/compare`);
+  const comments = page.getByRole('region', { name: 'Comments' });
+  await comments.getByRole('radio', { name: /^Resolved/ }).click();
+  const row = comments.getByRole('link', { name: 'Comment 1 on v1 by Ada' });
+  await expect(row.locator('mark')).toHaveText('Resolved in v2');
+  await row.click();
+  await expect(page).toHaveURL(new RegExp(`/a/${v1.artifact_id}/v/1\\?comment=${id}$`));
+  await expect(card).toHaveAttribute('aria-current', 'true');
+  await expect(pin).toHaveText('1');
 });
 
 test('the review page fits a 360 px phone', async ({ page, context }) => {
@@ -110,4 +121,26 @@ test('the review page fits a 360 px phone', async ({ page, context }) => {
   await expect(page.getByRole('dialog', { name: 'Comments' })).toBeVisible();
   expect(await fits()).toBe(true);
   expect(csp).toEqual([]);
+});
+
+test('the compare page and its comments fit a 360 px phone', async ({ page, context }) => {
+  const api = await context.newPage();
+  await bootstrap(api, reviewServer(test.info().project.name));
+  const v1 = await publishInline(api, { 'index.html': PAGE('#222222') });
+  await publishInline(
+    api,
+    { 'index.html': PAGE('#c00000') },
+    { artifact_id: v1.artifact_id, expected_version_id: v1.version_id },
+  );
+
+  await page.setViewportSize({ width: 360, height: 740 });
+  await page.goto(`/a/${v1.artifact_id}/compare`);
+  await expect(page.getByRole('region', { name: 'v2' })).toBeVisible();
+  const fits = () => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+  expect(await fits()).toBe(true);
+
+  await page.getByRole('button', { name: /^Comments, \d+ open$/ }).click();
+  const sheet = page.getByRole('dialog', { name: 'Comments' });
+  await expect(sheet.getByRole('radiogroup', { name: 'Filter comments' })).toBeVisible();
+  expect(await fits()).toBe(true);
 });
