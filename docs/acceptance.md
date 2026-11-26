@@ -10,6 +10,21 @@ every 1.0 item still holds. Pinwall 1.2 adds `1.2-1` and `1.2-2`, the checks of 
 earlier item still holds. This page holds the record, the steps of each manual check, and how the
 automated part runs.
 
+## 1.3.0
+
+A minor release without a design spec of its own, so it adds no numbered acceptance item. Each of its
+three changes is proven by the automated suites, and every earlier item still holds:
+
+- projects for everyone ([#2](https://github.com/dungnguyenv/pinwall/issues/2)):
+  `apps/server/test/spaces/everyone.test.ts` on SQLite and Postgres (the setting off and on, the
+  roles, a default project, turning it off, approval, blocked and disabled owners, team mode, and
+  the SQL rule against `hasAccess` and `mayExpose` for every kind of account), and
+  `apps/web/src/library/members/everyone.test.tsx`;
+- links in comments ([#4](https://github.com/dungnguyenv/pinwall/issues/4)):
+  `apps/web/src/lib/linkify.test.ts` and `apps/web/src/review/comments/comment-panel.test.tsx`;
+- comments on the compare page ([#5](https://github.com/dungnguyenv/pinwall/issues/5)):
+  `apps/web/src/review/compare/` and `e2e/review/live-review.spec.ts`.
+
 ## 1.2.1
 
 A patch release with no new acceptance item: the member-lookup change of

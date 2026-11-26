@@ -19,7 +19,7 @@ count.
 ## Install
 
 ```sh
-helm install pinwall oci://ghcr.io/dungnguyenv/charts/pinwall --version 1.2.1 \
+helm install pinwall oci://ghcr.io/dungnguyenv/charts/pinwall --version 1.3.0 \
   --set publicOrigin=https://pinwall.example
 ```
 

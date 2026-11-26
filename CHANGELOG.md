@@ -2,6 +2,43 @@
 
 Every release of Pinwall, newest first. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 1.3.0
+
+### Upgrading from 1.2
+
+- **One migration, `0004_everyone`,** which adds the column `projects.visible_to_everyone`
+  (0 for every project). Pinwall runs it when it starts. 1.2 refuses a database that has it, so
+  take a backup first: going back to 1.2.1 means restoring that backup, or dropping the column and
+  the migration's row in `kysely_migration` by hand.
+- **Nothing changes until you turn it on.** `PINWALL_EVERYONE_PROJECTS` is off by default, so
+  every project stays as private as it was.
+
+### Added
+
+- **Projects for everyone** ([#2](https://github.com/dungnguyenv/pinwall/issues/2)). In
+  `personal` mode with `PINWALL_EVERYONE_PROJECTS=true`, an owner can make a project visible to
+  everyone who signs in, from the project's **Members**: everyone else views it and comments as a
+  viewer, with nobody to add, and finds it under **Shared with everyone**. Members keep their roles.
+  A default project cannot be. With `PINWALL_SHARE_LINKS=approved` only admins and approved people
+  can turn it on. A project stays visible to everyone only while its owner can still use Pinwall,
+  as their share links do (not blocked, disabled or removed at the identity provider), and, with
+  `approved`, is still approved. Turning it off, or the setting, takes effect at once, and `pinwall
+  transfer` moves projects private. In the REST API, `PATCH
+  /api/v1/projects/{id}` takes `visible_to_everyone`, a project carries `everyone_can_view` (and,
+  for its owner, `visible_to_everyone`), and `GET /api/v1/config/public` says
+  `everyone_projects: true`. The MCP project tools say "visible to everyone who signs in".
+- **Links in comments** ([#4](https://github.com/dungnguyenv/pinwall/issues/4)). A bare `http://`
+  or `https://` URL in a comment or a reply is a link that opens in a new tab, on the review page
+  and on share links. Other schemes stay text, and the punctuation that ends a sentence stays out
+  of the link. Comments are still plain text: the API and the MCP tools return them as written.
+- **Comments on the compare page** ([#5](https://github.com/dungnguyenv/pinwall/issues/5)). The
+  compare page lists the comments of the two versions with the review page's Open / Resolved / All
+  filter: the older version's threads, then those written after it, numbered as each version's
+  review page numbers them. A thread resolved in the newer version, or in one between the two, is
+  marked, so you can see which comments the change answered. Choosing a thread opens its version's
+  review page with the thread selected and its pin shown. On a phone the list opens in a sheet.
+  Pins on the compared pages themselves may come later.
+
 ## 1.2.1
 
 ### Upgrading from 1.2.0
